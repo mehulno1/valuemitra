@@ -42,17 +42,10 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
-                  <Input id="firstName" {...register('firstName')} />
-                  {errors.firstName && <p className="text-xs text-destructive">{errors.firstName.message}</p>}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
-                  <Input id="lastName" {...register('lastName')} />
-                  {errors.lastName && <p className="text-xs text-destructive">{errors.lastName.message}</p>}
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="fullName">Full Name</Label>
+                <Input id="fullName" placeholder="e.g. Mehul Pipalia" {...register('fullName')} />
+                {errors.fullName && <p className="text-xs text-destructive">{errors.fullName.message}</p>}
               </div>
 
               <div className="space-y-2">
@@ -81,15 +74,10 @@ export default function RegisterPage() {
                   {errors.firmCode && <p className="text-xs text-destructive">{errors.firmCode.message}</p>}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ibbiRegNo">IBBI Reg. No.</Label>
-                  <Input id="ibbiRegNo" placeholder="e.g. IBBI/RV-E/02/2020/123" {...register('ibbiRegNo')} />
-                  {errors.ibbiRegNo && <p className="text-xs text-destructive">{errors.ibbiRegNo.message}</p>}
+                  <Label htmlFor="ibbiFirmRegNo">IBBI Firm Reg. No.</Label>
+                  <Input id="ibbiFirmRegNo" placeholder="e.g. IBBI/RVO/2020/123" {...register('ibbiFirmRegNo')} />
+                  {errors.ibbiFirmRegNo && <p className="text-xs text-destructive">{errors.ibbiFirmRegNo.message}</p>}
                 </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="ibbiRegCategory">IBBI Registration Category</Label>
-                <Input id="ibbiRegCategory" placeholder="e.g. Land and Building" {...register('ibbiRegCategory')} />
               </div>
             </CardContent>
 
