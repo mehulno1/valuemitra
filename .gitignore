@@ -45,3 +45,4 @@ coverage/
 # Playwright
 playwright-report/
 test-results/
+valuemitra-ocr-keys.json

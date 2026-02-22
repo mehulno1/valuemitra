@@ -318,3 +318,4 @@ Before generating/delivering a report, validate:
 - `ValuationRun` — exists and `isFinalized = true`
 
 See `IBBI_MANDATORY_FIELDS` and `IBBI_CERTIFICATE_TEXT` in `packages/shared/src/constants/ibbi.constants.ts`.
+
