@@ -155,7 +155,7 @@ export async function requestAIValuation(
   if (!assignment) throw new NotFoundError('Assignment');
 
   // Fetch valuation run if provided
-  let valuationRun = null;
+  let valuationRun: Awaited<ReturnType<typeof prisma.valuationRun.findFirst>> = null;
   if (input.valuationRunId) {
     valuationRun = await prisma.valuationRun.findFirst({
       where: { id: input.valuationRunId, assignment: { tenantId } },

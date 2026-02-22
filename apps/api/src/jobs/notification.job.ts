@@ -101,7 +101,7 @@ async function handleReportDelivery(notification: {
   });
 
   // Attach PDF if available
-  const attachments = [];
+  const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
   if (report?.pdfPath) {
     try {
       const pdfBuffer = await getFileBuffer(report.pdfPath);
