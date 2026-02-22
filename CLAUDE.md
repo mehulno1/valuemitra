@@ -302,7 +302,51 @@ Both `apps/api/.env` and root `.env` must be kept in sync (copy manually).
 | 6 — AI & Analysis | ✅ Done | Valuation engines (cost, market, income, depreciation), Claude API advisory, `ai-valuation` module |
 | 7 — Report Generation | ✅ Done | `report-data.builder.ts` (IBBI gate), `docx-generator.ts` (docxtemplater/pizzip), `pdf-converter.ts` (LibreOffice headless), `number-to-words.ts` (Indian lakh/crore), reports service/controller/router |
 | 8 — Review & Delivery | ✅ Done | 3-step review workflow (INTERNAL→CLIENT_BANK→COMPLIANCE→APPROVED), SES SMTP via nodemailer, notification job (every 1 min), report delivery with PDF attachment |
-| 9 — Deployment | 🔲 Pending | EC2 + Nginx + PM2 + CI/CD |
+| 9 — Deployment | ✅ Done | EC2 + Nginx + PM2 + GitHub Actions CI/CD + Let's Encrypt SSL |
+
+---
+
+## Deployment (Stage 9)
+
+### Production URLs
+- **Frontend + API**: `https://vmapps.techsahyogi.com`
+- **EC2**: `13.200.199.101` (Ubuntu 24.04), user `ubuntu`
+- **App dir**: `/var/www/valuemitra`
+- **PM2 process**: `valuemitra-api` (id: 2)
+- **API port**: `3006` (internal; Nginx proxies `/api/`)
+
+### Infrastructure Files
+- `infrastructure/pm2/ecosystem.config.cjs` — PM2 fork mode, 500MB limit, logs to `/var/log/valuemitra/`
+- `infrastructure/nginx/valuemitra.conf` — SPA + `/api/` reverse proxy
+- `infrastructure/scripts/setup.sh` — one-time EC2 setup (Node 20, PM2, Nginx, LibreOffice, Playwright deps)
+- `infrastructure/scripts/deploy.sh` — full build + Prisma + PM2 reload + health check
+- `.github/workflows/deploy.yml` — GitHub Actions: type-check → SSH → deploy.sh
+
+### GitHub Actions CI Pipeline
+1. `npm ci --include=dev`
+2. `npm run build -w packages/shared` ← **must be before tsc** (shared dist required)
+3. `npx tsc --noEmit -p apps/api/tsconfig.json`
+4. SSH → EC2 → `git pull` → `deploy.sh`
+
+Secrets: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` (in GitHub repo Settings → Secrets)
+
+### EC2 Git Pull — SSH Remote Required
+GitHub Actions runs non-interactively; HTTPS git remotes fail. EC2 uses SSH remote:
+- Deploy key: `~/.ssh/valuemitra_deploy` (Ed25519, added to GitHub repo → Deploy Keys)
+- Remote: `git@github.com:mehulno1/valuemitra.git`
+
+### Known Fixes Applied
+- `apps/api/tsconfig.json`: `"noImplicitAny": false` — Prisma callback inference fails strict mode
+- `apps/web/vite.config.ts`: alias `@valuemitra/shared` → `../../packages/shared/src/index.ts` — Vite/Rollup can't analyze CJS named exports; alias points to TS source directly
+- `apps/web/src/pages/auth/RegisterPage.tsx`: field names corrected (`fullName` not `firstName`/`lastName`; `ibbiFirmRegNo` not `ibbiRegNo`)
+- OCR key file `valuemitra-ocr-keys.json` excluded from git (added to `.gitignore`); must be copied to EC2 manually via `scp`
+
+### Manual Steps After Fresh EC2 Clone
+```bash
+# Copy secret files (not in git)
+scp -i ~/.ssh/demo.pem valuemitra-ocr-keys.json ubuntu@13.200.199.101:/var/www/valuemitra/
+# Set GOOGLE_APPLICATION_CREDENTIALS in .env to absolute path
+```
 
 ---
 
