@@ -1,0 +1,615 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// MULTI-TENANCY
+// ─────────────────────────────────────────────
+
+model Tenant {
+  id                String    @id @default(uuid())
+  name              String    @db.VarChar(200)
+  slug              String    @unique @db.VarChar(100)
+  firmCode          String    @db.VarChar(10)            // Used in ref nos: UCVLLP/PNB/2025-26/001
+  gstin             String?   @db.VarChar(15)
+  pan               String?   @db.VarChar(10)
+  registeredAddress String    @db.Text
+  city              String    @db.VarChar(100)
+  state             String    @db.VarChar(100)
+  pincode           String    @db.VarChar(6)
+  phone             String    @db.VarChar(15)
+  email             String    @db.VarChar(200)
+  logoUrl           String?   @db.VarChar(500)
+  ibbiFirmRegNo     String?   @db.VarChar(100)
+  rvoName           String?   @db.VarChar(200)
+  planId            String    @default("trial") @db.VarChar(50)
+  planExpiresAt     DateTime?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  users             User[]
+  assignments       Assignment[]
+  clients           Client[]
+  properties        Property[]
+  governmentRates   GovernmentRate[]
+  reportTemplates   ReportTemplate[]
+  auditLogs         AuditLog[]
+  cacheEntries      CacheEntry[]
+  notifications     Notification[]
+
+  @@index([slug])
+  @@index([isActive])
+  @@map("tenants")
+}
+
+// ─────────────────────────────────────────────
+// USERS & AUTHENTICATION
+// ─────────────────────────────────────────────
+
+model User {
+  id                String    @id @default(uuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+  email             String    @db.VarChar(200)
+  passwordHash      String    @db.VarChar(255)
+  fullName          String    @db.VarChar(200)
+  phone             String?   @db.VarChar(15)
+  role              String    @default("VALUER") @db.VarChar(20)   // UserRole enum
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+
+  // IBBI compliance — mandatory before report generation
+  ibbiRegNo         String?   @db.VarChar(100)
+  ibbiRegCategory   String?   @db.VarChar(100)    // "Land & Building" / "Plant & Machinery" / "Securities"
+  ibbiRegValidUpto  DateTime?
+  rvoMembershipNo   String?   @db.VarChar(100)
+  qualifications    String?   @db.Text
+  experienceYears   Int?
+  signatureUrl      String?   @db.VarChar(500)    // S3 key to RV signature image
+  stampUrl          String?   @db.VarChar(500)    // S3 key to RV stamp/seal image
+
+  emailVerifiedAt   DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  refreshTokens           RefreshToken[]
+  assignmentsCreated      Assignment[]      @relation("CreatedBy")
+  assignmentsAssigned     Assignment[]      @relation("AssignedTo")
+  auditLogs               AuditLog[]
+  documents               Document[]
+  passwordResetTokens     PasswordResetToken[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([ibbiRegNo])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @db.VarChar(255)    // SHA-256 hash of the opaque token
+  expiresAt   DateTime
+  isRevoked   Boolean   @default(false)
+  deviceInfo  String?   @db.VarChar(255)
+  ipAddress   String?   @db.VarChar(45)
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @db.VarChar(255)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("password_reset_tokens")
+}
+
+// ─────────────────────────────────────────────
+// CLIENTS & BANKS
+// ─────────────────────────────────────────────
+
+model Client {
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  clientType    String    @default("INDIVIDUAL") @db.VarChar(20)  // ClientType enum
+  fullName      String?   @db.VarChar(200)
+  pan           String?   @db.VarChar(10)
+  aadhaarLast4  String?   @db.VarChar(4)
+  companyName   String?   @db.VarChar(200)
+  cin           String?   @db.VarChar(21)
+  gstin         String?   @db.VarChar(15)
+  email         String?   @db.VarChar(200)
+  phone         String?   @db.VarChar(15)
+  address       String?   @db.Text
+  city          String?   @db.VarChar(100)
+  state         String?   @db.VarChar(100)
+  pincode       String?   @db.VarChar(6)
+  isBank        Boolean   @default(false)
+  bankName      String?   @db.VarChar(200)
+  bankCode      String?   @db.VarChar(20)    // BankCode enum
+  bankBranch    String?   @db.VarChar(200)
+  ifscCode      String?   @db.VarChar(11)
+  loanAccountNo String?   @db.VarChar(50)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  assignments   Assignment[]
+
+  @@index([tenantId])
+  @@index([tenantId, isBank])
+  @@map("clients")
+}
+
+// ─────────────────────────────────────────────
+// ASSIGNMENTS (core workflow unit)
+// ─────────────────────────────────────────────
+
+model Assignment {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  assignmentNo        String    @db.VarChar(50)    // VM/2024-25/0001
+  firmReferenceNo     String    @db.VarChar(100)   // UCVLLP/PNB/2025-26/0001
+  clientId            String
+  client              Client    @relation(fields: [clientId], references: [id])
+  createdById         String
+  createdBy           User      @relation("CreatedBy", fields: [createdById], references: [id])
+  assignedToId        String?
+  assignedTo          User?     @relation("AssignedTo", fields: [assignedToId], references: [id])
+
+  // Classification
+  purposeOfValuation  String    @default("MORTGAGE") @db.VarChar(50)   // ValuationPurpose enum
+  propertyType        String    @default("RESIDENTIAL_FLAT") @db.VarChar(50)  // PropertyType enum
+  status              String    @default("INITIATED") @db.VarChar(50)  // AssignmentStatus enum
+
+  // Under-construction
+  isUnderConstruction Boolean   @default(false)
+  percentageCompletion Int?
+  expectedHandoverDate DateTime?
+
+  // Key dates (IBBI compliance)
+  inspectionDate      DateTime?
+  reportDate          DateTime?
+  submittedAt         DateTime?
+
+  // Fee
+  agreedFee           Decimal?  @db.Decimal(12, 2)
+  feeGst              Decimal?  @db.Decimal(12, 2)
+  feePaidAt           DateTime?
+
+  // Bank reference
+  bankRefNo           String?   @db.VarChar(100)
+  bankInstructionDate DateTime?
+
+  // Result summary
+  finalValue          Decimal?  @db.Decimal(15, 2)
+  valuationCurrency   String    @default("INR") @db.VarChar(3)
+
+  referenceNote       String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  property        Property?
+  documents       Document[]
+  valuationRuns   ValuationRun[]
+  reports         Report[]
+  checklist       ChecklistItem[]
+  notifications   Notification[]
+
+  @@unique([tenantId, assignmentNo])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([clientId])
+  @@index([assignedToId])
+  @@map("assignments")
+}
+
+// ─────────────────────────────────────────────
+// PROPERTY (subject property details)
+// ─────────────────────────────────────────────
+
+model Property {
+  id                    String    @id @default(uuid())
+  tenantId              String
+  tenant                Tenant    @relation(fields: [tenantId], references: [id])
+  assignmentId          String    @unique
+  assignment            Assignment @relation(fields: [assignmentId], references: [id])
+
+  // Location
+  addressLine1          String?   @db.VarChar(300)
+  addressLine2          String?   @db.VarChar(300)
+  city                  String?   @db.VarChar(100)
+  district              String?   @db.VarChar(100)
+  state                 String?   @db.VarChar(100)
+  pincode               String?   @db.VarChar(6)
+  latitude              Decimal?  @db.Decimal(10, 8)
+  longitude             Decimal?  @db.Decimal(11, 8)
+
+  // Revenue/Survey identification
+  surveyNo              String?   @db.VarChar(100)
+  ctsSurveyNo           String?   @db.VarChar(100)
+  municipalNo           String?   @db.VarChar(100)
+  societyName           String?   @db.VarChar(200)
+  flatNo                String?   @db.VarChar(50)
+  floor                 Int?
+  buildingName          String?   @db.VarChar(200)
+
+  // Land details
+  landAreaSqM           Decimal?  @db.Decimal(12, 4)
+  landAreaSqFt          Decimal?  @db.Decimal(12, 4)
+  landAreaAcre          Decimal?  @db.Decimal(10, 6)
+  landAreaHectare       Decimal?  @db.Decimal(10, 6)
+  landTenure            String?   @db.VarChar(30)    // LandTenure enum
+  leaseExpiryDate       DateTime?
+  zoningClassification  String?   @db.VarChar(100)
+
+  // Building details
+  builtUpAreaSqM        Decimal?  @db.Decimal(12, 4)
+  builtUpAreaSqFt       Decimal?  @db.Decimal(12, 4)
+  carpetAreaSqM         Decimal?  @db.Decimal(12, 4)
+  carpetAreaSqFt        Decimal?  @db.Decimal(12, 4)
+  numberOfFloors        Int?
+  yearOfConstruction    Int?
+  ageOfBuilding         Int?
+
+  // Structure/condition
+  structureType         String?   @db.VarChar(100)
+  roofType              String?   @db.VarChar(100)
+  exteriorCondition     String?   @db.VarChar(50)
+  interiorCondition     String?   @db.VarChar(50)
+
+  // Ownership (JSON array of strings)
+  ownerNames            Json?
+
+  // Flexible OCR-extracted data (JSON)
+  extractedData         Json?
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([state, district])
+  @@map("properties")
+}
+
+// ─────────────────────────────────────────────
+// DOCUMENTS
+// ─────────────────────────────────────────────
+
+model Document {
+  id              String    @id @default(uuid())
+  tenantId        String
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id])
+  uploadedById    String
+  uploadedBy      User      @relation(fields: [uploadedById], references: [id])
+
+  // File metadata
+  originalName    String    @db.VarChar(300)
+  storagePath     String    @db.VarChar(500)
+  storageProvider String    @default("local") @db.VarChar(20)  // "local" | "s3"
+  mimeType        String    @db.VarChar(100)
+  fileSizeBytes   Int
+  checksum        String?   @db.VarChar(64)
+
+  // Classification
+  documentType    String    @db.VarChar(50)    // DocumentType enum
+  subType         String?   @db.VarChar(100)
+
+  // OCR processing
+  ocrStatus       String    @default("PENDING") @db.VarChar(20)  // OCRStatus enum
+  ocrJobId        String?   @db.VarChar(100)
+  ocrProvider     String?   @db.VarChar(50)
+  ocrRawResponse  Json?
+  ocrExtracted    Json?
+  ocrConfidence   Decimal?  @db.Decimal(5, 4)
+  ocrReviewedAt   DateTime?
+  ocrReviewedById String?
+
+  // Versioning & soft delete
+  version         Int       @default(1)
+  replacedById    String?
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([assignmentId])
+  @@index([tenantId])
+  @@index([ocrStatus])
+  @@index([documentType])
+  @@map("documents")
+}
+
+// ─────────────────────────────────────────────
+// DOCUMENT CHECKLIST
+// ─────────────────────────────────────────────
+
+model ChecklistItem {
+  id              String    @id @default(uuid())
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id])
+  documentType    String    @db.VarChar(50)    // DocumentType enum
+  label           String    @db.VarChar(200)
+  isMandatory     Boolean   @default(false)
+  status          String    @default("PENDING") @db.VarChar(20)  // ChecklistStatus enum
+  documentId      String?
+  notes           String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([assignmentId])
+  @@map("checklist_items")
+}
+
+// ─────────────────────────────────────────────
+// GOVERNMENT RATES
+// ─────────────────────────────────────────────
+
+model GovernmentRate {
+  id              String    @id @default(uuid())
+  tenantId        String?                                      // NULL = platform-level (visible to all)
+  tenant          Tenant?   @relation(fields: [tenantId], references: [id])
+  state           String    @db.VarChar(50)
+  rateYear        String    @db.VarChar(10)                   // "2024-25"
+  district        String?   @db.VarChar(100)
+  taluka          String?   @db.VarChar(100)
+  village         String?   @db.VarChar(100)
+  zone            String?   @db.VarChar(50)
+  jantriZone      String?   @db.VarChar(100)
+  surveyType      String?   @db.VarChar(50)
+  propertyCategory String   @db.VarChar(100)                  // RateCategory enum
+  ratePerSqM      Decimal?  @db.Decimal(12, 2)
+  ratePerSqFt     Decimal?  @db.Decimal(12, 2)
+  ratePerAcre     Decimal?  @db.Decimal(15, 2)
+  sourceUrl       String?   @db.VarChar(500)
+  fetchedAt       DateTime
+  isManualOverride Boolean  @default(false)
+  overrideNotes   String?   @db.Text
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([state, rateYear, district, taluka])
+  @@index([isActive])
+  @@map("government_rates")
+}
+
+// ─────────────────────────────────────────────
+// VALUATION COMPUTATION ENGINE
+// ─────────────────────────────────────────────
+
+model ValuationRun {
+  id                    String    @id @default(uuid())
+  assignmentId          String
+  assignment            Assignment @relation(fields: [assignmentId], references: [id])
+  approach              String    @db.VarChar(30)    // ValuationApproach enum
+  version               Int       @default(1)
+  isFinalized           Boolean   @default(false)
+
+  // Market Comparison
+  comparables           Json?     // Array of ComparableSale objects
+  adjustmentFactors     Json?
+  adjustedValues        Json?
+  correlatedValue       Decimal?  @db.Decimal(15, 2)
+
+  // Cost Approach — Land
+  landValue             Decimal?  @db.Decimal(15, 2)
+  landRateUsed          Decimal?  @db.Decimal(12, 2)
+  landRateSource        String?   @db.VarChar(50)
+  landGovtRateId        String?
+
+  // Cost Approach — Building
+  buildingPlinthArea    Decimal?  @db.Decimal(12, 4)
+  buildingRatePerSqM    Decimal?  @db.Decimal(10, 2)
+  replacementCost       Decimal?  @db.Decimal(15, 2)
+  depreciationMethod    String?   @db.VarChar(30)    // DepreciationMethod enum
+  depreciationRate      Decimal?  @db.Decimal(6, 4)
+  depreciationAmount    Decimal?  @db.Decimal(15, 2)
+  depreciatedValue      Decimal?  @db.Decimal(15, 2)
+  servicesCost          Decimal?  @db.Decimal(15, 2)
+  costApproachValue     Decimal?  @db.Decimal(15, 2)
+
+  // Income Approach
+  grossRent             Decimal?  @db.Decimal(12, 2)
+  vacancyRate           Decimal?  @db.Decimal(6, 4)
+  effectiveGrossIncome  Decimal?  @db.Decimal(15, 2)
+  operatingExpenses     Decimal?  @db.Decimal(15, 2)
+  netOperatingIncome    Decimal?  @db.Decimal(15, 2)
+  capitalizationRate    Decimal?  @db.Decimal(6, 4)
+  incomeApproachValue   Decimal?  @db.Decimal(15, 2)
+
+  // AI Valuation Model output
+  aiValuationResult     Json?     // AIValuationResult object
+
+  // Final Reconciliation
+  marketApproachWeight  Decimal?  @db.Decimal(5, 4)
+  costApproachWeight    Decimal?  @db.Decimal(5, 4)
+  incomeApproachWeight  Decimal?  @db.Decimal(5, 4)
+  weightedValue         Decimal?  @db.Decimal(15, 2)
+  roundedValue          Decimal?  @db.Decimal(15, 2)   // Final adopted value
+
+  reconciliationNotes   String?   @db.Text
+
+  // IBBI audit snapshot — immutable record of all inputs at computation time
+  inputSnapshot         Json?
+
+  computedAt            DateTime?
+  computedById          String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([assignmentId])
+  @@map("valuation_runs")
+}
+
+// ─────────────────────────────────────────────
+// REPORT GENERATION ENGINE
+// ─────────────────────────────────────────────
+
+model ReportTemplate {
+  id                String    @id @default(uuid())
+  tenantId          String?                                    // NULL = platform template
+  tenant            Tenant?   @relation(fields: [tenantId], references: [id])
+  name              String    @db.VarChar(200)
+  bankName          String    @db.VarChar(200)
+  bankCode          String    @db.VarChar(20)    // BankCode enum
+  propertyType      String    @db.VarChar(50)    // PropertyType enum
+  isUnderConstruction Boolean @default(false)
+  version           String    @db.VarChar(20)
+  templateFilePath  String    @db.VarChar(500)   // S3 key to processed .docx
+  fieldMappings     Json                          // ReportFieldMappings
+  requiredFields    Json?                         // Array of required field names
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  reports           Report[]
+
+  @@index([bankCode, propertyType])
+  @@map("report_templates")
+}
+
+model Report {
+  id              String    @id @default(uuid())
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id])
+  templateId      String
+  template        ReportTemplate @relation(fields: [templateId], references: [id])
+  valuationRunId  String?
+  status          String    @default("DRAFT") @db.VarChar(20)  // ReportStatus enum
+  docxPath        String?   @db.VarChar(500)
+  pdfPath         String?   @db.VarChar(500)
+  reportData      Json                            // Complete ReportData snapshot
+  signedAt        DateTime?
+  signedById      String?
+  digitalSignature String?  @db.Text
+  version         Int       @default(1)
+  isLatest        Boolean   @default(true)
+  generatedAt     DateTime?
+  deliveredAt     DateTime?
+  deliveredToEmail String?  @db.VarChar(200)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([assignmentId])
+  @@map("reports")
+}
+
+// ─────────────────────────────────────────────
+// AUDIT TRAIL (IBBI Compliance — NEVER deleted)
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+  action      String    @db.VarChar(100)    // "assignment.status_changed", "report.generated", etc.
+  entityType  String    @db.VarChar(50)
+  entityId    String    @db.VarChar(36)
+  before      Json?
+  after       Json?
+  ipAddress   String?   @db.VarChar(45)
+  userAgent   String?   @db.VarChar(500)
+  createdAt   DateTime  @default(now())     // Immutable — no updatedAt
+
+  @@index([tenantId, createdAt])
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model Notification {
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  assignmentId    String?
+  assignment      Assignment? @relation(fields: [assignmentId], references: [id])
+  recipientEmail  String    @db.VarChar(200)
+  recipientName   String?   @db.VarChar(200)
+  channel         String    @default("EMAIL") @db.VarChar(20)
+  type            String    @db.VarChar(100)   // e.g. "assignment.status_changed"
+  subject         String    @db.VarChar(300)
+  body            String    @db.Text
+  status          String    @default("PENDING") @db.VarChar(20)
+  sentAt          DateTime?
+  failureReason   String?   @db.Text
+  createdAt       DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────
+// CACHING (replaces Redis)
+// ─────────────────────────────────────────────
+
+model CacheEntry {
+  id          String    @id @default(uuid())
+  tenantId    String?
+  tenant      Tenant?   @relation(fields: [tenantId], references: [id])
+  cacheKey    String    @unique @db.VarChar(300)
+  value       Json
+  expiresAt   DateTime
+  tags        String?   @db.VarChar(500)   // Comma-separated for group invalidation
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([expiresAt])
+  @@index([tenantId])
+  @@map("cache_entries")
+}
+
+// ─────────────────────────────────────────────
+// BACKGROUND JOBS (replaces Bull/Redis)
+// ─────────────────────────────────────────────
+
+model JobQueue {
+  id          String    @id @default(uuid())
+  jobType     String    @db.VarChar(50)    // JobType enum
+  payload     Json
+  status      String    @default("PENDING") @db.VarChar(20)  // JobStatus enum
+  priority    Int       @default(5)         // 1 (high) to 10 (low)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  lockedAt    DateTime?
+  lockedBy    String?   @db.VarChar(100)   // Worker instance ID
+  failureLog  Json?                         // Array of error records
+  scheduledAt DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, priority, scheduledAt])
+  @@index([jobType, status])
+  @@map("job_queue")
+}

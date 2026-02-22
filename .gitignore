@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.turbo/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Uploads (local dev only)
+apps/api/uploads/
+apps/api/tmp/
+
+# Prisma
+apps/api/prisma/*.db
+
+# React build
+apps/web/dist/
+
+# Test coverage
+coverage/
+
+# Playwright
+playwright-report/
+test-results/

@@ -1,0 +1,51 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main        # Auto-deploy on every push to main
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout code ────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Run type-check (catch errors before deploy) ──────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Type-check API
+        run: npx tsc --noEmit -p apps/api/tsconfig.json
+
+      # ── 3. SSH into EC2 and deploy ──────────────────────────
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          # Timeout for long builds (npm install + tsc + vite build)
+          command_timeout: 15m
+          script: |
+            set -e
+            cd /var/www/valuemitra
+
+            echo "→ Pulling latest code..."
+            git pull origin main
+
+            echo "→ Running deploy script..."
+            bash infrastructure/scripts/deploy.sh
+
+            echo "✅ Deploy complete!"
