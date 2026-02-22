@@ -7,7 +7,7 @@ import type { RegisterTenantInput, LoginInput } from '@valuemitra/shared';
 interface LoginResponse {
   success: boolean;
   data: {
-    user: { id: string; email: string; firstName: string; lastName: string; role: string; tenantId: string };
+    user: { id: string; email: string; fullName: string; role: string; tenantId: string };
     tenant: { id: string; name: string; slug: string; firmCode: string };
     accessToken: string;
     refreshToken: string;

@@ -14,7 +14,7 @@ interface Assignment {
   inspectionDate: string | null;
   reportDueDate: string | null;
   client: { name: string; bankCode: string | null };
-  assignedTo: { firstName: string; lastName: string } | null;
+  assignedTo: { fullName: string } | null;
   createdAt: string;
 }
 
