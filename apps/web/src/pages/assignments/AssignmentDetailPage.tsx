@@ -1,9 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, FileDown, Upload, Trash2, Bot, Lock, Send, CheckCircle2, XCircle } from 'lucide-react';
+import {
+  ArrowLeft, FileDown, Upload, Trash2, Bot, Lock, Send,
+  CheckCircle2, XCircle, Plus, Save, TrendingUp, Building2, DollarSign,
+} from 'lucide-react';
 import { useAssignment } from '../../api/hooks/useAssignments.js';
 import { useDocuments, useUploadDocument, useDeleteDocument } from '../../api/hooks/useDocuments.js';
-import { useValuationRuns, useCreateValuationRun, useFinalizeValuation, useRequestAIValuation } from '../../api/hooks/useValuation.js';
+import {
+  useValuationRuns, useCreateValuationRun, useUpdateMarket, useUpdateCost,
+  useUpdateIncome, useFinalizeValuation, useRequestAIValuation,
+  type ComparableSale,
+} from '../../api/hooks/useValuation.js';
 import { useReports, useGenerateReport, useReportTemplates } from '../../api/hooks/useReports.js';
 import { useSubmitForReview, useAdvanceReview, useRejectReview } from '../../api/hooks/useReview.js';
 import { usePermissions } from '../../hooks/usePermissions.js';
@@ -17,6 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select.js';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog.js';
 import { Textarea } from '../../components/ui/textarea.js';
+import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { Separator } from '../../components/ui/separator.js';
 import { useToast } from '../../hooks/use-toast.js';
@@ -27,6 +35,8 @@ function fmt(n?: number | null) {
   if (n == null) return '—';
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 }
+
+function num(s: string): number { return parseFloat(s) || 0; }
 
 const OCR_BADGE: Record<string, string> = {
   PENDING:      'bg-slate-100 text-slate-600',
@@ -53,9 +63,7 @@ const DOC_TYPES = [
   { value: 'OTHER',                  label: 'Other' },
 ];
 
-const REVIEW_STEPS = [
-  'INTERNAL_REVIEW', 'CLIENT_BANK_REVIEW', 'COMPLIANCE_CHECK', 'APPROVED', 'DELIVERED',
-];
+const REVIEW_STEPS = ['INTERNAL_REVIEW', 'CLIENT_BANK_REVIEW', 'COMPLIANCE_CHECK', 'APPROVED', 'DELIVERED'];
 
 // ─── Documents Tab ─────────────────────────────────────────
 function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: boolean }) {
@@ -97,10 +105,7 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
                   </SelectContent>
                 </Select>
               </div>
-              <Label
-                htmlFor="doc-upload"
-                className="cursor-pointer"
-              >
+              <Label htmlFor="doc-upload" className="cursor-pointer">
                 <Button asChild disabled={uploading} variant="outline">
                   <span>
                     <Upload className="h-4 w-4 mr-2" />
@@ -113,7 +118,6 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
           </CardContent>
         </Card>
       )}
-
       <div className="border rounded-lg">
         <Table>
           <TableHeader>
@@ -136,18 +140,11 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
             {(docs ?? []).map((doc) => (
               <TableRow key={doc.id}>
                 <TableCell>
-                  <a
-                    href={doc.signedUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    <FileDown className="h-3 w-3" />
-                    {doc.fileName}
+                  <a href={doc.signedUrl} target="_blank" rel="noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1">
+                    <FileDown className="h-3 w-3" />{doc.fileName}
                   </a>
-                  <span className="text-xs text-muted-foreground">
-                    {(doc.fileSize / 1024).toFixed(0)} KB
-                  </span>
+                  <span className="text-xs text-muted-foreground">{(doc.fileSize / 1024).toFixed(0)} KB</span>
                 </TableCell>
                 <TableCell className="text-sm">{doc.documentType.replace(/_/g, ' ')}</TableCell>
                 <TableCell>
@@ -160,15 +157,10 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
                 </TableCell>
                 {canEdit && (
                   <TableCell>
-                    <button
-                      onClick={() =>
-                        deleteDoc(
-                          { id: doc.id, assignmentId },
-                          { onSuccess: () => toast({ title: 'Deleted' }), onError: () => toast({ title: 'Delete failed', variant: 'destructive' }) },
-                        )
-                      }
-                      className="text-muted-foreground hover:text-destructive"
-                    >
+                    <button onClick={() => deleteDoc({ id: doc.id, assignmentId }, {
+                      onSuccess: () => toast({ title: 'Deleted' }),
+                      onError: () => toast({ title: 'Delete failed', variant: 'destructive' }),
+                    })} className="text-muted-foreground hover:text-destructive">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </TableCell>
@@ -182,122 +174,497 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
   );
 }
 
+// ─── Market Comparable Dialog ───────────────────────────────
+const EMPTY_COMP: Omit<ComparableSale, 'id'> = {
+  address: '', locality: '', transactionDate: '', totalArea: 0, salePrice: 0,
+  sourceType: 'MANUAL', adjustmentTime: 0, adjustmentLocation: 0,
+  adjustmentSize: 0, adjustmentCondition: 0, adjustmentAmenities: 0,
+};
+
+function ComparableDialog({
+  open, onClose, onSave,
+}: { open: boolean; onClose: () => void; onSave: (c: Omit<ComparableSale, 'id'>) => void }) {
+  const [form, setForm] = useState({ ...EMPTY_COMP, transactionDate: new Date().toISOString().slice(0, 10) });
+  const f = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((prev) => ({ ...prev, [field]: e.target.type === 'number' ? num(e.target.value) : e.target.value }));
+
+  function handleSave() {
+    if (!form.address || !form.locality || !form.totalArea || !form.salePrice) return;
+    const dateISO = form.transactionDate.includes('T') ? form.transactionDate : `${form.transactionDate}T00:00:00.000Z`;
+    onSave({ ...form, transactionDate: dateISO });
+    setForm({ ...EMPTY_COMP, transactionDate: new Date().toISOString().slice(0, 10) });
+    onClose();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Add Comparable Sale</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2 space-y-1">
+            <Label>Address *</Label>
+            <Input value={form.address} onChange={f('address')} placeholder="Full address of comparable property" />
+          </div>
+          <div className="space-y-1">
+            <Label>Locality *</Label>
+            <Input value={form.locality} onChange={f('locality')} placeholder="e.g. Thane West" />
+          </div>
+          <div className="space-y-1">
+            <Label>Transaction Date *</Label>
+            <Input type="date" value={form.transactionDate} onChange={f('transactionDate')} />
+          </div>
+          <div className="space-y-1">
+            <Label>Total Area (sq.ft.) *</Label>
+            <Input type="number" value={form.totalArea || ''} onChange={f('totalArea')} placeholder="1200" />
+          </div>
+          <div className="space-y-1">
+            <Label>Sale Price (₹) *</Label>
+            <Input type="number" value={form.salePrice || ''} onChange={f('salePrice')} placeholder="5000000" />
+          </div>
+          <div className="space-y-1">
+            <Label>Source</Label>
+            <Select value={form.sourceType} onValueChange={(v) => setForm((p) => ({ ...p, sourceType: v as ComparableSale['sourceType'] }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="IGRS">IGRS / IGR Portal</SelectItem>
+                <SelectItem value="LISTING">Market Listing</SelectItem>
+                <SelectItem value="MANUAL">Manual Entry</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Rate / sq.ft.</Label>
+            <Input readOnly value={form.totalArea > 0 ? `₹${Math.round(form.salePrice / form.totalArea).toLocaleString('en-IN')}` : '—'} className="bg-muted" />
+          </div>
+        </div>
+        <Separator />
+        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Adjustments (%) — positive = better than subject</p>
+        <div className="grid grid-cols-5 gap-3">
+          {(['adjustmentTime', 'adjustmentLocation', 'adjustmentSize', 'adjustmentCondition', 'adjustmentAmenities'] as const).map((k) => (
+            <div key={k} className="space-y-1">
+              <Label className="text-xs">{k.replace('adjustment', '')}</Label>
+              <Input type="number" value={(form[k] as number) || ''} onChange={f(k)} placeholder="0" className="text-sm" />
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} disabled={!form.address || !form.locality || !form.totalArea || !form.salePrice}>
+            Add Comparable
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Valuation Tab ─────────────────────────────────────────
 function ValuationTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: boolean }) {
   const { toast } = useToast();
   const { data: runs, isLoading } = useValuationRuns(assignmentId);
   const { mutate: createRun, isPending: creating } = useCreateValuationRun();
+  const { mutate: updateMarket, isPending: savingMarket } = useUpdateMarket();
+  const { mutate: updateCost, isPending: savingCost } = useUpdateCost();
+  const { mutate: updateIncome, isPending: savingIncome } = useUpdateIncome();
   const { mutate: finalize, isPending: finalizing } = useFinalizeValuation();
   const { mutate: requestAI, isPending: aiLoading } = useRequestAIValuation();
 
   const run = runs?.[0];
 
+  // Market comparables state
+  const [comparables, setComparables] = useState<Omit<ComparableSale, 'id'>[]>([]);
+  const [showCompDialog, setShowCompDialog] = useState(false);
+  const [correlatedValue, setCorrelatedValue] = useState('');
+
+  // Cost approach state
+  const [cost, setCost] = useState({
+    landArea: '', landRatePerSqM: '', landRateSource: 'market',
+    buildingPlinthArea: '', buildingRatePerSqM: '',
+    ageYears: '', totalLifeYears: '60',
+    depreciationMethod: 'STRAIGHT_LINE',
+    servicesCostPercent: '5',
+  });
+
+  // Income approach state
+  const [income, setIncome] = useState({
+    grossRent: '', vacancyRate: '5', operatingExpenses: '', capitalizationRate: '8',
+  });
+
+  // Finalize state
+  const [weights, setWeights] = useState({ market: '33', cost: '33', income: '34' });
+  const [notes, setNotes] = useState('');
+
+  // Sync from server data when run loads
+  useEffect(() => {
+    if (!run) return;
+    if (run.comparables?.length) setComparables(run.comparables as Omit<ComparableSale, 'id'>[]);
+    if (run.correlatedValue) setCorrelatedValue(String(run.correlatedValue));
+    if (run.landRateUsed) setCost((p) => ({ ...p, landRatePerSqM: String(run.landRateUsed ?? '') }));
+    if (run.buildingPlinthArea) setCost((p) => ({ ...p, buildingPlinthArea: String(run.buildingPlinthArea ?? '') }));
+    if (run.buildingRatePerSqM) setCost((p) => ({ ...p, buildingRatePerSqM: String(run.buildingRatePerSqM ?? '') }));
+    if (run.grossRent) setIncome((p) => ({ ...p, grossRent: String(run.grossRent ?? '') }));
+    if (run.capitalizationRate) setIncome((p) => ({ ...p, capitalizationRate: String((run.capitalizationRate ?? 0) * 100) }));
+    if (run.reconciliationNotes) setNotes(run.reconciliationNotes);
+    if (run.marketApproachWeight) setWeights({ market: String((run.marketApproachWeight ?? 0) * 100), cost: String((run.costApproachWeight ?? 0) * 100), income: String((run.incomeApproachWeight ?? 0) * 100) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id]);
+
   function handleCreate(approach: ValuationApproach) {
-    createRun(
-      { assignmentId, approach },
-      {
-        onSuccess: () => toast({ title: 'Valuation run started' }),
-        onError: () => toast({ title: 'Failed', variant: 'destructive' }),
-      },
-    );
+    createRun({ assignmentId, approach }, {
+      onSuccess: () => toast({ title: 'Valuation run started' }),
+      onError: () => toast({ title: 'Failed to create run', variant: 'destructive' }),
+    });
+  }
+
+  function handleSaveMarket() {
+    if (!run || comparables.length === 0) return;
+    const dateFixed = comparables.map((c) => ({
+      ...c,
+      transactionDate: c.transactionDate.includes('T') ? c.transactionDate : `${c.transactionDate}T00:00:00.000Z`,
+    }));
+    updateMarket({ id: run.id, assignmentId, data: { comparables: dateFixed, correlatedValue: num(correlatedValue) || undefined } }, {
+      onSuccess: () => toast({ title: 'Market data saved' }),
+      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed', variant: 'destructive' }),
+    });
+  }
+
+  function handleSaveCost() {
+    if (!run) return;
+    updateCost({ id: run.id, assignmentId, data: {
+      landArea: num(cost.landArea) || undefined,
+      landRatePerSqM: num(cost.landRatePerSqM) || undefined,
+      landRateSource: cost.landRateSource,
+      buildingPlinthArea: num(cost.buildingPlinthArea) || undefined,
+      buildingRatePerSqM: num(cost.buildingRatePerSqM) || undefined,
+      ageYears: num(cost.ageYears) || undefined,
+      totalLifeYears: num(cost.totalLifeYears) || undefined,
+      depreciationMethod: cost.depreciationMethod,
+      servicesCostPercent: num(cost.servicesCostPercent) || undefined,
+    }}, {
+      onSuccess: () => toast({ title: 'Cost data saved & computed' }),
+      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed', variant: 'destructive' }),
+    });
+  }
+
+  function handleSaveIncome() {
+    if (!run) return;
+    updateIncome({ id: run.id, assignmentId, data: {
+      grossRent: num(income.grossRent),
+      vacancyRate: num(income.vacancyRate) / 100,
+      operatingExpenses: num(income.operatingExpenses),
+      capitalizationRate: num(income.capitalizationRate) / 100,
+    }}, {
+      onSuccess: () => toast({ title: 'Income data saved & computed' }),
+      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed', variant: 'destructive' }),
+    });
   }
 
   function handleFinalize() {
     if (!run) return;
-    finalize(
-      { id: run.id, assignmentId, data: { marketWeight: 33, costWeight: 33, incomeWeight: 34 } },
-      {
-        onSuccess: () => toast({ title: 'Valuation finalized!' }),
-        onError: () => toast({ title: 'Finalization failed', variant: 'destructive' }),
-      },
-    );
+    const mw = num(weights.market) / 100;
+    const cw = num(weights.cost) / 100;
+    const iw = num(weights.income) / 100;
+    const total = mw + cw + iw;
+    if (Math.abs(total - 1) > 0.001 && total !== 0) {
+      toast({ title: 'Weights must sum to 100%', variant: 'destructive' }); return;
+    }
+    finalize({ id: run.id, assignmentId, data: {
+      marketApproachWeight: mw || undefined,
+      costApproachWeight: cw || undefined,
+      incomeApproachWeight: iw || undefined,
+      reconciliationNotes: notes || undefined,
+    }}, {
+      onSuccess: () => toast({ title: 'Valuation finalized!' }),
+      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Finalization failed', variant: 'destructive' }),
+    });
   }
 
   if (isLoading) return <LoadingSpinner />;
 
+  // No run — choose approach
   if (!run) {
     return (
       <Card>
-        <CardContent className="pt-6 text-center space-y-4">
-          <p className="text-muted-foreground text-sm">No valuation run started yet.</p>
-          {canEdit && (
-            <div className="flex gap-2 justify-center flex-wrap">
-              {(['MARKET_COMPARISON', 'COST_APPROACH', 'INCOME_APPROACH', 'COMBINED'] as ValuationApproach[]).map((a) => (
-                <Button key={a} variant="outline" size="sm" disabled={creating} onClick={() => handleCreate(a)}>
-                  {a.replace(/_/g, ' ')}
-                </Button>
-              ))}
-            </div>
-          )}
+        <CardHeader><CardTitle className="text-base">Start Valuation</CardTitle><CardDescription>Choose the primary valuation approach</CardDescription></CardHeader>
+        <CardContent className="flex gap-2 flex-wrap">
+          {(['MARKET_COMPARISON', 'COST_APPROACH', 'INCOME_APPROACH', 'COMBINED'] as ValuationApproach[]).map((a) => (
+            <Button key={a} variant="outline" disabled={creating || !canEdit} onClick={() => handleCreate(a)}>
+              {a === 'MARKET_COMPARISON' && <TrendingUp className="h-4 w-4 mr-2" />}
+              {a === 'COST_APPROACH' && <Building2 className="h-4 w-4 mr-2" />}
+              {a === 'INCOME_APPROACH' && <DollarSign className="h-4 w-4 mr-2" />}
+              {a.replace(/_/g, ' ')}
+            </Button>
+          ))}
         </CardContent>
       </Card>
     );
   }
 
+  const approach = run.approach;
+  const isMarket = approach === 'MARKET_COMPARISON' || approach === 'COMBINED';
+  const isCost   = approach === 'COST_APPROACH'   || approach === 'COMBINED';
+  const isIncome = approach === 'INCOME_APPROACH'  || approach === 'COMBINED';
+
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold">{run.approach.replace(/_/g, ' ')}</h3>
-          <p className="text-xs text-muted-foreground">
+          <span className="font-semibold">{approach.replace(/_/g, ' ')}</span>
+          {' '}
+          <Badge variant={run.isFinalized ? 'default' : 'secondary'}>
             {run.isFinalized ? '✅ Finalized' : 'In progress'}
-          </p>
+          </Badge>
         </div>
-        <div className="flex gap-2">
-          {canEdit && !run.isFinalized && (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={aiLoading}
-                onClick={() => requestAI(assignmentId, {
-                  onSuccess: () => toast({ title: 'AI opinion requested' }),
-                  onError: () => toast({ title: 'AI failed', variant: 'destructive' }),
-                })}
-              >
-                <Bot className="h-4 w-4 mr-1" /> AI Advisory
-              </Button>
-              <Button size="sm" disabled={finalizing} onClick={handleFinalize}>
-                <Lock className="h-4 w-4 mr-1" /> Finalize
-              </Button>
-            </>
-          )}
-        </div>
+        {canEdit && !run.isFinalized && (
+          <Button size="sm" variant="outline" disabled={aiLoading} onClick={() => requestAI(assignmentId, {
+            onSuccess: () => toast({ title: 'AI opinion requested' }),
+            onError: () => toast({ title: 'AI advisory failed', variant: 'destructive' }),
+          })}>
+            <Bot className="h-4 w-4 mr-1" /> AI Advisory
+          </Button>
+        )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      {/* ── Market Comparison ── */}
+      {isMarket && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Market Value</CardTitle></CardHeader>
-          <CardContent><p className="text-xl font-bold">{fmt(run.costValue)}</p></CardContent>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-4 w-4" />Market Comparison</CardTitle>
+              {canEdit && !run.isFinalized && (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setShowCompDialog(true)}>
+                    <Plus className="h-3 w-3 mr-1" /> Add Comparable
+                  </Button>
+                  <Button size="sm" disabled={comparables.length === 0 || savingMarket} onClick={handleSaveMarket}>
+                    <Save className="h-3 w-3 mr-1" />{savingMarket ? 'Saving…' : 'Save'}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {comparables.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No comparables added yet. Click "Add Comparable" to begin.</p>
+            ) : (
+              <div className="border rounded text-sm overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Address / Locality</TableHead>
+                      <TableHead className="text-right">Area (sq.ft.)</TableHead>
+                      <TableHead className="text-right">Sale Price</TableHead>
+                      <TableHead className="text-right">Rate/sq.ft.</TableHead>
+                      <TableHead>Date</TableHead>
+                      {!run.isFinalized && <TableHead />}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {comparables.map((c, i) => (
+                      <TableRow key={i}>
+                        <TableCell>
+                          <div className="font-medium text-xs">{c.address}</div>
+                          <div className="text-muted-foreground text-xs">{c.locality}</div>
+                        </TableCell>
+                        <TableCell className="text-right">{c.totalArea.toLocaleString('en-IN')}</TableCell>
+                        <TableCell className="text-right">{fmt(c.salePrice)}</TableCell>
+                        <TableCell className="text-right text-primary font-semibold">
+                          {c.totalArea > 0 ? `₹${Math.round(c.salePrice / c.totalArea).toLocaleString('en-IN')}` : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs">{c.transactionDate ? new Date(c.transactionDate).toLocaleDateString('en-IN') : '—'}</TableCell>
+                        {!run.isFinalized && (
+                          <TableCell>
+                            <button onClick={() => setComparables((p) => p.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive">
+                              <XCircle className="h-4 w-4" />
+                            </button>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+            {run.correlatedValue && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Correlated Value:</span>
+                <span className="font-bold text-primary">{fmt(run.correlatedValue)}</span>
+              </div>
+            )}
+            {canEdit && !run.isFinalized && comparables.length > 0 && (
+              <div className="flex items-center gap-3">
+                <Label className="text-sm whitespace-nowrap">Adopted Value (₹)</Label>
+                <Input type="number" className="max-w-[200px]" value={correlatedValue} onChange={(e) => setCorrelatedValue(e.target.value)} placeholder="Override correlated value" />
+              </div>
+            )}
+          </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Cost Approach</CardTitle></CardHeader>
-          <CardContent><p className="text-xl font-bold">{fmt(run.costValue)}</p></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Income Approach</CardTitle></CardHeader>
-          <CardContent><p className="text-xl font-bold">{fmt(run.incomeValue)}</p></CardContent>
-        </Card>
-      </div>
+      )}
 
-      {run.finalValue && (
+      {/* ── Cost Approach ── */}
+      {isCost && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2"><Building2 className="h-4 w-4" />Cost Approach</CardTitle>
+              {canEdit && !run.isFinalized && (
+                <Button size="sm" disabled={savingCost} onClick={handleSaveCost}>
+                  <Save className="h-3 w-3 mr-1" />{savingCost ? 'Computing…' : 'Save & Compute'}
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <Label className="text-xs">Land Area (sq.m.)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.landArea} onChange={(e) => setCost((p) => ({ ...p, landArea: e.target.value }))} placeholder="500" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Land Rate (₹/sq.m.)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.landRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, landRatePerSqM: e.target.value }))} placeholder="15000" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Land Rate Source</Label>
+                <Select disabled={run.isFinalized || !canEdit} value={cost.landRateSource} onValueChange={(v) => setCost((p) => ({ ...p, landRateSource: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="govt_rr">Govt. Ready Reckoner</SelectItem>
+                    <SelectItem value="market">Market Rate</SelectItem>
+                    <SelectItem value="manual">Manual</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Building Plinth Area (sq.m.)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.buildingPlinthArea} onChange={(e) => setCost((p) => ({ ...p, buildingPlinthArea: e.target.value }))} placeholder="200" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Construction Rate (₹/sq.m.)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.buildingRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, buildingRatePerSqM: e.target.value }))} placeholder="25000" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Depreciation Method</Label>
+                <Select disabled={run.isFinalized || !canEdit} value={cost.depreciationMethod} onValueChange={(v) => setCost((p) => ({ ...p, depreciationMethod: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="STRAIGHT_LINE">Straight Line</SelectItem>
+                    <SelectItem value="WDV">Written Down Value</SelectItem>
+                    <SelectItem value="OBSERVED_CONDITION">Observed Condition</SelectItem>
+                    <SelectItem value="CPWD_SCHEDULE">CPWD Schedule</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Age of Building (years)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.ageYears} onChange={(e) => setCost((p) => ({ ...p, ageYears: e.target.value }))} placeholder="15" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Total Life (years)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.totalLifeYears} onChange={(e) => setCost((p) => ({ ...p, totalLifeYears: e.target.value }))} placeholder="60" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Services Cost (%)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.servicesCostPercent} onChange={(e) => setCost((p) => ({ ...p, servicesCostPercent: e.target.value }))} placeholder="5" />
+              </div>
+            </div>
+            {/* Computed results */}
+            {(run.landValue || run.costApproachValue) && (
+              <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                {run.landValue != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Land Value</p><p className="font-semibold">{fmt(run.landValue)}</p></div>}
+                {run.depreciatedValue != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Depr. Building Value</p><p className="font-semibold">{fmt(run.depreciatedValue)}</p></div>}
+                {run.costApproachValue != null && <div className="bg-primary/10 border border-primary/20 rounded p-3"><p className="text-xs text-muted-foreground">Cost Approach Value</p><p className="font-bold text-primary">{fmt(run.costApproachValue)}</p></div>}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Income Approach ── */}
+      {isIncome && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2"><DollarSign className="h-4 w-4" />Income Approach</CardTitle>
+              {canEdit && !run.isFinalized && (
+                <Button size="sm" disabled={savingIncome} onClick={handleSaveIncome}>
+                  <Save className="h-3 w-3 mr-1" />{savingIncome ? 'Computing…' : 'Save & Compute'}
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <Label className="text-xs">Monthly Gross Rent (₹)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.grossRent} onChange={(e) => setIncome((p) => ({ ...p, grossRent: e.target.value }))} placeholder="50000" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Vacancy Rate (%)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.vacancyRate} onChange={(e) => setIncome((p) => ({ ...p, vacancyRate: e.target.value }))} placeholder="5" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Annual Operating Expenses (₹)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.operatingExpenses} onChange={(e) => setIncome((p) => ({ ...p, operatingExpenses: e.target.value }))} placeholder="30000" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Cap Rate (%)</Label>
+                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.capitalizationRate} onChange={(e) => setIncome((p) => ({ ...p, capitalizationRate: e.target.value }))} placeholder="8" />
+              </div>
+            </div>
+            {run.incomeApproachValue != null && (
+              <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                {run.netOperatingIncome != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Net Operating Income (Annual)</p><p className="font-semibold">{fmt(run.netOperatingIncome)}</p></div>}
+                {run.capitalizationRate != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Cap Rate</p><p className="font-semibold">{((run.capitalizationRate) * 100).toFixed(2)}%</p></div>}
+                <div className="bg-primary/10 border border-primary/20 rounded p-3"><p className="text-xs text-muted-foreground">Income Approach Value</p><p className="font-bold text-primary">{fmt(run.incomeApproachValue)}</p></div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Finalize ── */}
+      {canEdit && !run.isFinalized && (
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Lock className="h-4 w-4" />Finalize Valuation</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            {approach === 'COMBINED' && (
+              <div className="grid grid-cols-3 gap-4">
+                {isMarket && <div className="space-y-1"><Label className="text-xs">Market Weight (%)</Label><Input type="number" value={weights.market} onChange={(e) => setWeights((p) => ({ ...p, market: e.target.value }))} /></div>}
+                {isCost && <div className="space-y-1"><Label className="text-xs">Cost Weight (%)</Label><Input type="number" value={weights.cost} onChange={(e) => setWeights((p) => ({ ...p, cost: e.target.value }))} /></div>}
+                {isIncome && <div className="space-y-1"><Label className="text-xs">Income Weight (%)</Label><Input type="number" value={weights.income} onChange={(e) => setWeights((p) => ({ ...p, income: e.target.value }))} /></div>}
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label className="text-xs">Reconciliation Notes</Label>
+              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Explain your valuation rationale and adopted value…" rows={3} />
+            </div>
+            <Button disabled={finalizing} onClick={handleFinalize}>
+              <Lock className="h-4 w-4 mr-2" />{finalizing ? 'Finalizing…' : 'Finalize Valuation'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Final Value ── */}
+      {run.roundedValue != null && (
         <Card className="border-primary">
           <CardContent className="pt-4 flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Final Weighted Value</p>
-              <p className="text-3xl font-bold text-primary">{fmt(run.finalValue)}</p>
+              <p className="text-sm text-muted-foreground">Final Adopted Value</p>
+              <p className="text-3xl font-bold text-primary">{fmt(run.roundedValue)}</p>
             </div>
             {run.isFinalized && <Lock className="h-6 w-6 text-muted-foreground" />}
           </CardContent>
         </Card>
       )}
 
+      {/* ── AI Advisory ── */}
       {run.aiValuationResult && (
         <Card className="border-dashed">
           <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Bot className="h-4 w-4" /> AI Advisory Opinion
-            </CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><Bot className="h-4 w-4" /> AI Advisory Opinion</CardTitle>
             <CardDescription>Advisory only — does not override your decision</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -312,6 +679,9 @@ function ValuationTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
           </CardContent>
         </Card>
       )}
+
+      {/* ── Comparable dialog ── */}
+      <ComparableDialog open={showCompDialog} onClose={() => setShowCompDialog(false)} onSave={(c) => setComparables((p) => [...p, c])} />
     </div>
   );
 }
@@ -326,13 +696,10 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
 
   function handleGenerate() {
     if (!selectedTemplate) return;
-    generate(
-      { assignmentId, templateId: selectedTemplate },
-      {
-        onSuccess: () => toast({ title: 'Report generated' }),
-        onError: () => toast({ title: 'Generation failed', variant: 'destructive' }),
-      },
-    );
+    generate({ assignmentId, templateId: selectedTemplate }, {
+      onSuccess: () => toast({ title: 'Report generated successfully' }),
+      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Generation failed', variant: 'destructive' }),
+    });
   }
 
   if (isLoading) return <LoadingSpinner />;
@@ -344,9 +711,9 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
           <CardContent className="pt-4">
             <div className="flex items-end gap-3">
               <div className="space-y-1 flex-1">
-                <Label>Select Template</Label>
+                <Label>Select Report Template</Label>
                 <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
-                  <SelectTrigger><SelectValue placeholder="Choose a report template" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Choose a report template…" /></SelectTrigger>
                   <SelectContent>
                     {(templates ?? []).map((t) => (
                       <SelectItem key={t.id} value={t.id}>
@@ -363,12 +730,12 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
           </CardContent>
         </Card>
       )}
-
       <div className="border rounded-lg">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Template</TableHead>
+              <TableHead>Version</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Generated</TableHead>
               <TableHead>Downloads</TableHead>
@@ -377,25 +744,26 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
           <TableBody>
             {(reports ?? []).length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-8 text-sm">
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8 text-sm">
                   No reports generated yet.
                 </TableCell>
               </TableRow>
             )}
             {(reports ?? []).map((r) => (
               <TableRow key={r.id}>
-                <TableCell className="text-sm">{r.template?.name ?? '—'}</TableCell>
+                <TableCell className="text-sm">{(r as unknown as { template?: { name?: string } }).template?.name ?? '—'}</TableCell>
+                <TableCell className="text-sm">v{(r as unknown as { version?: number }).version ?? 1}</TableCell>
                 <TableCell><Badge variant="outline">{r.status}</Badge></TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {r.generatedAt ? new Date(r.generatedAt).toLocaleDateString('en-IN') : '—'}
+                  {(r as unknown as { generatedAt?: string }).generatedAt ? new Date((r as unknown as { generatedAt: string }).generatedAt).toLocaleDateString('en-IN') : '—'}
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-2">
-                    {r.pdfSignedUrl && (
-                      <a href={r.pdfSignedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">PDF</a>
+                    {(r as unknown as { pdfSignedUrl?: string }).pdfSignedUrl && (
+                      <a href={(r as unknown as { pdfSignedUrl: string }).pdfSignedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">PDF</a>
                     )}
-                    {r.docxSignedUrl && (
-                      <a href={r.docxSignedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">DOCX</a>
+                    {(r as unknown as { docxSignedUrl?: string }).docxSignedUrl && (
+                      <a href={(r as unknown as { docxSignedUrl: string }).docxSignedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">DOCX</a>
                     )}
                   </div>
                 </TableCell>
@@ -409,17 +777,12 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
 }
 
 // ─── Review Tab ─────────────────────────────────────────────
-function ReviewTab({
-  assignmentId,
-  status,
-  reports,
-}: { assignmentId: string; status: AssignmentStatus; reports: { id: string }[] }) {
+function ReviewTab({ assignmentId, status, reports }: { assignmentId: string; status: AssignmentStatus; reports: { id: string }[] }) {
   const { toast } = useToast();
   const { canReview, canEdit } = usePermissions();
   const { mutate: submit, isPending: submitting } = useSubmitForReview();
   const { mutate: advance, isPending: advancing } = useAdvanceReview();
   const { mutate: reject, isPending: rejecting } = useRejectReview();
-
   const [rejectDialog, setRejectDialog] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
@@ -428,10 +791,7 @@ function ReviewTab({
   const firstReport = reports?.[0];
 
   function handleSubmit() {
-    if (!firstReport) {
-      toast({ title: 'Generate a report first', variant: 'destructive' });
-      return;
-    }
+    if (!firstReport) { toast({ title: 'Generate a report first', variant: 'destructive' }); return; }
     submit({ assignmentId, data: { reportId: firstReport.id } }, {
       onSuccess: () => toast({ title: 'Submitted for review' }),
       onError: () => toast({ title: 'Submit failed', variant: 'destructive' }),
@@ -449,9 +809,9 @@ function ReviewTab({
             <div key={step} className="flex items-center flex-1 last:flex-none">
               <div className="flex flex-col items-center">
                 <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
-                  done   ? 'bg-green-500 border-green-500 text-white' :
+                  done ? 'bg-green-500 border-green-500 text-white' :
                   active ? 'border-primary bg-primary text-primary-foreground' :
-                           'border-muted-foreground/30 text-muted-foreground'
+                  'border-muted-foreground/30 text-muted-foreground'
                 }`}>
                   {done ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
                 </div>
@@ -466,74 +826,46 @@ function ReviewTab({
           );
         })}
       </div>
-
       <Separator />
-
-      {/* Actions */}
       <div className="flex gap-3 flex-wrap">
         {status === 'REPORT_DRAFT' && canEdit && (
           <Button disabled={submitting || !firstReport} onClick={handleSubmit}>
-            <Send className="h-4 w-4 mr-2" />
-            {submitting ? 'Submitting…' : 'Submit for Internal Review'}
+            <Send className="h-4 w-4 mr-2" />{submitting ? 'Submitting…' : 'Submit for Internal Review'}
           </Button>
         )}
-
         {isInReview && status !== 'DELIVERED' && canReview && (
           <>
-            <Button
-              disabled={advancing}
-              onClick={() => advance({ assignmentId }, {
-                onSuccess: () => toast({ title: 'Review advanced' }),
-                onError: () => toast({ title: 'Failed', variant: 'destructive' }),
-              })}
-            >
-              <CheckCircle2 className="h-4 w-4 mr-2" />
-              {advancing ? 'Advancing…' : 'Advance'}
+            <Button disabled={advancing} onClick={() => advance({ assignmentId }, {
+              onSuccess: () => toast({ title: 'Review advanced' }),
+              onError: () => toast({ title: 'Failed', variant: 'destructive' }),
+            })}>
+              <CheckCircle2 className="h-4 w-4 mr-2" />{advancing ? 'Advancing…' : 'Advance'}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={() => setRejectDialog(true)}
-            >
+            <Button variant="destructive" onClick={() => setRejectDialog(true)}>
               <XCircle className="h-4 w-4 mr-2" /> Reject
             </Button>
           </>
         )}
-
         {status === 'DELIVERED' && (
           <div className="flex items-center gap-2 text-green-600">
-            <CheckCircle2 className="h-5 w-5" />
-            <span className="font-medium">Report delivered</span>
+            <CheckCircle2 className="h-5 w-5" /><span className="font-medium">Report delivered</span>
           </div>
         )}
       </div>
-
-      {/* Reject Dialog */}
       <Dialog open={rejectDialog} onOpenChange={setRejectDialog}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reject & Return to Draft</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Reject & Return to Draft</DialogTitle></DialogHeader>
           <div className="space-y-2">
             <Label>Reason (required, min 10 characters)</Label>
-            <Textarea
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="Explain why the report is being returned…"
-              rows={4}
-            />
+            <Textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="Explain why the report is being returned…" rows={4} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRejectDialog(false)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              disabled={rejectReason.length < 10 || rejecting}
-              onClick={() =>
-                reject({ assignmentId, data: { reason: rejectReason } }, {
-                  onSuccess: () => { toast({ title: 'Rejected — back to draft' }); setRejectDialog(false); },
-                  onError: () => toast({ title: 'Reject failed', variant: 'destructive' }),
-                })
-              }
-            >
+            <Button variant="destructive" disabled={rejectReason.length < 10 || rejecting}
+              onClick={() => reject({ assignmentId, data: { reason: rejectReason } }, {
+                onSuccess: () => { toast({ title: 'Rejected — back to draft' }); setRejectDialog(false); },
+                onError: () => toast({ title: 'Reject failed', variant: 'destructive' }),
+              })}>
               Confirm Reject
             </Button>
           </DialogFooter>
@@ -555,6 +887,9 @@ export default function AssignmentDetailPage() {
   if (isError || !assignment) return <p className="text-destructive text-sm">Assignment not found.</p>;
 
   const prop = (assignment as unknown as { property?: { addressLine1?: string; city?: string; state?: string; landAreaSqM?: number; builtUpAreaSqM?: number } })?.property;
+  const client = (assignment as unknown as { client?: { fullName?: string; companyName?: string; bankName?: string; isBank?: boolean; clientType?: string } })?.client;
+  const clientName = client?.isBank ? (client.bankName ?? client.companyName) :
+    (client?.clientType === 'INDIVIDUAL' ? client.fullName : (client?.companyName ?? client?.fullName));
   const status = assignment.status as AssignmentStatus;
 
   return (
@@ -570,7 +905,7 @@ export default function AssignmentDetailPage() {
             <StatusBadge status={status} />
           </div>
           <p className="text-muted-foreground text-sm">
-            {assignment.client.name} · {assignment.propertyType?.replace(/_/g, ' ')} · {assignment.propertyCity}
+            {clientName ?? '—'} · {assignment.propertyType?.replace(/_/g, ' ')} · {assignment.propertyCity}
           </p>
         </div>
       </div>
@@ -584,24 +919,22 @@ export default function AssignmentDetailPage() {
           <TabsTrigger value="review">Review</TabsTrigger>
         </TabsList>
 
-        {/* Overview */}
         <TabsContent value="overview">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
               <CardHeader><CardTitle className="text-base">Property</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <div><span className="text-muted-foreground">Address: </span>{prop?.addressLine1 ?? assignment.propertyAddress}</div>
+                <div><span className="text-muted-foreground">Address: </span>{prop?.addressLine1 ?? (assignment as unknown as { propertyAddress?: string }).propertyAddress}</div>
                 <div><span className="text-muted-foreground">City: </span>{prop?.city ?? assignment.propertyCity}</div>
                 <div><span className="text-muted-foreground">State: </span>{prop?.state}</div>
                 {prop?.landAreaSqM && <div><span className="text-muted-foreground">Land Area: </span>{prop.landAreaSqM} sqm</div>}
                 {prop?.builtUpAreaSqM && <div><span className="text-muted-foreground">Built-up: </span>{prop.builtUpAreaSqM} sqm</div>}
               </CardContent>
             </Card>
-
             <Card>
               <CardHeader><CardTitle className="text-base">Assignment Info</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <div><span className="text-muted-foreground">Client: </span>{assignment.client.name}</div>
+                <div><span className="text-muted-foreground">Client: </span>{clientName ?? '—'}</div>
                 <div><span className="text-muted-foreground">Purpose: </span>{(assignment as unknown as { purposeOfValuation?: string }).purposeOfValuation?.replace(/_/g, ' ')}</div>
                 <div><span className="text-muted-foreground">Inspection: </span>{assignment.inspectionDate ? new Date(assignment.inspectionDate).toLocaleDateString('en-IN') : '—'}</div>
                 {(assignment as unknown as { finalValue?: number }).finalValue && (
@@ -612,28 +945,20 @@ export default function AssignmentDetailPage() {
           </div>
         </TabsContent>
 
-        {/* Documents */}
         <TabsContent value="documents">
           <DocumentsTab assignmentId={assignmentId!} canEdit={canEdit} />
         </TabsContent>
 
-        {/* Valuation */}
         <TabsContent value="valuation">
           <ValuationTab assignmentId={assignmentId!} canEdit={canEdit} />
         </TabsContent>
 
-        {/* Reports */}
         <TabsContent value="reports">
           <ReportsTab assignmentId={assignmentId!} canEdit={canEdit} />
         </TabsContent>
 
-        {/* Review */}
         <TabsContent value="review">
-          <ReviewTab
-            assignmentId={assignmentId!}
-            status={status}
-            reports={reportsData ?? []}
-          />
+          <ReviewTab assignmentId={assignmentId!} status={status} reports={reportsData ?? []} />
         </TabsContent>
       </Tabs>
     </div>

@@ -95,6 +95,7 @@ export interface ReportData {
   // Firm details
   firmName: string;
   firmAddress: string;
+  firmCity: string;
   firmGstin: string;
   firmPhone: string;
   firmEmail: string;
@@ -144,6 +145,7 @@ export interface ReportData {
   // Under-construction specific
   percentageCompletion?: string;
   expectedHandoverDate?: string;
+  // presentStageValue is in the extended valuation fields section below
 
   // Government rates
   govtRateYear: string;
@@ -159,6 +161,15 @@ export interface ReportData {
   fairMarketValue: string;
   realizableValue: string;
   distressSaleValue: string;
+
+  // Extended valuation fields (flat / commercial templates)
+  compositeRatePerSqFt?: string;   // ₹/sq.ft composite rate for flats
+  carParkingCount?: string;        // Number of car parking slots
+  carParkingValuePerUnit?: string; // Value per parking slot
+  carParkingTotalValue?: string;   // Total car parking value
+
+  // Under-construction: value at current stage
+  presentStageValue?: string;
 
   // Images (base64 or S3 signed URLs)
   propertyPhoto1?: string;

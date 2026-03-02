@@ -5,15 +5,57 @@ import type { ValuationApproach } from '@valuemitra/shared';
 const VALUATION_KEY = 'valuation';
 const AI_KEY = 'ai-valuation';
 
+export interface ComparableSale {
+  id?: string;
+  address: string;
+  locality: string;
+  transactionDate: string;
+  totalArea: number;
+  salePrice: number;
+  ratePerSqFt?: number;
+  sourceType: 'IGRS' | 'LISTING' | 'MANUAL';
+  sourceUrl?: string;
+  adjustmentTime?: number;
+  adjustmentLocation?: number;
+  adjustmentSize?: number;
+  adjustmentCondition?: number;
+  adjustmentAmenities?: number;
+  adjustedValue?: number;
+}
+
 export interface ValuationRun {
   id: string;
   assignmentId: string;
   approach: ValuationApproach;
-  marketComparables?: unknown;
-  costInputs?: unknown;
-  costValue?: number;
-  incomeInputs?: unknown;
-  incomeValue?: number;
+  version: number;
+  isFinalized: boolean;
+  comparables?: ComparableSale[];
+  correlatedValue?: number;
+  landValue?: number;
+  landRateUsed?: number;
+  landRateSource?: string;
+  buildingPlinthArea?: number;
+  buildingRatePerSqM?: number;
+  replacementCost?: number;
+  depreciationMethod?: string;
+  depreciationRate?: number;
+  depreciationAmount?: number;
+  depreciatedValue?: number;
+  servicesCost?: number;
+  costApproachValue?: number;
+  grossRent?: number;
+  vacancyRate?: number;
+  effectiveGrossIncome?: number;
+  operatingExpenses?: number;
+  netOperatingIncome?: number;
+  capitalizationRate?: number;
+  incomeApproachValue?: number;
+  marketApproachWeight?: number;
+  costApproachWeight?: number;
+  incomeApproachWeight?: number;
+  weightedValue?: number;
+  roundedValue?: number;
+  reconciliationNotes?: string;
   aiValuationResult?: {
     suggestedValueLow: number;
     suggestedValueMid: number;
@@ -24,14 +66,8 @@ export interface ValuationRun {
     marketObservations: string[];
     riskFactors: string[];
   };
-  compositeWeights?: {
-    marketWeight: number;
-    costWeight: number;
-    incomeWeight: number;
-  };
-  finalValue?: number;
-  isFinalized: boolean;
   createdAt: string;
+  updatedAt: string;
 }
 
 export function useValuationRuns(assignmentId: string) {

@@ -265,6 +265,7 @@ export async function buildReportData(
     // Firm details
     firmName: fmt(tenant.name),
     firmAddress,
+    firmCity: fmt(tenant.city),
     firmGstin: fmt(tenant.gstin),
     firmPhone: fmt(tenant.phone),
     firmEmail: fmt(tenant.email),
@@ -329,6 +330,25 @@ export async function buildReportData(
     fairMarketValue: fmtCurrency(fairMarketValue),
     realizableValue: fmtCurrency(realizableValue),
     distressSaleValue: fmtCurrency(distressSaleValue),
+
+    // Extended valuation fields (computed where possible)
+    compositeRatePerSqFt: (() => {
+      if (finalValueNum > 0 && property?.builtUpAreaSqFt) {
+        const sqft = Number(property.builtUpAreaSqFt);
+        if (sqft > 0) return fmtDecimal(finalValueNum / sqft, 0);
+      }
+      return undefined;
+    })(),
+    carParkingCount: undefined,
+    carParkingValuePerUnit: undefined,
+    carParkingTotalValue: undefined,
+    presentStageValue: (() => {
+      if (assignment.percentageCompletion && finalValueNum > 0) {
+        const pct = Number(assignment.percentageCompletion);
+        return fmtCurrency(Math.round(finalValueNum * pct / 100));
+      }
+      return undefined;
+    })(),
 
     // Images (URLs to be resolved at generation time)
     rvSignature: valuer.signatureUrl ? fmt(valuer.signatureUrl) : undefined,
