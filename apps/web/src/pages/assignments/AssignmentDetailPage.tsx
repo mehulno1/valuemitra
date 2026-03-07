@@ -14,8 +14,9 @@ import {
 } from '../../api/hooks/useValuation.js';
 import { useReports, useGenerateReport, useReportTemplates } from '../../api/hooks/useReports.js';
 import { useSubmitForReview, useAdvanceReview, useRejectReview, useDeliverFinalReport } from '../../api/hooks/useReview.js';
-import { usePropertyData } from '../../api/hooks/usePropertyData.js';
+import { usePropertyData, useExtractPropertyData, useSavePropertyData } from '../../api/hooks/usePropertyData.js';
 import { useInspection } from '../../api/hooks/useInspections.js';
+import type { ExtractedPropertyData } from '@valuemitra/shared';
 import { usePermissions } from '../../hooks/usePermissions.js';
 import { LoadingSpinner } from '../../components/shared/LoadingSpinner.js';
 import { StatusBadge } from '../../components/shared/StatusBadge.js';
@@ -94,12 +95,67 @@ const DOC_TYPES = [
 const REVIEW_STEPS = ['INTERNAL_REVIEW', 'CLIENT_BANK_REVIEW', 'COMPLIANCE_CHECK', 'APPROVED', 'DELIVERED'];
 
 // ─── Documents Tab ─────────────────────────────────────────
+// Human-readable labels for extracted fields shown in the review dialog
+const EXTRACTED_LABELS: Array<{ key: keyof ExtractedPropertyData; label: string }> = [
+  { key: 'ownerNames',           label: 'Owner Name(s)' },
+  { key: 'ownershipNature',      label: 'Ownership Nature' },
+  { key: 'ownerShareDetails',    label: 'Share Details' },
+  { key: 'developerName',        label: 'Developer / Builder' },
+  { key: 'surveyNo',             label: 'Survey No.' },
+  { key: 'hissaNo',              label: 'Hissa No.' },
+  { key: 'ctsSurveyNo',          label: 'CTS / City Survey No.' },
+  { key: 'municipalNo',          label: 'Municipal No.' },
+  { key: 'societyName',          label: 'Society Name' },
+  { key: 'buildingName',         label: 'Building Name' },
+  { key: 'wingName',             label: 'Wing / Tower' },
+  { key: 'flatNo',               label: 'Flat / Unit No.' },
+  { key: 'floor',                label: 'Floor' },
+  { key: 'reraNo',               label: 'RERA No.' },
+  { key: 'taluka',               label: 'Taluka' },
+  { key: 'village',              label: 'Village / Mouje' },
+  { key: 'landmark',             label: 'Landmark' },
+  { key: 'municipalCorporation', label: 'Municipal Corporation' },
+  { key: 'landAreaSqM',          label: 'Land Area (Sq.M)' },
+  { key: 'builtUpAreaSqM',       label: 'Built-up Area (Sq.M)' },
+  { key: 'carpetAreaSqM',        label: 'Carpet Area (Sq.M)' },
+  { key: 'superBuiltUpAreaSqM',  label: 'Super Built-up Area (Sq.M)' },
+  { key: 'unitConfiguration',    label: 'Unit Configuration' },
+  { key: 'udsArea',              label: 'UDS Area' },
+  { key: 'udsUnit',              label: 'UDS Unit' },
+  { key: 'numberOfFloors',       label: 'No. of Floors' },
+  { key: 'yearOfConstruction',   label: 'Year of Construction' },
+  { key: 'ageOfBuilding',        label: 'Age of Building (yrs)' },
+  { key: 'structureType',        label: 'Structure Type' },
+  { key: 'zoningClassification', label: 'Zoning Classification' },
+  { key: 'dpZone',               label: 'DP Zone' },
+  { key: 'naOrderDetails',       label: 'NA Order Details' },
+  { key: 'miDcPlotNo',           label: 'MIDC Plot No.' },
+  { key: 'approvedPlanAuthority',label: 'Approved Plan Authority' },
+  { key: 'approvedPlanDate',     label: 'Approved Plan Date' },
+  { key: 'approvedPlanNo',       label: 'Approved Plan No.' },
+  { key: 'registrationNo',       label: 'Registration No.' },
+  { key: 'registrationDate',     label: 'Registration Date' },
+  { key: 'indexIINo',            label: 'Index II No.' },
+  { key: 'agreementValue',       label: 'Agreement Value (₹)' },
+  { key: 'stampDutyPaid',        label: 'Stamp Duty Paid (₹)' },
+  { key: 'occupancyCertificateNo',label: 'OC No.' },
+  { key: 'sharesCertificateNo',  label: 'Share Certificate No.' },
+];
+
 function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: boolean }) {
   const { toast } = useToast();
   const { data: docs, isLoading } = useDocuments(assignmentId);
   const { mutate: upload, isPending: uploading } = useUploadDocument();
   const { mutate: deleteDoc } = useDeleteDocument();
+  const { mutate: extract, isPending: extracting } = useExtractPropertyData();
+  const { mutate: applyData, isPending: applying } = useSavePropertyData();
   const [docType, setDocType] = useState<string>('OTHER');
+  const [extractedData, setExtractedData] = useState<ExtractedPropertyData | null>(null);
+  const [showReview, setShowReview] = useState(false);
+
+  const ocrReadyCount = (docs ?? []).filter(
+    (d) => d.ocrStatus === 'COMPLETED' || d.ocrStatus === 'NEEDS_REVIEW',
+  ).length;
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -114,10 +170,75 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
     e.target.value = '';
   }
 
+  function handleExtract() {
+    extract(assignmentId, {
+      onSuccess: (data) => {
+        setExtractedData(data);
+        setShowReview(true);
+      },
+      onError: (err: Error) => {
+        toast({ title: 'Extraction failed', description: err.message, variant: 'destructive' });
+      },
+    });
+  }
+
+  function handleApply() {
+    if (!extractedData) return;
+    applyData(
+      { assignmentId, data: extractedData as Parameters<typeof applyData>[0]['data'] },
+      {
+        onSuccess: () => {
+          toast({ title: 'Sections pre-populated', description: 'All extracted fields applied. Review each section and save.' });
+          setShowReview(false);
+        },
+        onError: () => toast({ title: 'Failed to apply data', variant: 'destructive' }),
+      },
+    );
+  }
+
   if (isLoading) return <LoadingSpinner />;
+
+  const extractedNonNull = extractedData
+    ? EXTRACTED_LABELS.filter(({ key }) => {
+        const v = extractedData[key];
+        return v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0);
+      })
+    : [];
 
   return (
     <div className="space-y-4">
+      {/* AI Extraction Banner */}
+      {ocrReadyCount > 0 && (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <Bot className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-blue-900">
+                    {ocrReadyCount} document{ocrReadyCount > 1 ? 's' : ''} ready for AI extraction
+                  </p>
+                  <p className="text-xs text-blue-700 mt-0.5">
+                    Claude will read OCR text and pre-populate Owner, Location, Area, Building and other sections.
+                    You can review and edit before saving.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                disabled={extracting}
+                onClick={handleExtract}
+                className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <Bot className="h-4 w-4 mr-2" />
+                {extracting ? 'Extracting…' : 'Extract with AI'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Upload */}
       {canEdit && (
         <Card>
           <CardContent className="pt-4">
@@ -146,6 +267,8 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
           </CardContent>
         </Card>
       )}
+
+      {/* Document list */}
       <div className="border rounded-lg">
         <Table>
           <TableHeader>
@@ -198,6 +321,51 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
           </TableBody>
         </Table>
       </div>
+
+      {/* Extraction Review Dialog */}
+      <Dialog open={showReview} onOpenChange={setShowReview}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5 text-blue-600" />
+              AI Extraction Results
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Claude extracted {extractedNonNull.length} fields from your documents.
+              Review below, then click <strong>Apply to Sections</strong> to pre-populate all forms.
+              Each section will still need to be individually saved.
+            </p>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2 max-h-[55vh] overflow-y-auto pr-1">
+            {extractedNonNull.map(({ key, label }) => {
+              const v = extractedData?.[key];
+              const display = Array.isArray(v) ? (v as string[]).join(', ') : String(v);
+              return (
+                <div key={key} className="border rounded p-2 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="text-sm font-medium break-words">{display}</p>
+                </div>
+              );
+            })}
+            {extractedNonNull.length === 0 && (
+              <p className="col-span-2 text-sm text-muted-foreground text-center py-4">
+                No fields could be extracted. The documents may not contain readable text yet.
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowReview(false)}>Cancel</Button>
+            <Button
+              disabled={applying || extractedNonNull.length === 0}
+              onClick={handleApply}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Bot className="h-4 w-4 mr-2" />
+              {applying ? 'Applying…' : `Apply ${extractedNonNull.length} Fields to Sections`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
