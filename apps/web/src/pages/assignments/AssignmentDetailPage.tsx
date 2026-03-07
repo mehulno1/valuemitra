@@ -184,14 +184,21 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
 
   function handleApply() {
     if (!extractedData) return;
+    // Strip null/undefined — Zod string fields use .optional() (allows undefined) not .nullable()
+    // Sending null for string fields causes a ZodError on the backend
+    const sanitized = Object.fromEntries(
+      Object.entries(extractedData).filter(([, v]) =>
+        v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0),
+      ),
+    ) as Parameters<typeof applyData>[0]['data'];
     applyData(
-      { assignmentId, data: extractedData as Parameters<typeof applyData>[0]['data'] },
+      { assignmentId, data: sanitized },
       {
         onSuccess: () => {
           toast({ title: 'Sections pre-populated', description: 'All extracted fields applied. Review each section and save.' });
           setShowReview(false);
         },
-        onError: () => toast({ title: 'Failed to apply data', variant: 'destructive' }),
+        onError: (err: Error) => toast({ title: 'Failed to apply data', description: err.message, variant: 'destructive' }),
       },
     );
   }
