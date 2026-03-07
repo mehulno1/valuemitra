@@ -8,6 +8,7 @@ export enum UserRole {
   VALUER = 'VALUER',              // Registered Valuer (can sign reports)
   ASSISTANT = 'ASSISTANT',        // Support staff (can prepare, cannot sign)
   VIEWER = 'VIEWER',              // Read-only (bank user / client portal)
+  INSPECTOR = 'INSPECTOR',        // Site inspector — can only fill assigned inspections
 }
 
 // ─────────────────────────────────────────────
@@ -26,6 +27,7 @@ export enum AssignmentStatus {
   DOCUMENTS_PENDING = 'DOCUMENTS_PENDING',
   DOCUMENTS_RECEIVED = 'DOCUMENTS_RECEIVED',
   OCR_COMPLETE = 'OCR_COMPLETE',
+  DATA_VERIFIED = 'DATA_VERIFIED',       // Property data extracted + verified by valuer
 
   // Phase 3: AI & Analysis
   ANALYSIS_IN_PROGRESS = 'ANALYSIS_IN_PROGRESS',
@@ -75,6 +77,7 @@ export enum PropertyType {
   OPEN_LAND = 'OPEN_LAND',
   AGRICULTURAL_LAND = 'AGRICULTURAL_LAND',
   MIXED_USE = 'MIXED_USE',
+  UC_FLAT = 'UC_FLAT',  // Under-Construction Flat — distinct workflow from RESIDENTIAL_FLAT
 }
 
 export enum LandTenure {
@@ -134,6 +137,8 @@ export enum DocumentType {
   TITLE_CHAIN_DOCUMENT = 'TITLE_CHAIN_DOCUMENT',
   IDENTITY_PROOF = 'IDENTITY_PROOF',
   SITE_PHOTOGRAPH = 'SITE_PHOTOGRAPH',
+  INSPECTION_PHOTO = 'INSPECTION_PHOTO',  // Taken during site inspection
+  EXTERIOR_PHOTO = 'EXTERIOR_PHOTO',      // Exterior / building photo
   LOCATION_MAP = 'LOCATION_MAP',
   NA_ORDER = 'NA_ORDER',                            // Non-Agricultural conversion order
   LAYOUT_APPROVAL = 'LAYOUT_APPROVAL',
@@ -253,4 +258,64 @@ export enum RateCategory {
   INDUSTRIAL = 'INDUSTRIAL',
   AGRICULTURAL = 'AGRICULTURAL',
   OPEN_LAND = 'OPEN_LAND',
+}
+
+// ─────────────────────────────────────────────
+// PHOTO CATEGORY ENUM (INS_051–062)
+// ─────────────────────────────────────────────
+
+export enum PhotoCategory {
+  BUILDING_EXTERIOR = 'BUILDING_EXTERIOR',       // INS_051: Compulsory, min 2
+  ENTRANCE_DOOR = 'ENTRANCE_DOOR',               // INS_052: Door with nameplate
+  SOCIETY_BOARD = 'SOCIETY_BOARD',               // INS_053: Building/society name board
+  LIVING_ROOM = 'LIVING_ROOM',                   // INS_054: Hall/living area
+  KITCHEN = 'KITCHEN',                           // INS_055
+  BEDROOM = 'BEDROOM',                           // INS_056: At least 1 per room
+  TOILET_BATHROOM = 'TOILET_BATHROOM',           // INS_057
+  TERRACE_BALCONY = 'TERRACE_BALCONY',           // INS_058: If present
+  INTERIOR_GENERAL = 'INTERIOR_GENERAL',         // INS_059: General interior
+  DAMAGE_DEFECTS = 'DAMAGE_DEFECTS',             // INS_060: Cracks, seepage, defects
+  APPROACH_ROAD = 'APPROACH_ROAD',               // INS_061: Road & surroundings
+  FLOOR_PLAN_SKETCH = 'FLOOR_PLAN_SKETCH',       // INS_062: Compulsory dimensioned sketch
+}
+
+// ─────────────────────────────────────────────
+// LOAN / ASSIGNMENT TYPE (INS_001)
+// ─────────────────────────────────────────────
+
+export enum LoanType {
+  BUILDER = 'BUILDER',
+  RESALE = 'RESALE',
+  TOP_UP = 'TOP_UP',
+  BALANCE_TRANSFER = 'BALANCE_TRANSFER',
+  HEHL = 'HEHL',                // Home Equity / Home Loan
+  LAP = 'LAP',                  // Loan Against Property
+  APF = 'APF',                  // Approved Project Finance
+  OTHER = 'OTHER',
+}
+
+// ─────────────────────────────────────────────
+// UC CONSTRUCTION STAGE STATUS (INS_035–044)
+// ─────────────────────────────────────────────
+
+export enum ConstructionStageStatus {
+  COMPLETED = 'COMPLETED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  NOT_STARTED = 'NOT_STARTED',
+}
+
+export enum LiftInstallationStatus {
+  INSTALLED = 'INSTALLED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  NOT_STARTED = 'NOT_STARTED',
+}
+
+// ─────────────────────────────────────────────
+// BUILDING COMPLETION STATUS (BLDG_006)
+// ─────────────────────────────────────────────
+
+export enum BuildingCompletionStatus {
+  FULLY_COMPLETED = 'FULLY_COMPLETED',
+  PARTIALLY_COMPLETED = 'PARTIALLY_COMPLETED',
+  UNDER_CONSTRUCTION = 'UNDER_CONSTRUCTION',
 }

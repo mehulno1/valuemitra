@@ -13,6 +13,7 @@ import {
   DOCUMENT_CHECKLISTS,
   getCurrentFinancialYear,
 } from '@valuemitra/shared';
+import type { UpdateGeneralFieldsInput } from '@valuemitra/shared';
 
 // ─────────────────────────────────────────────
 // Assignment number generation
@@ -30,7 +31,7 @@ async function generateAssignmentNo(tenantId: string, firmCode: string): Promise
     FOR UPDATE
   `;
 
-  const nextSeq = (result[0]?.maxSeq ?? 0) + 1;
+  const nextSeq = Number(result[0]?.maxSeq ?? 0) + 1;
   const seq = String(nextSeq).padStart(4, '0');
   return `${firmCode}/${fy}/${seq}`;
 }
@@ -44,6 +45,7 @@ export async function listAssignments(
   filters: {
     status?: AssignmentStatus;
     assignedToId?: string;
+    inspectorId?: string;
     clientId?: string;
     propertyType?: PropertyType;
     search?: string;
@@ -59,6 +61,7 @@ export async function listAssignments(
     tenantId,
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.assignedToId ? { assignedToId: filters.assignedToId } : {}),
+    ...(filters.inspectorId ? { inspection: { inspectorId: filters.inspectorId } } : {}),
     ...(filters.clientId ? { clientId: filters.clientId } : {}),
     ...(filters.propertyType ? { propertyType: filters.propertyType } : {}),
     ...(filters.search
@@ -117,6 +120,7 @@ export async function getAssignment(tenantId: string, assignmentId: string) {
       checklist: true,
       valuationRuns: { orderBy: { createdAt: 'desc' }, take: 1 },
       reports: { where: { isLatest: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+      inspection: { select: { inspectorId: true } },
     },
   });
 
@@ -137,6 +141,7 @@ export async function createAssignment(
     clientId: string;
     propertyType: PropertyType;
     purposeOfValuation: ValuationPurpose;
+    freshOrRevaluation?: string;
     propertyAddress: string;
     propertyCity: string;
     propertyState: string;
@@ -164,6 +169,7 @@ export async function createAssignment(
         createdById: actorId,
         propertyType: input.propertyType,
         purposeOfValuation: input.purposeOfValuation,
+        freshOrRevaluation: input.freshOrRevaluation ?? null,
         status: AssignmentStatus.INITIATED,
         assignedToId: input.assignedToId,
         inspectionDate: input.inspectionDate,
@@ -413,4 +419,58 @@ export async function updateProperty(
   });
 
   return property;
+}
+
+// ─────────────────────────────────────────────
+// Update General Fields (GEN section)
+// Saves assignment-level metadata that isn't tied to status transitions
+// ─────────────────────────────────────────────
+
+export async function updateGeneralFields(
+  tenantId: string,
+  assignmentId: string,
+  actorId: string,
+  data: UpdateGeneralFieldsInput,
+): Promise<void> {
+  const assignment = await prisma.assignment.findFirst({ where: { id: assignmentId, tenantId } });
+  if (!assignment) throw new NotFoundError('Assignment not found');
+
+  const before = {
+    loanType: assignment.loanType,
+    propertySubType: assignment.propertySubType,
+    bankBranchAddress: assignment.bankBranchAddress,
+    bankRepresentative: assignment.bankRepresentative,
+    freshOrRevaluation: assignment.freshOrRevaluation,
+    bankRefNo: assignment.bankRefNo,
+    bankInstructionDate: assignment.bankInstructionDate,
+    agreedFee: assignment.agreedFee,
+    feeGst: assignment.feeGst,
+    referenceNote: assignment.referenceNote,
+  };
+
+  await prisma.assignment.update({
+    where: { id: assignmentId },
+    data: {
+      ...(data.loanType !== undefined && { loanType: data.loanType }),
+      ...(data.propertySubType !== undefined && { propertySubType: data.propertySubType || null }),
+      ...(data.bankBranchAddress !== undefined && { bankBranchAddress: data.bankBranchAddress || null }),
+      ...(data.bankRepresentative !== undefined && { bankRepresentative: data.bankRepresentative || null }),
+      ...(data.freshOrRevaluation !== undefined && { freshOrRevaluation: data.freshOrRevaluation }),
+      ...(data.bankRefNo !== undefined && { bankRefNo: data.bankRefNo || null }),
+      ...(data.bankInstructionDate !== undefined && { bankInstructionDate: data.bankInstructionDate ? new Date(data.bankInstructionDate) : null }),
+      ...(data.agreedFee !== undefined && { agreedFee: data.agreedFee }),
+      ...(data.feeGst !== undefined && { feeGst: data.feeGst }),
+      ...(data.referenceNote !== undefined && { referenceNote: data.referenceNote || null }),
+    },
+  });
+
+  await createAuditLog({
+    tenantId,
+    userId: actorId,
+    action: 'assignment.general.updated',
+    entityType: 'Assignment',
+    entityId: assignmentId,
+    before: before as Record<string, unknown>,
+    after: data as Record<string, unknown>,
+  });
 }

@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { asyncHandler } from '../../middleware/error.middleware.js';
+import { asyncHandler, ForbiddenError } from '../../middleware/error.middleware.js';
 import {
   listAssignments,
   getAssignment,
@@ -7,8 +7,9 @@ import {
   updateAssignment,
   updateAssignmentStatus,
   updateProperty,
+  updateGeneralFields,
 } from './assignments.service.js';
-import { CreateAssignmentSchema, UpdateAssignmentSchema, UpdatePropertySchema } from '@valuemitra/shared';
+import { CreateAssignmentSchema, UpdateAssignmentSchema, UpdatePropertySchema, UpdateGeneralFieldsSchema } from '@valuemitra/shared';
 import { AssignmentStatus } from '@valuemitra/shared';
 import { z } from 'zod';
 
@@ -20,9 +21,12 @@ const StatusUpdateSchema = z.object({
 // GET /api/assignments
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const { status, assignedToId, clientId, propertyType, search, page, limit } = req.query as Record<string, string | undefined>;
+  // INSPECTOR role can only see assignments where they are the assigned inspector
+  const inspectorId = req.user!.role === 'INSPECTOR' ? req.user!.id : undefined;
   const result = await listAssignments(req.tenant!.id, {
     status: status as AssignmentStatus | undefined,
     assignedToId,
+    inspectorId,
     clientId,
     propertyType: propertyType as never,
     search,
@@ -35,6 +39,13 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
 // GET /api/assignments/:assignmentId
 export const get = asyncHandler(async (req: Request, res: Response) => {
   const assignment = await getAssignment(req.tenant!.id, req.params['assignmentId']!);
+  // INSPECTOR can only view assignments they are assigned to inspect
+  if (req.user!.role === 'INSPECTOR') {
+    const insp = assignment as unknown as { inspection?: { inspectorId?: string } };
+    if (insp.inspection?.inspectorId !== req.user!.id) {
+      throw new ForbiddenError('You are not assigned to inspect this assignment');
+    }
+  }
   res.json({ success: true, data: assignment });
 });
 
@@ -86,4 +97,17 @@ export const updatePropertyHandler = asyncHandler(async (req: Request, res: Resp
     data,
   );
   res.json({ success: true, data: property });
+});
+
+// PATCH /api/assignments/:assignmentId/general
+// Saves GEN section fields (loanType, bankRep, bankBranch, fees, etc.)
+export const updateGeneralFieldsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const data = UpdateGeneralFieldsSchema.parse(req.body);
+  await updateGeneralFields(
+    req.tenant!.id,
+    req.params['assignmentId']!,
+    req.user!.id,
+    data,
+  );
+  res.json({ success: true });
 });

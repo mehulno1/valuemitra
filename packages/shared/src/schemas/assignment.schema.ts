@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ValuationPurpose, PropertyType, ClientType, BankCode } from '../types/enums.js';
+import { ValuationPurpose, PropertyType, ClientType, BankCode, LoanType } from '../types/enums.js';
 
 export const CreateClientSchema = z.object({
   clientType: z.nativeEnum(ClientType),
@@ -27,6 +27,7 @@ export const CreateAssignmentSchema = z.object({
   clientId: z.string().uuid(),
   purposeOfValuation: z.nativeEnum(ValuationPurpose),
   propertyType: z.nativeEnum(PropertyType),
+  freshOrRevaluation: z.enum(['Fresh', 'Revaluation', 'Review']).optional(),
   propertyAddress: z.string().min(5).max(500),
   propertyCity: z.string().min(2).max(100),
   propertyState: z.string().min(2).max(100),
@@ -69,7 +70,26 @@ export const UpdatePropertySchema = z.object({
   extractedData: z.record(z.unknown()).optional(),
 });
 
+// ─────────────────────────────────────────────
+// Update General Fields (GEN section — editable assignment metadata)
+// Separate from status transitions — saves loanType, bankRep, etc.
+// ─────────────────────────────────────────────
+
+export const UpdateGeneralFieldsSchema = z.object({
+  loanType: z.nativeEnum(LoanType).optional().nullable(),
+  propertySubType: z.string().max(100).optional().or(z.literal('')),
+  bankBranchAddress: z.string().max(300).optional().or(z.literal('')),
+  bankRepresentative: z.string().max(200).optional().or(z.literal('')),
+  freshOrRevaluation: z.enum(['Fresh', 'Revaluation', 'Review']).optional().nullable(),
+  bankRefNo: z.string().max(100).optional().or(z.literal('')),
+  bankInstructionDate: z.string().optional().nullable(),    // ISO date string
+  agreedFee: z.number().nonnegative().optional().nullable(),
+  feeGst: z.number().nonnegative().optional().nullable(),
+  referenceNote: z.string().max(2000).optional().or(z.literal('')),
+});
+
 export type CreateClientInput = z.infer<typeof CreateClientSchema>;
 export type CreateAssignmentInput = z.infer<typeof CreateAssignmentSchema>;
 export type UpdateAssignmentInput = z.infer<typeof UpdateAssignmentSchema>;
 export type UpdatePropertyInput = z.infer<typeof UpdatePropertySchema>;
+export type UpdateGeneralFieldsInput = z.infer<typeof UpdateGeneralFieldsSchema>;

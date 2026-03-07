@@ -37,6 +37,7 @@ model Tenant {
   assignments       Assignment[]
   clients           Client[]
   properties        Property[]
+  inspections       Inspection[]
   governmentRates   GovernmentRate[]
   reportTemplates   ReportTemplate[]
   auditLogs         AuditLog[]
@@ -84,6 +85,7 @@ model User {
   auditLogs               AuditLog[]
   documents               Document[]
   passwordResetTokens     PasswordResetToken[]
+  inspections             Inspection[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -181,6 +183,9 @@ model Assignment {
   propertyType        String    @default("RESIDENTIAL_FLAT") @db.VarChar(50)  // PropertyType enum
   status              String    @default("INITIATED") @db.VarChar(50)  // AssignmentStatus enum
 
+  // Fresh / Revaluation
+  freshOrRevaluation  String?   @db.VarChar(20)    // "Fresh" | "Revaluation" | "Review"
+
   // Under-construction
   isUnderConstruction Boolean   @default(false)
   percentageCompletion Int?
@@ -196,6 +201,16 @@ model Assignment {
   feeGst              Decimal?  @db.Decimal(12, 2)
   feePaidAt           DateTime?
 
+  // GEN_006: Bank branch for this specific assignment (may differ from Client.bankBranch)
+  bankBranchAddress   String?   @db.VarChar(300)
+  // GEN_007: Bank relationship manager / contact
+  bankRepresentative  String?   @db.VarChar(200)
+
+  // INS_001: Loan / Assignment Type (drives doc requirements & valuation approach)
+  loanType            String?   @db.VarChar(50)   // Builder/Resale/Top-up/Balance Transfer/HEHL/LAP/APF
+  // INS_002: Detailed property sub-type within the 6 main categories
+  propertySubType     String?   @db.VarChar(100)  // Flat/Bungalow/Row House/Duplex/Shop/Godown/Office/Industrial/Open Land
+
   // Bank reference
   bankRefNo           String?   @db.VarChar(100)
   bankInstructionDate DateTime?
@@ -209,6 +224,7 @@ model Assignment {
   updatedAt           DateTime  @updatedAt
 
   property        Property?
+  inspection      Inspection?
   documents       Document[]
   valuationRuns   ValuationRun[]
   reports         Report[]
@@ -239,18 +255,24 @@ model Property {
   addressLine2          String?   @db.VarChar(300)
   city                  String?   @db.VarChar(100)
   district              String?   @db.VarChar(100)
+  taluka                String?   @db.VarChar(100)    // LOC_010: Taluka/Ward
+  village               String?   @db.VarChar(100)    // LOC_009: Village/Locality
   state                 String?   @db.VarChar(100)
   pincode               String?   @db.VarChar(6)
+  landmark              String?   @db.VarChar(200)    // LOC_015
+  municipalCorporation  String?   @db.VarChar(100)    // LOC_016: MCGM/Panchayat
   latitude              Decimal?  @db.Decimal(10, 8)
   longitude             Decimal?  @db.Decimal(11, 8)
 
   // Revenue/Survey identification
   surveyNo              String?   @db.VarChar(100)
+  hissaNo               String?   @db.VarChar(50)     // LOC_002: Hissa/sub-division
   ctsSurveyNo           String?   @db.VarChar(100)
   municipalNo           String?   @db.VarChar(100)
   societyName           String?   @db.VarChar(200)
   flatNo                String?   @db.VarChar(50)
   floor                 Int?
+  wingName              String?   @db.VarChar(100)    // LOC_006: Wing/Tower/Block
   buildingName          String?   @db.VarChar(200)
 
   // Land details
@@ -262,14 +284,69 @@ model Property {
   leaseExpiryDate       DateTime?
   zoningClassification  String?   @db.VarChar(100)
 
-  // Building details
+  // LOC_008: Street / Road name
+  streetName            String?   @db.VarChar(200)
+
+  // Ownership (from title deed / OCR)
+  ownerNames            Json?
+  ownerAddress          String?   @db.Text            // OWN_002: Owner correspondence address
+  ownerContact          String?   @db.VarChar(15)     // OWN_003: Owner contact number
+  ownerPan              String?   @db.VarChar(10)     // OWN_004: Owner PAN (required by BOB Office)
+  ownershipNature       String?   @db.VarChar(30)     // OWN_005: Individual/Joint/Company/HUF/Partnership
+  ownerShareDetails     String?   @db.VarChar(500)    // OWN_006: e.g. "50% each"
+  borrowerName          String?   @db.VarChar(200)    // OWN_007: Applicant/Borrower (may differ from owner)
+  developerName         String?   @db.VarChar(200)    // OWN_008: Builder/Developer (UC/L&B)
+  reraNo                String?   @db.VarChar(100)    // DOC_008: RERA registration
+
+  // BLDG_006: Building completion status (dropdown)
+  buildingCompletionStatus String? @db.VarChar(30)  // FULLY_COMPLETED/PARTIALLY_COMPLETED/UNDER_CONSTRUCTION
+
+  // BLDA_005: External Development Area (compound wall, paving, gate, security cabin)
+  externalDevAreaSqM    Decimal?  @db.Decimal(12, 4)
+  externalDevAreaSqFt   Decimal?  @db.Decimal(12, 4)
+  // BLDA_006: Industrial Structures / Sheds / Outbuildings
+  industrialStructures  String?   @db.Text
+
+  // SITE_011 / ANN_004: Google Maps / Location screenshot URL
+  locationMapUrl        String?   @db.VarChar(500)
+
+  // Building details — document values
   builtUpAreaSqM        Decimal?  @db.Decimal(12, 4)
   builtUpAreaSqFt       Decimal?  @db.Decimal(12, 4)
   carpetAreaSqM         Decimal?  @db.Decimal(12, 4)
   carpetAreaSqFt        Decimal?  @db.Decimal(12, 4)
+  superBuiltUpAreaSqM   Decimal?  @db.Decimal(12, 4)  // UNIT_005: Saleable area
+  superBuiltUpAreaSqFt  Decimal?  @db.Decimal(12, 4)
+  unitConfiguration     String?   @db.VarChar(100)    // UNIT_006: "2BHK+2T", "Shop with mezzanine"
   numberOfFloors        Int?
   yearOfConstruction    Int?
   ageOfBuilding         Int?
+  remainingLifeYears    Int?                          // BLDG_003: computed/override
+
+  // Actual site-measured areas (vs document values)
+  builtUpAreaActualSqM  Decimal?  @db.Decimal(12, 4)  // UNIT_004: site-measured
+  builtUpAreaActualSqFt Decimal?  @db.Decimal(12, 4)
+  carpetAreaActualSqM   Decimal?  @db.Decimal(12, 4)  // UNIT_002: site-measured
+  carpetAreaActualSqFt  Decimal?  @db.Decimal(12, 4)
+  landAreaActualSqM     Decimal?  @db.Decimal(12, 4)  // LND_002: actual vs doc
+  landAreaActualSqFt    Decimal?  @db.Decimal(12, 4)
+
+  // UDS + land details (Flat/Land/L&B)
+  udsArea               Decimal?  @db.Decimal(12, 4)  // LND_003: Undivided Share of Land
+  udsUnit               String?   @db.VarChar(10)     // Sq.Ft / Sq.M / fraction
+  dpZone                String?   @db.VarChar(100)    // LND_004: DP Zone
+  fsi                   Decimal?  @db.Decimal(5, 2)   // LND_005: FSI / FAR
+  permissibleUse        String?   @db.VarChar(200)    // LND_006
+  naOrderDetails        String?   @db.VarChar(300)    // LND_007: NA Order no/date/authority
+  miDcPlotNo            String?   @db.VarChar(50)     // LND_008: MIDC plot no
+
+  // Additional building compliance (Batch 2)
+  approvedPlanValidity  DateTime?                     // BLDG_009b: plan validity date
+  planGenuinenessVerified Boolean?                    // BLDG_010
+
+  // Building floors breakdown (L&B only)
+  // Array: [{floorLabel, useType, builtUpAreaSqM, builtUpAreaSqFt, remarks}]
+  buildingFloors        Json?
 
   // Structure/condition
   structureType         String?   @db.VarChar(100)
@@ -277,10 +354,45 @@ model Property {
   exteriorCondition     String?   @db.VarChar(50)
   interiorCondition     String?   @db.VarChar(50)
 
-  // Ownership (JSON array of strings)
-  ownerNames            Json?
+  // Legal document references (extracted by Claude from OCR text)
+  registrationNo        String?   @db.VarChar(100)
+  registrationDate      DateTime?
+  indexIINo             String?   @db.VarChar(100)
+  agreementValue        Decimal?  @db.Decimal(15, 2)
+  stampDutyPaid         Decimal?  @db.Decimal(15, 2)
+  occupancyCertificateNo String?  @db.VarChar(100)
+  approvedPlanNo        String?   @db.VarChar(100)
+  sharesCertificateNo   String?   @db.VarChar(100)
 
-  // Flexible OCR-extracted data (JSON)
+  // Building compliance flags (IBBI + bank requirements)
+  approvedPlanAuthority String?   @db.VarChar(100)    // BLDG_008: MCGM/NMMC/CIDCO/Gram Panchayat
+  approvedPlanDate      DateTime?                     // BLDG_009
+  unauthorizedConstruction       Boolean?             // BLDG_011: critical compliance flag ⚠️
+  unauthorizedConstructionNotes  String?   @db.Text
+  demolitionProceedings          Boolean?             // BLDG_012: PNB requirement
+  demolitionProceedingsNotes     String?   @db.Text
+
+  // Area classification (AREA group — as JSON for flexibility)
+  // Keys: type, highMiddlePoor, urbanRural, corpType, govtEnactments, czrNote
+  areaClassification    Json?
+
+  // Physical / site description (PHY group — as JSON)
+  // Keys: landNature, landLayout, plotShape, directAccess, accessMode,
+  //       boundaryNature, demarcated, possession, tenancyNature, crops, otherDev
+  physicalDetails       Json?
+
+  // Boundary details (BND group — as JSON)
+  // Keys: northDoc, southDoc, eastDoc, westDoc, northActual, southActual, eastActual, westActual
+  boundaryDetails       Json?
+
+  // Missing documents (array of DocumentType strings, for report remarks)
+  missingDocuments      Json?
+
+  // Data verification
+  dataVerifiedAt        DateTime?
+  dataVerifiedById      String?
+
+  // Flexible OCR-extracted data (JSON — legacy, kept for backward compat)
   extractedData         Json?
 
   createdAt             DateTime  @default(now())
@@ -314,6 +426,8 @@ model Document {
   // Classification
   documentType    String    @db.VarChar(50)    // DocumentType enum
   subType         String?   @db.VarChar(100)
+  // INS_051–062: Photo category for inspection photos (PhotoCategory enum)
+  photoCategory   String?   @db.VarChar(50)
 
   // OCR processing
   ocrStatus       String    @default("PENDING") @db.VarChar(20)  // OCRStatus enum
@@ -453,6 +567,24 @@ model ValuationRun {
 
   reconciliationNotes   String?   @db.Text
 
+  // Market analysis & marketability (MKT_009-012)
+  marketabilityRating   String?   @db.VarChar(20)    // Good/Average/Poor/Low
+  positiveFactors       String?   @db.Text           // MKT_010: Canara "favourable factors"
+  negativeFactors       String?   @db.Text           // MKT_011: Canara "negative factors"
+  marketAnalysisNarrative String? @db.Text           // MKT_012: AI-drafted + RV edits
+
+  // Derived value outputs (stored explicitly for display + report)
+  realizableValue       Decimal?  @db.Decimal(15, 2) // VAL_013: typically 90% of FMV
+  distressValue         Decimal?  @db.Decimal(15, 2) // VAL_014: typically 80% of FMV
+  govtGuidelineValue    Decimal?  @db.Decimal(15, 2) // VAL_015: Area × RR/Jantri rate
+  rrScreenshotUrl       String?   @db.VarChar(500)   // VAL_003: time-stamped RR screenshot
+
+  // Bank-specific outputs (populated where template requires them)
+  compositeRatePerSqFt  Decimal?  @db.Decimal(12, 2) // VAL_006: auto-computed or overridden
+  insuranceValue        Decimal?  @db.Decimal(15, 2) // VAL_016: SBI/BOM
+  rentalValueMonthly    Decimal?  @db.Decimal(12, 2) // VAL_017: Canara/SBI
+  bookValue             Decimal?  @db.Decimal(15, 2) // VAL_018: BOM UC / SBI L&B
+
   // IBBI audit snapshot — immutable record of all inputs at computation time
   inputSnapshot         Json?
 
@@ -482,6 +614,15 @@ model ReportTemplate {
   templateFilePath  String    @db.VarChar(500)   // S3 key to processed .docx
   fieldMappings     Json                          // ReportFieldMappings
   requiredFields    Json?                         // Array of required field names
+
+  // Bank-specific conditional logic flags
+  realizableValuePct    Decimal   @default(0.90) @db.Decimal(4, 2)  // BOI/UBI=0.95, others=0.90
+  showDualStageValuation Boolean  @default(false)   // BOI/UBI UC: show both 100% + current stage value
+  showInsuranceValue    Boolean   @default(false)   // SBI, BOM templates
+  showBookValue         Boolean   @default(false)   // BOM UC, SBI L&B, UBI UC
+  showRentalValue       Boolean   @default(false)   // Canara, SBI
+  showPurchasePrice     Boolean   @default(false)   // BOI UC, UBI UC
+
   isActive          Boolean   @default(true)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -505,6 +646,7 @@ model Report {
   reportData      Json                            // Complete ReportData snapshot
   signedAt        DateTime?
   signedById      String?
+  signedAtPlace   String?   @db.VarChar(100)  // CERT_004: place of signing
   digitalSignature String?  @db.Text
   version         Int       @default(1)
   isLatest        Boolean   @default(true)
@@ -612,4 +754,142 @@ model JobQueue {
   @@index([status, priority, scheduledAt])
   @@index([jobType, status])
   @@map("job_queue")
+}
+
+// ─────────────────────────────────────────────
+// INSPECTION (Phase B — site visit by inspector)
+// ─────────────────────────────────────────────
+
+model Inspection {
+  id                         String    @id @default(uuid())
+  tenantId                   String
+  tenant                     Tenant    @relation(fields: [tenantId], references: [id])
+  assignmentId               String    @unique
+  assignment                 Assignment @relation(fields: [assignmentId], references: [id])
+  inspectorId                String
+  inspector                  User      @relation(fields: [inspectorId], references: [id])
+
+  // Schedule
+  scheduledDate              DateTime?
+
+  // Site visit details
+  inspectionDate             DateTime?
+  propertyShownBy            String?   @db.VarChar(200)   // SITE_001
+  propertyShownByPhone       String?   @db.VarChar(15)    // SITE_002
+  propertyShownByDesignation String?   @db.VarChar(100)   // SITE_003: relationship with owner
+
+  // Occupancy
+  occupancyStatus            String?   @db.VarChar(30)   // SITE_004: SELF_OCCUPIED/TENANTED/VACANT/PARTIALLY_VACANT
+  occupantName               String?   @db.VarChar(200)  // SITE_005: name of occupant if tenant
+  occupantRelation           String?   @db.VarChar(100)  // SITE_006: relation with owner
+  occupiedSince              String?   @db.VarChar(50)   // SITE_007: date/year of occupation
+
+  // Flat identification
+  flatNumberDisplayed        Boolean?
+  flatNumberAsDisplayed      String?   @db.VarChar(50)   // SITE_008: name on door/entrance
+  nameOnBoard                String?   @db.VarChar(200)  // SITE_009: Society/building board name
+
+  // INS_003–008: Connectivity / distances
+  nearestStationName         String?   @db.VarChar(200)  // INS_003
+  distanceFromStationKm      Decimal?  @db.Decimal(5, 2) // INS_004
+  nearestBusStopName         String?   @db.VarChar(200)  // INS_005
+  distanceFromBusStopKm      Decimal?  @db.Decimal(5, 2) // INS_006
+  distanceFromSchoolKm       Decimal?  @db.Decimal(5, 2) // INS_007
+  distanceFromHospitalKm     Decimal?  @db.Decimal(5, 2) // INS_008
+
+  // INS_009–013: Building characteristics
+  groundFloorType            String?   @db.VarChar(50)   // INS_009: Ground/Stilt/Basement/Podium/Stilt+Podium
+  storeyHeightFt             Decimal?  @db.Decimal(5, 2) // INS_010: floor-to-floor height
+  flatsPerFloor              Int?                        // INS_011
+  numberOfWings              Int?                        // INS_012
+  numberOfLifts              Int?                        // INS_013
+
+  // INS_014: Compound wall & gate (replaces Boolean boundaryWall)
+  compoundWallGateType       String?   @db.VarChar(100)  // RCC Wall+Iron Gate/Iron Fencing/Brick Wall/No Compound
+
+  // Construction & condition
+  constructionQuality        String?   @db.VarChar(20)   // GOOD/AVERAGE/POOR
+  maintenanceCondition       String?   @db.VarChar(20)   // BLDG_016
+
+  // Amenities (JSON: { gym, club, pool, garden, security, intercom, generator, solarPower })
+  amenities                  Json?
+
+  // Unit finishes (INS_015–027)
+  flooringType               String?   @db.VarChar(100)  // INS_015 / UNIT_007: unit interior flooring
+  flooringExternal           String?   @db.VarChar(100)  // INS_016: around building (CC/Paving/Kota/None)
+  flooringStaircase          String?   @db.VarChar(100)  // INS_017: staircase & lobby
+  flooringLobby              String?   @db.VarChar(100)  // INS_018: building main entrance lobby
+  waterSupplyType            String?   @db.VarChar(100)  // INS_019: Direct Municipal/UG Tank/OH Tank/Borewell
+  waterSupplyQuality         String?   @db.VarChar(50)   // INS_020: Good/Normal/Poor
+  electrificationType        String?   @db.VarChar(100)  // INS_021: Concealed/Open Wiring/Industrial 3-phase
+  plumbingType               String?   @db.VarChar(50)   // INS_022: Concealed/Open
+  externalWallFinish         String?   @db.VarChar(100)  // INS_023: Sand-faced/Texture/Glass Facade/Acrylic
+  roofType                   String?   @db.VarChar(100)  // INS_024: RCC Slab/AC Sheet/Mangalore Tile/Other
+  doorType                   String?   @db.VarChar(100)  // INS_025: Wooden/Rolling Shutter/Glass/Steel/Safety
+  windowType                 String?   @db.VarChar(100)  // INS_026: Aluminium/MS/UPVC/Wooden/Elevation Glass
+  kitchenPlatformMaterial    String?   @db.VarChar(100)  // INS_027: Granite/Marble/Kadappa/SS/Nil
+  wallFinishing              String?   @db.VarChar(100)  // UNIT_008: Painted/Texture/Tile/Bare
+  ceilingHeightFt            Decimal?  @db.Decimal(5, 2) // UNIT_009: clear unit ceiling height in feet
+  doorsWindowsType           String?   @db.VarChar(100)  // UNIT_010: legacy combined field
+  electricalFittings         String?   @db.VarChar(100)  // UNIT_011: Standard/Good/Industrial/High Tension
+  sanitaryFittings           String?   @db.VarChar(100)  // UNIT_012: Standard/Good/Imported
+  acType                     String?   @db.VarChar(50)   // UNIT_013: Window/Split/Central/None
+  leaseholdDetails           String?   @db.VarChar(500)  // UNIT_014: Canara Shop — Lessor/Lessee/Period
+
+  // INS_028–032: Room/unit count details
+  numberOfRooms              Int?                        // INS_028: rooms excl. kitchen & bath
+  numberOfToilets            Int?                        // INS_029
+  numberOfBalconies          Int?                        // INS_030
+  numberOfTerraces           Int?                        // INS_031
+  accommodationDescription   String?   @db.Text          // INS_032: full free-text e.g. "2BHK: Hall, 2 Beds..."
+
+  // INS_033–044: UC Construction Stage Tracking (individual columns per decision)
+  rccSlabCompleteFloor       String?   @db.VarChar(100)  // INS_033: e.g. "18th floor"
+  brickworkCompleteFloor     String?   @db.VarChar(100)  // INS_034
+  internalPlasterStatus      String?   @db.VarChar(30)   // INS_035: Completed/In Progress/Not Started
+  externalPlasterStatus      String?   @db.VarChar(30)   // INS_036
+  flooringWorkStatus         String?   @db.VarChar(30)   // INS_037
+  woodworkStatus             String?   @db.VarChar(30)   // INS_038
+  internalPaintingStatus     String?   @db.VarChar(30)   // INS_039
+  externalPaintingStatus     String?   @db.VarChar(30)   // INS_040
+  plumbingWorkStatus         String?   @db.VarChar(30)   // INS_041
+  electrificationWorkStatus  String?   @db.VarChar(30)   // INS_042
+  liftInstallationStatus     String?   @db.VarChar(30)   // INS_043: Installed/In Progress/Not Started
+  finalFinishingStatus       String?   @db.VarChar(30)   // INS_044
+
+  // INS_045–047: Inspector's market rate observations (internal, never published)
+  observedRateCarpet         Decimal?  @db.Decimal(12, 2) // INS_045: Rs/Sq.Ft carpet
+  observedRateSuba           Decimal?  @db.Decimal(12, 2) // INS_046: Rs/Sq.Ft SUBA
+  inspectorValueEstimate     Decimal?  @db.Decimal(15, 2) // INS_047: rough lump-sum estimate
+
+  // INS_048–050: Broker / Agent details
+  brokerName                 String?   @db.VarChar(200)  // INS_048
+  brokerPhone                String?   @db.VarChar(15)   // INS_049
+  brokerFirmName             String?   @db.VarChar(200)  // INS_050
+
+  // Neighbourhood
+  neighborhoodType           String?   @db.VarChar(100)
+  approachRoadWidth          String?   @db.VarChar(50)   // PHY_004 (also captured here by inspector)
+
+  // Inspector's remarks
+  observationRemarks         String?   @db.Text
+
+  // Actual site measurements (measured during inspection, synced to Property)
+  builtUpAreaActualSqM       Decimal?  @db.Decimal(12, 4)
+  builtUpAreaActualSqFt      Decimal?  @db.Decimal(12, 4)
+  carpetAreaActualSqM        Decimal?  @db.Decimal(12, 4)
+  carpetAreaActualSqFt       Decimal?  @db.Decimal(12, 4)
+  landAreaActualSqM          Decimal?  @db.Decimal(12, 4)
+  landAreaActualSqFt         Decimal?  @db.Decimal(12, 4)
+
+  // Completion
+  isComplete                 Boolean   @default(false)
+  submittedAt                DateTime?
+
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([inspectorId])
+  @@map("inspections")
 }

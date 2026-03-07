@@ -1,19 +1,40 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api.js';
-import type { AssignmentStatus, PropertyType } from '@valuemitra/shared';
+import type { AssignmentStatus, PropertyType, UpdateGeneralFieldsInput } from '@valuemitra/shared';
 
 const ASSIGNMENTS_KEY = 'assignments';
 
 interface Assignment {
   id: string;
   assignmentNo: string;
+  firmReferenceNo: string | null;
   status: AssignmentStatus;
   propertyType: PropertyType;
-  propertyAddress: string;
-  propertyCity: string;
+  isUnderConstruction: boolean;
+  percentageCompletion: number | null;
+  freshOrRevaluation: string | null;
+  purposeOfValuation: string | null;
+  bankRefNo: string | null;
   inspectionDate: string | null;
   reportDueDate: string | null;
-  client: { name: string; bankCode: string | null };
+  finalValue: string | null;
+  // GEN fields (from /assignments/:id/general)
+  loanType?: string | null;
+  propertySubType?: string | null;
+  bankBranchAddress?: string | null;
+  bankRepresentative?: string | null;
+  bankInstructionDate?: string | null;
+  agreedFee?: number | null;
+  feeGst?: number | null;
+  referenceNote?: string | null;
+  client: {
+    fullName: string | null;
+    companyName: string | null;
+    bankName: string | null;
+    bankCode: string | null;
+    isBank: boolean;
+  };
+  property: { addressLine1: string | null; city: string | null; state: string | null } | null;
   assignedTo: { fullName: string } | null;
   createdAt: string;
 }
@@ -60,6 +81,17 @@ export function useUpdateAssignmentStatus() {
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: [ASSIGNMENTS_KEY, vars.id] });
       void qc.invalidateQueries({ queryKey: [ASSIGNMENTS_KEY] });
+    },
+  });
+}
+
+export function useUpdateGeneralFields() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<UpdateGeneralFieldsInput> }) =>
+      api.patch(`/assignments/${id}/general`, data).then((r) => r.data),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: [ASSIGNMENTS_KEY, vars.id] });
     },
   });
 }

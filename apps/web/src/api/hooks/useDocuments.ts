@@ -8,15 +8,15 @@ export interface Document {
   id: string;
   assignmentId: string;
   documentType: DocumentType;
-  fileName: string;
-  fileSize: number;
+  originalName: string;
+  fileSizeBytes: number;
   mimeType: string;
   ocrStatus: OCRStatus;
-  storageKey: string;
+  storagePath: string;
   storageProvider: string;
-  uploadedBy: { fullName: string };
   createdAt: string;
   signedUrl?: string;
+  photoCategory?: string | null;
 }
 
 export function useDocuments(assignmentId: string) {
@@ -24,8 +24,8 @@ export function useDocuments(assignmentId: string) {
     queryKey: [DOCUMENTS_KEY, assignmentId],
     queryFn: () =>
       api
-        .get<{ success: boolean; data: Document[] }>('/documents', { params: { assignmentId } })
-        .then((r) => r.data.data),
+        .get<{ success: boolean; data: { documents: Document[]; checklist: unknown[] } }>(`/documents/${assignmentId}`)
+        .then((r) => r.data.data.documents),
     enabled: !!assignmentId,
     refetchInterval: (query) => {
       // Poll while any doc is still processing OCR
@@ -40,16 +40,29 @@ export function useDocuments(assignmentId: string) {
 export function useUploadDocument() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ assignmentId, file, documentType }: { assignmentId: string; file: File; documentType: string }) => {
+    mutationFn: ({ assignmentId, file, documentType, photoCategory }: { assignmentId: string; file: File; documentType: string; photoCategory?: string }) => {
       const form = new FormData();
       form.append('file', file);
-      form.append('assignmentId', assignmentId);
       form.append('documentType', documentType);
-      return api.post<{ data: Document }>('/documents', form, {
+      if (photoCategory) form.append('photoCategory', photoCategory);
+      return api.post<{ data: Document }>(`/documents/${assignmentId}/upload`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       }).then((r) => r.data);
     },
     onSuccess: (_d, vars) => void qc.invalidateQueries({ queryKey: [DOCUMENTS_KEY, vars.assignmentId] }),
+  });
+}
+
+export function useDocumentDownloadUrl(documentId: string) {
+  return useQuery({
+    queryKey: [DOCUMENTS_KEY, documentId, 'url'],
+    queryFn: () =>
+      api
+        .get<{ success: boolean; data: { downloadUrl: string } }>(`/documents/${documentId}/download-url`)
+        .then((r) => r.data.data.downloadUrl),
+    enabled: !!documentId,
+    staleTime: 10 * 60 * 1000, // 10 min (URL valid for 15 min)
+    gcTime: 12 * 60 * 1000,
   });
 }
 

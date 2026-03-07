@@ -15,7 +15,7 @@ export const IBBI_MANDATORY_USER_FIELDS = [
 export const IBBI_MANDATORY_ASSIGNMENT_FIELDS = [
   'inspectionDate',
   'purposeOfValuation',
-  'reportDate',
+  // reportDate intentionally omitted — auto-populated in report builder as today's date
 ] as const;
 
 export const IBBI_MANDATORY_PROPERTY_FIELDS = [
@@ -144,6 +144,14 @@ export const DOCUMENT_CHECKLISTS: Record<PropertyType, ChecklistTemplate[]> = {
     { documentType: DocumentType.BUILDING_PLAN_APPROVAL, label: 'Approved Building Plan', isMandatory: true },
     { documentType: DocumentType.MUNICIPAL_TAX_RECEIPT, label: 'Municipal Tax Receipt', isMandatory: true },
     { documentType: DocumentType.OCCUPANCY_CERTIFICATE, label: 'Occupancy Certificate', isMandatory: false },
+    { documentType: DocumentType.ENCUMBRANCE_CERTIFICATE, label: 'Encumbrance Certificate', isMandatory: false },
+  ],
+  [PropertyType.UC_FLAT]: [
+    { documentType: DocumentType.SALE_DEED, label: 'Agreement for Sale / Allotment Letter', isMandatory: true },
+    { documentType: DocumentType.INDEX_II, label: 'Index II', isMandatory: false },
+    { documentType: DocumentType.BUILDING_PLAN_APPROVAL, label: 'Approved Building Plan', isMandatory: true },
+    { documentType: DocumentType.OTHER, label: 'RERA Registration Certificate', isMandatory: true },
+    { documentType: DocumentType.MUNICIPAL_TAX_RECEIPT, label: 'Municipal Tax Receipt', isMandatory: false },
     { documentType: DocumentType.ENCUMBRANCE_CERTIFICATE, label: 'Encumbrance Certificate', isMandatory: false },
   ],
 };

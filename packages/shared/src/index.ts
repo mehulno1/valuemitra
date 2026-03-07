@@ -14,7 +14,10 @@ export * from './schemas/government-rates.schema.js';
 export * from './schemas/valuation.schema.js';
 export * from './schemas/report.schema.js';
 export * from './schemas/review.schema.js';
+export * from './schemas/property-data.schemas.js';
+export * from './schemas/inspection.schemas.js';
 
 // Constants
 export * from './constants/ibbi.constants.js';
 export * from './constants/india.constants.js';
+export * from './constants/field-visibility.js';
