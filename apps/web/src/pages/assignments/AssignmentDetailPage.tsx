@@ -1347,7 +1347,7 @@ export default function AssignmentDetailPage() {
       case 'external-dev':
         return <ExternalDevSection assignmentId={assignmentId!} propertyType={String(assignment!.propertyType)} propertyData={propertyData} canEdit={canEdit} />;
       case 'site-visit':
-        return <SiteVisitSection assignmentId={assignmentId!} propertyType={String(assignment!.propertyType)} bankCode={assignment!.client?.bankCode ?? null} canEdit={canEdit} />;
+        return <SiteVisitSection assignmentId={assignmentId!} propertyType={String(assignment!.propertyType)} bankName={clientName ?? null} loanType={assignment!.loanType ?? null} canEdit={canEdit} />;
       case 'valuation':
       case 'marketability':
         return (

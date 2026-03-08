@@ -874,6 +874,23 @@ model Inspection {
   // Inspector's remarks
   observationRemarks         String?   @db.Text
 
+  // AREA_001: Use of property as observed
+  useOfProperty              String?   @db.VarChar(50)   // Residential/Commercial/Industrial/Mixed
+
+  // BLDG_014: Parking
+  parkingType                String?   @db.VarChar(100)  // Stilt/Open/Basement/Mechanical/None
+  parkingCount               Int?
+
+  // DOC_016: Documents seen at site
+  documentsAvailableAtSite   Json?                       // string[] of doc type labels seen
+  otherDocumentsNote         String?   @db.VarChar(500)  // DOC_019
+
+  // UC_013: Internal access
+  internalAccessAllowed      Boolean?                    // Was internal site access allowed?
+
+  // Boundaries as observed at site (separate from document-derived boundaries in Property)
+  observedBoundaries         Json?                       // {north,south,east,west,unitNorth,unitSouth,unitEast,unitWest}
+
   // Actual site measurements (measured during inspection, synced to Property)
   builtUpAreaActualSqM       Decimal?  @db.Decimal(12, 4)
   builtUpAreaActualSqFt      Decimal?  @db.Decimal(12, 4)

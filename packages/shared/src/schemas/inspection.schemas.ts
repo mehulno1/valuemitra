@@ -17,20 +17,45 @@ export type AssignInspectionInput = z.infer<typeof AssignInspectionSchema>;
 // ─────────────────────────────────────────────
 
 export const AmenitiesSchema = z.object({
+  // Current spec (Section K)
+  carParking: z.boolean().optional(),
+  entranceLobby: z.boolean().optional(),
+  pool: z.boolean().optional(),
   gym: z.boolean().optional(),
   club: z.boolean().optional(),
-  pool: z.boolean().optional(),
-  garden: z.boolean().optional(),
-  security: z.boolean().optional(),
-  intercom: z.boolean().optional(),
   generator: z.boolean().optional(),
+  garden: z.boolean().optional(),
+  rollingShutter: z.boolean().optional(),
+  facadeGlass: z.boolean().optional(),
+  cctv: z.boolean().optional(),
+  intercom: z.boolean().optional(),
+  security: z.boolean().optional(),       // Security Cabin
+  rainwaterHarvesting: z.boolean().optional(),
   solarPower: z.boolean().optional(),
+  amenitiesOther: z.string().max(200).optional(),
   // Legacy fields kept for backward compat
   lift: z.boolean().optional(),
   parking: z.boolean().optional(),
   water: z.boolean().optional(),
   power: z.boolean().optional(),
 });
+
+// ─────────────────────────────────────────────
+// Observed Boundaries JSON schema
+// ─────────────────────────────────────────────
+
+export const ObservedBoundariesSchema = z.object({
+  // Building / plot boundaries (Land, L&B, Shop, Office)
+  north: z.string().max(300).optional().or(z.literal('')),
+  south: z.string().max(300).optional().or(z.literal('')),
+  east:  z.string().max(300).optional().or(z.literal('')),
+  west:  z.string().max(300).optional().or(z.literal('')),
+  // Flat / unit boundaries (optional for Flat, Shop, Office)
+  unitNorth: z.string().max(300).optional().or(z.literal('')),
+  unitSouth: z.string().max(300).optional().or(z.literal('')),
+  unitEast:  z.string().max(300).optional().or(z.literal('')),
+  unitWest:  z.string().max(300).optional().or(z.literal('')),
+}).optional().nullable();
 
 // ─────────────────────────────────────────────
 // Save Inspection — full canonical param set
@@ -50,7 +75,7 @@ export const SaveInspectionSchema = z.object({
   propertyShownByDesignation: z.string().max(100).optional().or(z.literal('')),
 
   // SITE_004–009: Occupancy & identification
-  occupancyStatus: z.enum(['SELF_OCCUPIED', 'TENANTED', 'VACANT', 'PARTIALLY_VACANT']).optional().nullable(),
+  occupancyStatus: z.enum(['SELF_OCCUPIED', 'TENANTED', 'VACANT', 'PARTIALLY_VACANT', 'LOCKED', 'UNDER_CONSTRUCTION']).optional().nullable(),
   occupantName: z.string().max(200).optional().or(z.literal('')),
   occupantRelation: z.string().max(100).optional().or(z.literal('')),
   occupiedSince: z.string().max(50).optional().or(z.literal('')),
@@ -146,6 +171,23 @@ export const SaveInspectionSchema = z.object({
   neighborhoodType: z.string().max(100).optional().or(z.literal('')),
   approachRoadWidth: z.string().max(50).optional().or(z.literal('')),
   observationRemarks: z.string().max(2000).optional().or(z.literal('')),
+
+  // AREA_001: Use of property as observed
+  useOfProperty: z.string().max(50).optional().or(z.literal('')),
+
+  // BLDG_014: Parking
+  parkingType: z.string().max(100).optional().or(z.literal('')),
+  parkingCount: z.number().int().nonnegative().optional().nullable(),
+
+  // DOC_016/019: Documents seen at site
+  documentsAvailableAtSite: z.array(z.string()).optional().nullable(),
+  otherDocumentsNote: z.string().max(500).optional().or(z.literal('')),
+
+  // UC_013: Internal access
+  internalAccessAllowed: z.boolean().optional().nullable(),
+
+  // Observed boundaries (as seen at site — separate from document-derived values)
+  observedBoundaries: ObservedBoundariesSchema,
 
   // Actual site measurements (measured during inspection)
   builtUpAreaActualSqM: z.number().positive().optional().nullable(),
@@ -263,6 +305,14 @@ export interface InspectionData {
   neighborhoodType: string | null;
   approachRoadWidth: string | null;
   observationRemarks: string | null;
+  // New fields
+  useOfProperty: string | null;
+  parkingType: string | null;
+  parkingCount: number | null;
+  documentsAvailableAtSite: string[] | null;
+  otherDocumentsNote: string | null;
+  internalAccessAllowed: boolean | null;
+  observedBoundaries: { north?: string; south?: string; east?: string; west?: string; unitNorth?: string; unitSouth?: string; unitEast?: string; unitWest?: string } | null;
   // Actual site measurements
   builtUpAreaActualSqM: number | null;
   builtUpAreaActualSqFt: number | null;
