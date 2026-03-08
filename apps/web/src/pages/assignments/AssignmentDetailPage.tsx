@@ -1374,7 +1374,7 @@ export default function AssignmentDetailPage() {
       </Button>
 
       <div className="flex items-start justify-between mb-6">
-        <div>
+        <div className="flex-1">
           <div className="flex items-center gap-3 mb-1">
             <h1 className="text-2xl font-bold font-mono">{assignment.assignmentNo}</h1>
             <StatusBadge status={status} />
@@ -1384,9 +1384,28 @@ export default function AssignmentDetailPage() {
               </span>
             )}
           </div>
-          <p className="text-muted-foreground text-sm">
-            {clientName ?? '—'} · {String(assignment.propertyType).replace(/_/g, ' ')} · {assignment.property?.city}
+          <p className="text-muted-foreground text-sm mb-3">
+            {clientName ?? '—'} · {String(assignment.propertyType).replace(/_/g, ' ')}
           </p>
+
+          {/* Property address — always visible, especially important for Inspector */}
+          {propertyData?.property && (() => {
+            const p = propertyData.property;
+            const unitLine = [p.flatNo, p.wingName, p.buildingName, p.societyName]
+              .filter(Boolean).join(', ');
+            const addrLine = [p.addressLine1, p.addressLine2].filter(Boolean).join(', ');
+            const cityLine = [p.city, p.district, p.state, p.pincode].filter(Boolean).join(', ');
+            return (
+              <div className="inline-flex items-start gap-2 bg-muted/50 border rounded-md px-3 py-2 text-sm max-w-xl">
+                <Building2 className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                <div className="text-muted-foreground leading-snug">
+                  {unitLine && <span className="font-medium text-foreground">{unitLine}<br /></span>}
+                  {addrLine && <span>{addrLine}<br /></span>}
+                  {cityLine && <span>{cityLine}</span>}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
