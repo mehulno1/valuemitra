@@ -956,7 +956,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankCode: _bankCo
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center justify-between">
                 Site Photos (INS_051–062)
-                {canEdit && !formDisabled && (
+                {canFillForm && !formDisabled && (
                   <label className="cursor-pointer">
                     <Button asChild size="sm" variant="outline" disabled={uploadingCount > 0}>
                       <span>
@@ -970,7 +970,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankCode: _bankCo
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {canEdit && !formDisabled && (
+              {canFillForm && !formDisabled && (
                 <div className="flex gap-2 items-center">
                   <Label className="text-xs text-muted-foreground shrink-0">Category:</Label>
                   <Select value={photoCategory} onValueChange={setPhotoCategory}>
@@ -1001,7 +1001,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankCode: _bankCo
                           <div className="px-1 pb-1 text-xs text-primary">{PHOTO_CATEGORY_LABELS[(doc as { photoCategory: string }).photoCategory] ?? (doc as { photoCategory: string }).photoCategory}</div>
                         )}
                       </a>
-                      {canEdit && !formDisabled && (
+                      {canFillForm && !formDisabled && (
                         <button
                           className="absolute top-1 right-1 bg-white/80 rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={() => deleteDoc({ id: doc.id, assignmentId }, {
@@ -1022,7 +1022,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankCode: _bankCo
           <Separator />
 
           {/* Save / Submit buttons */}
-          {canEdit && !formDisabled && (
+          {canFillForm && !formDisabled && (
             <div className="flex gap-3 justify-end">
               <Button variant="outline" disabled={updating} onClick={handleSaveDraft}>
                 <Save className="h-4 w-4 mr-2" />
