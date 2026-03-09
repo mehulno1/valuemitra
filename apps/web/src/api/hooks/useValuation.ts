@@ -56,15 +56,20 @@ export interface ValuationRun {
   weightedValue?: number;
   roundedValue?: number;
   reconciliationNotes?: string;
+  marketabilityRating?: string;
+  positiveFactors?: string;
+  negativeFactors?: string;
+  marketAnalysisNarrative?: string;
   aiValuationResult?: {
     suggestedValueLow: number;
     suggestedValueMid: number;
     suggestedValueHigh: number;
-    approach: string;
-    reasoning: string;
+    suggestedLandRateMarket?: number;
+    suggestedLandRateGovt?: number;
     confidenceLevel: string;
-    marketObservations: string[];
-    riskFactors: string[];
+    reasoning: string;
+    keyFactors: string[];
+    caveats: string[];
   };
   createdAt: string;
   updatedAt: string;
@@ -75,7 +80,7 @@ export function useValuationRuns(assignmentId: string) {
     queryKey: [VALUATION_KEY, assignmentId],
     queryFn: () =>
       api
-        .get<{ success: boolean; data: ValuationRun[] }>('/valuation', { params: { assignmentId } })
+        .get<{ success: boolean; data: ValuationRun[] }>(`/valuation/${assignmentId}`)
         .then((r) => r.data.data),
     enabled: !!assignmentId,
   });
@@ -94,7 +99,7 @@ export function useUpdateMarket() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; assignmentId: string; data: unknown }) =>
-      api.patch(`/valuation/${id}/market`, data).then((r) => r.data),
+      api.patch(`/valuation/run/${id}/market`, data).then((r) => r.data),
     onSuccess: (_d, vars) => void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] }),
   });
 }
@@ -103,7 +108,7 @@ export function useUpdateCost() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; assignmentId: string; data: unknown }) =>
-      api.patch(`/valuation/${id}/cost`, data).then((r) => r.data),
+      api.patch(`/valuation/run/${id}/cost`, data).then((r) => r.data),
     onSuccess: (_d, vars) => void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] }),
   });
 }
@@ -112,7 +117,7 @@ export function useUpdateIncome() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; assignmentId: string; data: unknown }) =>
-      api.patch(`/valuation/${id}/income`, data).then((r) => r.data),
+      api.patch(`/valuation/run/${id}/income`, data).then((r) => r.data),
     onSuccess: (_d, vars) => void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] }),
   });
 }
@@ -121,7 +126,7 @@ export function useFinalizeValuation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; assignmentId: string; data: unknown }) =>
-      api.post(`/valuation/${id}/finalize`, data).then((r) => r.data),
+      api.post(`/valuation/run/${id}/finalize`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] });
       void qc.invalidateQueries({ queryKey: ['assignments', vars.assignmentId] });
@@ -129,15 +134,24 @@ export function useFinalizeValuation() {
   });
 }
 
+export function useDeleteValuationRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string; assignmentId: string }) =>
+      api.delete(`/valuation/run/${id}`).then((r) => r.data),
+    onSuccess: (_d, vars) => void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] }),
+  });
+}
+
 export function useRequestAIValuation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (assignmentId: string) =>
+    mutationFn: (vars: { assignmentId: string; valuationRunId?: string }) =>
       api.post<{ data: { aiValuationResult: ValuationRun['aiValuationResult'] } }>(
         '/ai-valuation',
-        { assignmentId },
+        vars,
       ).then((r) => r.data),
-    onSuccess: (_d, assignmentId) => void qc.invalidateQueries({ queryKey: [VALUATION_KEY, assignmentId] }),
+    onSuccess: (_d, vars) => void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] }),
   });
 }
 

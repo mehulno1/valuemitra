@@ -12,6 +12,10 @@ import { NotFoundError, AppError } from '../../middleware/error.middleware.js';
 import { buildReportData } from './report-data.builder.js';
 import { generateDocx } from './docx-generator.js';
 import { convertDocxToPdf } from './pdf-converter.js';
+import {
+  AssignmentStatus,
+  ASSIGNMENT_STATUS_TRANSITIONS,
+} from '@valuemitra/shared';
 import type {
   GenerateReportInput,
   ListTemplatesInput,
@@ -71,6 +75,7 @@ export async function generateReport(
     tenantId,
     userId,
     input.valuationRunId,
+    input.templateId,
   );
 
   // 3. Fetch template file from storage
@@ -120,7 +125,21 @@ export async function generateReport(
     },
   });
 
-  // 9. Audit log
+  // 9. Advance assignment to REPORT_DRAFT if currently in ANALYSIS_IN_PROGRESS
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: input.assignmentId, tenantId },
+    select: { status: true },
+  });
+  const currentStatus = assignment?.status as AssignmentStatus | undefined;
+  const allowed = currentStatus ? ASSIGNMENT_STATUS_TRANSITIONS[currentStatus] ?? [] : [];
+  if (allowed.includes(AssignmentStatus.REPORT_DRAFT)) {
+    await prisma.assignment.update({
+      where: { id: input.assignmentId },
+      data: { status: AssignmentStatus.REPORT_DRAFT },
+    });
+  }
+
+  // 10. Audit log
   await createAuditLog({
     tenantId,
     userId,
@@ -130,7 +149,7 @@ export async function generateReport(
     after: { version, assignmentId: input.assignmentId, templateId: input.templateId },
   });
 
-  // 10. Get signed download URLs
+  // 11. Get signed download URLs
   const [docxUrl, pdfUrl] = await Promise.all([
     getSignedDownloadUrl(docxStoragePath),
     getSignedDownloadUrl(pdfStoragePath),
@@ -150,11 +169,22 @@ export async function listReports(assignmentId: string, tenantId: string) {
   });
   if (!assignment) throw new NotFoundError('Assignment');
 
-  return prisma.report.findMany({
+  const reports = await prisma.report.findMany({
     where: { assignmentId },
     include: { template: { select: { name: true, bankCode: true, propertyType: true } } },
     orderBy: { version: 'desc' },
   });
+
+  // Attach signed download URLs to each report
+  return Promise.all(
+    reports.map(async (r) => {
+      const [docxSignedUrl, pdfSignedUrl] = await Promise.all([
+        r.docxPath ? getSignedDownloadUrl(r.docxPath) : Promise.resolve(null),
+        r.pdfPath  ? getSignedDownloadUrl(r.pdfPath)  : Promise.resolve(null),
+      ]);
+      return { ...r, docxSignedUrl, pdfSignedUrl };
+    }),
+  );
 }
 
 // ─────────────────────────────────────────────

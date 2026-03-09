@@ -36,6 +36,19 @@ async function getRunOrThrow(id: string, tenantId: string) {
 }
 
 // ─────────────────────────────────────────────
+// Delete a (non-finalized) ValuationRun
+// ─────────────────────────────────────────────
+
+export async function deleteValuationRun(id: string, tenantId: string) {
+  const run = await prisma.valuationRun.findFirst({
+    where: { id, assignment: { tenantId } },
+  });
+  if (!run) throw new NotFoundError('Valuation run');
+  if (run.isFinalized) throw new AppError(409, 'Cannot delete a finalized valuation run');
+  await prisma.valuationRun.delete({ where: { id } });
+}
+
+// ─────────────────────────────────────────────
 // Create a new ValuationRun
 // ─────────────────────────────────────────────
 
@@ -109,6 +122,11 @@ export async function updateMarketComparison(
       comparables: result.comparables as unknown as object,
       adjustedValues: { min: result.minAdjustedRate, max: result.maxAdjustedRate, avg: result.simpleAvgRate } as unknown as object,
       correlatedValue: String(result.correlatedValue),
+      // Market analysis fields (MKT_009-012)
+      marketabilityRating: input.marketabilityRating ?? null,
+      positiveFactors: input.positiveFactors || null,
+      negativeFactors: input.negativeFactors || null,
+      marketAnalysisNarrative: input.marketAnalysisNarrative || null,
       inputSnapshot: { marketComparison: { input, result } } as unknown as object,
       computedAt: new Date(),
     },

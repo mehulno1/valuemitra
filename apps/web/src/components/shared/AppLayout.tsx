@@ -8,18 +8,20 @@ import { useLogout } from '../../api/hooks/useAuth.js';
 import { cn } from '../../lib/utils.js';
 import { Avatar, AvatarFallback } from '../ui/avatar.js';
 
-const navItems = [
-  { label: 'Dashboard',   to: '/dashboard',   icon: LayoutDashboard },
-  { label: 'Assignments', to: '/assignments',  icon: ClipboardList   },
-  { label: 'Clients',     to: '/clients',      icon: Users           },
-  { label: 'Documents',   to: '/documents',    icon: FileText        },
-  { label: 'Valuation',   to: '/valuation',    icon: Calculator      },
-  { label: 'Reports',     to: '/reports',      icon: BarChart3       },
+const allNavItems = [
+  { label: 'Dashboard',   to: '/dashboard',   icon: LayoutDashboard, inspectorAllowed: false },
+  { label: 'Assignments', to: '/assignments',  icon: ClipboardList,   inspectorAllowed: true  },
+  { label: 'Clients',     to: '/clients',      icon: Users,           inspectorAllowed: false },
+  { label: 'Documents',   to: '/documents',    icon: FileText,        inspectorAllowed: false },
+  { label: 'Valuation',   to: '/valuation',    icon: Calculator,      inspectorAllowed: false },
+  { label: 'Reports',     to: '/reports',      icon: BarChart3,       inspectorAllowed: false },
 ];
 
 export default function AppLayout() {
   const user   = useAuthStore((s) => s.user);
   const tenant = useAuthStore((s) => s.tenant);
+  const isInspector = user?.role === 'INSPECTOR';
+  const navItems = allNavItems.filter((item) => !isInspector || item.inspectorAllowed);
   const { mutate: logout } = useLogout();
 
   const initials = user?.fullName

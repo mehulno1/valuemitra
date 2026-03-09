@@ -100,35 +100,98 @@ function buildPrompt(data: {
 // Parse Claude's structured response
 // ─────────────────────────────────────────────
 
+function extractStructured(parsed: Record<string, unknown>): Omit<AIValuationResult, 'generatedAt' | 'modelVersion'> {
+  return {
+    suggestedValueLow: Number(parsed['suggestedValueLow'] ?? 0),
+    suggestedValueMid: Number(parsed['suggestedValueMid'] ?? 0),
+    suggestedValueHigh: Number(parsed['suggestedValueHigh'] ?? 0),
+    suggestedLandRateMarket: parsed['suggestedLandRateMarket'] != null && Number(parsed['suggestedLandRateMarket']) > 0
+      ? Number(parsed['suggestedLandRateMarket']) : undefined,
+    suggestedLandRateGovt: parsed['suggestedLandRateGovt'] != null && Number(parsed['suggestedLandRateGovt']) > 0
+      ? Number(parsed['suggestedLandRateGovt']) : undefined,
+    confidenceLevel: (['HIGH', 'MEDIUM', 'LOW'].includes(parsed['confidenceLevel'] as string)
+      ? parsed['confidenceLevel'] : 'MEDIUM') as 'HIGH' | 'MEDIUM' | 'LOW',
+    reasoning: String(parsed['reasoning'] ?? ''),
+    keyFactors: Array.isArray(parsed['keyFactors']) ? (parsed['keyFactors'] as string[]) : [],
+    caveats: Array.isArray(parsed['caveats']) ? (parsed['caveats'] as string[]) : [],
+  };
+}
+
+function tryParseJson(jsonStr: string): Record<string, unknown> | null {
+  // Attempt 1: direct parse
+  try { return JSON.parse(jsonStr) as Record<string, unknown>; } catch { /* fall through */ }
+  // Attempt 2: replace literal \n inside strings (unescaped newlines)
+  try {
+    const cleaned = jsonStr.replace(/[\r\n\t]/g, (c) =>
+      c === '\n' ? '\\n' : c === '\r' ? '\\r' : '\\t',
+    );
+    return JSON.parse(cleaned) as Record<string, unknown>;
+  } catch { return null; }
+}
+
 function parseAIResponse(text: string): Omit<AIValuationResult, 'generatedAt' | 'modelVersion'> {
-  // Attempt to extract JSON block from Claude's response
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-  if (jsonMatch && jsonMatch[1]) {
-    try {
-      const parsed = JSON.parse(jsonMatch[1]) as Record<string, unknown>;
-      return {
-        suggestedValueLow: Number(parsed['suggestedValueLow'] ?? 0),
-        suggestedValueMid: Number(parsed['suggestedValueMid'] ?? 0),
-        suggestedValueHigh: Number(parsed['suggestedValueHigh'] ?? 0),
-        confidenceLevel: (['HIGH', 'MEDIUM', 'LOW'].includes(parsed['confidenceLevel'] as string)
-          ? parsed['confidenceLevel']
-          : 'MEDIUM') as 'HIGH' | 'MEDIUM' | 'LOW',
-        reasoning: String(parsed['reasoning'] ?? ''),
-        keyFactors: Array.isArray(parsed['keyFactors']) ? (parsed['keyFactors'] as string[]) : [],
-        caveats: Array.isArray(parsed['caveats']) ? (parsed['caveats'] as string[]) : [],
-      };
-    } catch {
-      // Fall through to text parsing
+  // Strategy 1: look for ```json ... ``` or ``` ... ``` block (greedy to handle nested content)
+  const codeBlockPatterns = [
+    /```json\s*([\s\S]+?)\s*```/,
+    /```\s*([\s\S]+?)\s*```/,
+  ];
+  for (const pattern of codeBlockPatterns) {
+    const m = text.match(pattern);
+    if (m?.[1]) {
+      const parsed = tryParseJson(m[1].trim());
+      if (parsed && ('suggestedValueLow' in parsed || 'suggestedValueMid' in parsed)) {
+        return extractStructured(parsed);
+      }
     }
   }
 
-  // Fallback: return the raw text as reasoning with zeroed values
+  // Strategy 2: find the first `{` to the last `}` and parse as JSON object
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const jsonCandidate = text.slice(firstBrace, lastBrace + 1);
+    const parsed = tryParseJson(jsonCandidate);
+    if (parsed && ('suggestedValueLow' in parsed || 'suggestedValueMid' in parsed)) {
+      return extractStructured(parsed);
+    }
+  }
+
+  // Strategy 3: extract individual values via regex as last resort
+  const getNum = (key: string) => {
+    const m = text.match(new RegExp(`"${key}"\\s*:\\s*(\\d+)`));
+    return m ? Number(m[1]) : 0;
+  };
+  const getStr = (key: string): string => {
+    const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+    return m?.[1] ?? '';
+  };
+  const low = getNum('suggestedValueLow');
+  if (low > 0) {
+    return {
+      suggestedValueLow: low,
+      suggestedValueMid: getNum('suggestedValueMid'),
+      suggestedValueHigh: getNum('suggestedValueHigh'),
+      suggestedLandRateMarket: getNum('suggestedLandRateMarket') || undefined,
+      suggestedLandRateGovt: getNum('suggestedLandRateGovt') || undefined,
+      confidenceLevel: (['HIGH', 'MEDIUM', 'LOW'].includes(getStr('confidenceLevel'))
+        ? getStr('confidenceLevel') : 'MEDIUM') as 'HIGH' | 'MEDIUM' | 'LOW',
+      reasoning: getStr('reasoning') || text.slice(0, 1000),
+      keyFactors: [],
+      caveats: [],
+    };
+  }
+
+  // Final fallback: strip the JSON block from reasoning text so UI doesn't show raw JSON
+  const reasoningText = text
+    .replace(/```(?:json)?[\s\S]*?```/g, '')
+    .replace(/\{[\s\S]*\}/g, '')
+    .trim();
   return {
     suggestedValueLow: 0,
     suggestedValueMid: 0,
     suggestedValueHigh: 0,
     confidenceLevel: 'LOW',
-    reasoning: text,
+    reasoning: reasoningText || text,
     keyFactors: [],
     caveats: ['AI response could not be parsed into structured format. Please review the reasoning text.'],
   };
@@ -175,10 +238,11 @@ export async function requestAIValuation(
 You are assisting a Registered Valuer (RV) with an advisory opinion. Your output is SUPPLEMENTARY and does NOT replace the RV's professional judgment.
 
 Given the property details and computed valuation approach results, provide:
-1. A suggested value range (low, mid, high) in INR
-2. Confidence level (HIGH / MEDIUM / LOW) based on data completeness
-3. Key factors driving your opinion
-4. Important caveats
+1. A suggested value range (low, mid, high) in INR for the overall property
+2. Suggested land rate per sq.m. — both market rate and government ready reckoner (circle rate) based on the locality
+3. Confidence level (HIGH / MEDIUM / LOW) based on data completeness
+4. Key factors driving your opinion
+5. Important caveats
 
 Always respond with a JSON block followed by plain-language reasoning.
 
@@ -188,6 +252,8 @@ Response format:
   "suggestedValueLow": <number>,
   "suggestedValueMid": <number>,
   "suggestedValueHigh": <number>,
+  "suggestedLandRateMarket": <number or null>,
+  "suggestedLandRateGovt": <number or null>,
   "confidenceLevel": "HIGH" | "MEDIUM" | "LOW",
   "reasoning": "<2-3 paragraph explanation>",
   "keyFactors": ["<factor 1>", "<factor 2>", ...],
@@ -196,7 +262,10 @@ Response format:
 \`\`\`
 
 Important rules:
-- All values must be in INR (Indian Rupees), rounded to nearest ₹1,000
+- All monetary values in INR (Indian Rupees), land rates rounded to nearest ₹100, property values to nearest ₹1,000
+- suggestedLandRateMarket: current market land rate per sq.m. for the locality based on city/area/property type
+- suggestedLandRateGovt: approximate government ready reckoner / circle rate per sq.m. (typically 60-80% of market rate in most Indian cities)
+- If location data is insufficient to estimate land rates, set those fields to null
 - Factor in Indian market conventions (circle rates, ready reckoner, stamp duty implications)
 - If data is insufficient, reflect this in LOW confidence and wider value range
 - Never present AI output as definitive — always frame as advisory

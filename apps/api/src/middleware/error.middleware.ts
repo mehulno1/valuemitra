@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
+import multer from 'multer';
 
 export class AppError extends Error {
   constructor(
@@ -50,6 +51,18 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
+  // Multer file size / field errors
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? `File is too large. Maximum allowed size is ${process.env['MAX_FILE_SIZE_MB'] ?? 50} MB`
+      : err.message;
+    res.status(400).json({
+      success: false,
+      error: { code: 'FILE_TOO_LARGE', message },
+    });
+    return;
+  }
+
   // Zod validation errors
   if (err instanceof ZodError) {
     const errors: Record<string, string[]> = {};

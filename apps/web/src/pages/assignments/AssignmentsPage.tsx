@@ -31,7 +31,7 @@ export default function AssignmentsPage() {
   const [statusFilter, setStatusFilter] = useState('');
 
   const { data, isLoading, isError } = useAssignments(
-    statusFilter ? { status: statusFilter } : undefined,
+    statusFilter && statusFilter !== '_all' ? { status: statusFilter } : undefined,
   );
 
   const assignments = data?.data ?? [];
@@ -106,9 +106,9 @@ export default function AssignmentsPage() {
                   onClick={() => navigate(`/assignments/${a.id}`)}
                 >
                   <TableCell className="font-mono text-sm font-medium">{a.assignmentNo}</TableCell>
-                  <TableCell className="text-sm">{a.client.name}</TableCell>
+                  <TableCell className="text-sm">{a.client.companyName || a.client.bankName || a.client.fullName || '—'}</TableCell>
                   <TableCell className="text-sm">{a.propertyType.replace(/_/g, ' ')}</TableCell>
-                  <TableCell className="text-sm">{a.propertyCity ?? '—'}</TableCell>
+                  <TableCell className="text-sm">{a.property?.city ?? '—'}</TableCell>
                   <TableCell><StatusBadge status={a.status as AssignmentStatus} /></TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {a.inspectionDate

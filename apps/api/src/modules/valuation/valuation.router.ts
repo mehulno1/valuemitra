@@ -8,6 +8,7 @@ import {
   updateCost,
   updateIncome,
   finalize,
+  deleteOne,
 } from './valuation.controller.js';
 
 export const valuationRouter = Router();
@@ -35,3 +36,6 @@ valuationRouter.patch('/run/:id/income', updateIncome);
 
 // POST   /api/valuation/run/:id/finalize         — lock run, compute weighted value
 valuationRouter.post('/run/:id/finalize', finalize);
+
+// DELETE /api/valuation/run/:id                  — delete a non-finalized run
+valuationRouter.delete('/run/:id', deleteOne);

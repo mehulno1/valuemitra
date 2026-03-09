@@ -10,6 +10,7 @@ import {
   NotFoundError,
 } from '../../middleware/error.middleware.js';
 import type { RegisterTenantInput, LoginInput } from '@valuemitra/shared';
+import { seedBankClientsForTenant } from '../../prisma/seed-bank-clients.js';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -92,6 +93,9 @@ export async function registerTenant(input: RegisterTenantInput): Promise<{
     tenantId: result.user.tenantId,
   });
   const rawRefreshToken = generateRefreshToken();
+
+  // Pre-populate all 8 bank clients for the new tenant
+  await seedBankClientsForTenant(result.tenant.id);
 
   await prisma.refreshToken.create({
     data: {

@@ -34,6 +34,11 @@ export const CreateValuationRunSchema = z.object({
 export const UpdateMarketComparisonSchema = z.object({
   comparables: z.array(ComparableSaleSchema).min(1).max(10),
   correlatedValue: z.number().positive().optional(),
+  // Market analysis (MKT_009-012)
+  marketabilityRating: z.enum(['Good', 'Average', 'Poor', 'Low']).optional().nullable(),
+  positiveFactors: z.string().max(2000).optional().or(z.literal('')),
+  negativeFactors: z.string().max(2000).optional().or(z.literal('')),
+  marketAnalysisNarrative: z.string().max(5000).optional().or(z.literal('')),
 });
 
 export const UpdateCostApproachSchema = z.object({

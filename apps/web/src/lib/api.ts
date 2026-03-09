@@ -29,7 +29,11 @@ api.interceptors.response.use(
     const err = error as { response?: { status: number }; config?: AxiosRequestConfig & { _retry?: boolean } };
     const originalRequest = err.config;
 
-    if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
+    // Skip refresh for auth endpoints — 401 from /auth/login means invalid credentials, not expired token
+    const isAuthEndpoint = originalRequest?.url?.includes('/auth/login') ||
+      originalRequest?.url?.includes('/auth/register');
+
+    if (err.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         return new Promise((resolve) => {
           refreshQueue.push((token: string) => {

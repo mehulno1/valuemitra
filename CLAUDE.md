@@ -242,11 +242,12 @@ npx eslint apps/api/src --ext .ts
 
 ### ValuationRun lifecycle
 1. `POST /api/valuation` — create run (choose approach)
-2. `PATCH /api/valuation/:id/market` — save comparables
-3. `PATCH /api/valuation/:id/cost` — save cost approach inputs (auto-computes)
-4. `PATCH /api/valuation/:id/income` — save income approach inputs (auto-computes)
-5. `POST /api/valuation/:id/finalize` — set weights, compute weighted value, lock run
-6. Finalized run updates `Assignment.finalValue` and advances status to `ANALYSIS_IN_PROGRESS`
+2. `PATCH /api/valuation/run/:id/market` — save comparables (auto-computes correlated value)
+3. `PATCH /api/valuation/run/:id/cost` — save cost approach inputs (auto-computes)
+4. `PATCH /api/valuation/run/:id/income` — save income approach inputs (auto-computes)
+5. `POST /api/valuation/run/:id/finalize` — set weights, compute weighted value, lock run
+6. `DELETE /api/valuation/run/:id` — delete a non-finalized run (allows changing approach)
+7. Finalized run updates `Assignment.finalValue` and advances status to `ANALYSIS_IN_PROGRESS`
 
 ### AI Valuation (advisory only)
 - `POST /api/ai-valuation/:assignmentId` — calls Claude API with property + valuation context
@@ -303,6 +304,32 @@ Both `apps/api/.env` and root `.env` must be kept in sync (copy manually).
 | 7 — Report Generation | ✅ Done | `report-data.builder.ts` (IBBI gate), `docx-generator.ts` (docxtemplater/pizzip), `pdf-converter.ts` (LibreOffice headless), `number-to-words.ts` (Indian lakh/crore), reports service/controller/router |
 | 8 — Review & Delivery | ✅ Done | 3-step review workflow (INTERNAL→CLIENT_BANK→COMPLIANCE→APPROVED), SES SMTP via nodemailer, notification job (every 1 min), report delivery with PDF attachment |
 | 9 — Deployment | ✅ Done | EC2 + Nginx + PM2 + GitHub Actions CI/CD + Let's Encrypt SSL |
+
+---
+
+## Post-Deployment Bug Fixes & Enhancements
+
+### INSPECTOR Role (added post-stage-9)
+- INSPECTOR users can only see their own assigned assignments (backend enforces via `inspectorId` filter in `listAssignments`; `assignments.controller.ts` forces filter when `role === 'INSPECTOR'`)
+- `getAssignment` throws 403 if INSPECTOR accesses an assignment they're not assigned to
+- AppLayout hides all nav items except Assignments for INSPECTOR
+- AssignmentDetailPage shows only the Inspection tab for INSPECTOR
+- `useUsers(enabled)` takes an `enabled` param; called with `!isInspector` to skip /api/users fetch for INSPECTOR (would get 403)
+- Upload route uses `requireInspectorOrAbove` (not `requireNotViewer`) so INSPECTOR can upload photos
+
+### Admin Editing Submitted Inspections
+- `formDisabled = !canFillForm || (!!inspection?.isComplete && !isAdmin)` — admins bypass the isComplete lock
+- `canFillForm = isInspector || isAssignedInspector || isAdmin`
+
+### Assignments List Bugs Fixed
+- `a.client.name` did not exist — API returns `fullName`/`companyName`/`bankName`; fixed to `companyName || bankName || fullName`
+- `a.propertyCity` was not a top-level field — fixed to `a.property?.city`
+- Status filter Select had `value={s.value || '_all'}` mapping "All Statuses" to `'_all'`; passing `status=_all` to the API returned zero results — fixed with `statusFilter !== '_all'` guard
+
+### Valuation — Change Approach
+- `DELETE /api/valuation/run/:id` added to allow deleting a non-finalized run
+- Frontend: "Change Approach" button (destructive, with confirm dialog) shown when run is not finalized
+- Deleting resets the tab back to the approach selection screen
 
 ---
 

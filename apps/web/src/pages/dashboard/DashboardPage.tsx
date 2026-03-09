@@ -84,8 +84,8 @@ export default function DashboardPage() {
                 <div key={a.id} className="py-3 flex items-center justify-between">
                   <div>
                     <p className="font-mono text-sm font-medium">{a.assignmentNo}</p>
-                    <p className="text-sm text-muted-foreground truncate max-w-xs">{a.propertyAddress}</p>
-                    <p className="text-xs text-muted-foreground">{a.client.name}</p>
+                    <p className="text-sm text-muted-foreground truncate max-w-xs">{a.property?.addressLine1}</p>
+                    <p className="text-xs text-muted-foreground">{a.client.bankName ?? a.client.companyName ?? a.client.fullName}</p>
                   </div>
                   <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLORS[a.status] ?? 'bg-gray-100 text-gray-700'}`}>
                     {a.status.replace(/_/g, ' ')}

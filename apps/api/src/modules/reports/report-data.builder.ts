@@ -5,7 +5,7 @@
  */
 
 import { prisma } from '../../config/database.js';
-import { NotFoundError, AppError, ForbiddenError } from '../../middleware/error.middleware.js';
+import { NotFoundError, AppError } from '../../middleware/error.middleware.js';
 import { rupeesToWords } from './utils/number-to-words.js';
 import {
   IBBI_CERTIFICATE_TEXT,
@@ -45,6 +45,12 @@ function fmtCurrency(value: unknown): string {
   const n = Number(value);
   if (isNaN(n) || n === 0) return '';
   return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+function fmtBool(value: unknown): string {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return '';
 }
 
 // ─────────────────────────────────────────────
@@ -111,6 +117,7 @@ export async function buildReportData(
   tenantId: string,
   userId: string,
   valuationRunId?: string,
+  templateId?: string,
 ): Promise<ReportData> {
   // Fetch assignment with all required relations
   const assignment = await prisma.assignment.findFirst({
@@ -120,6 +127,7 @@ export async function buildReportData(
       client: true,
       assignedTo: true,
       createdBy: true,
+      inspection: true,
     },
   });
 
@@ -127,10 +135,35 @@ export async function buildReportData(
 
   // Determine the RV (the assigned valuer or the creator)
   const valuer = assignment.assignedTo ?? assignment.createdBy;
+  if (!valuer) {
+    throw new AppError(422, 'Assignment has no valuer assigned. Please assign a valuer before generating the report.');
+  }
 
   // Fetch tenant (firm details)
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
   if (!tenant) throw new NotFoundError('Tenant');
+
+  // Load template for bank-conditional flags (if templateId provided)
+  let realizableValuePct = 0.90;
+  let showDualStageValuation = false;
+  let showInsuranceValue = false;
+  let showBookValue = false;
+  let showRentalValue = false;
+  let showPurchasePrice = false;
+
+  if (templateId) {
+    const template = await prisma.reportTemplate.findFirst({
+      where: { id: templateId, OR: [{ tenantId }, { tenantId: null }] },
+    });
+    if (template) {
+      realizableValuePct = template.realizableValuePct ? Number(template.realizableValuePct) : 0.90;
+      showDualStageValuation = template.showDualStageValuation ?? false;
+      showInsuranceValue = template.showInsuranceValue ?? false;
+      showBookValue = template.showBookValue ?? false;
+      showRentalValue = template.showRentalValue ?? false;
+      showPurchasePrice = template.showPurchasePrice ?? false;
+    }
+  }
 
   // Fetch finalized valuation run
   let valuationRun: Record<string, unknown> | null = null;
@@ -165,6 +198,7 @@ export async function buildReportData(
 
   const property = assignment.property;
   const client = assignment.client;
+  const inspection = assignment.inspection;
 
   // Resolve client display name
   let clientName = '';
@@ -176,13 +210,21 @@ export async function buildReportData(
     clientName = client.companyName ?? client.fullName ?? '';
   }
 
+  // Resolve property owner name (from property.ownerNames array if available, else client name)
+  const ownerNamesArr = property?.ownerNames as string[] | null | undefined;
+  const ownerName = ownerNamesArr && ownerNamesArr.length > 0
+    ? ownerNamesArr.join(', ')
+    : clientName;
+
   // Build full property address string
   const propertyAddressParts = [
     property?.flatNo,
+    property?.wingName,
     property?.buildingName,
     property?.societyName,
     property?.addressLine1,
     property?.addressLine2,
+    property?.village,
     property?.city,
     property?.district,
     property?.state,
@@ -208,10 +250,10 @@ export async function buildReportData(
   const landValueNum = valuationRun?.['landValue'] ? Number(valuationRun['landValue']) : 0;
   const buildingValueNum = valuationRun?.['depreciatedValue'] ? Number(valuationRun['depreciatedValue']) : 0;
 
-  // Market value variants (standard practice)
+  // Market value variants — realizableValuePct from template (BOI/UBI: 95%, others: 90%)
   const fairMarketValue = finalValueNum;
-  const realizableValue = Math.round(finalValueNum * 0.90); // 90%
-  const distressSaleValue = Math.round(finalValueNum * 0.75); // 75%
+  const realizableValueNum = Math.round(finalValueNum * realizableValuePct);
+  const distressSaleValue = Math.round(finalValueNum * 0.75); // 75% fixed
 
   // Govt rate lookup (best match for property state/district)
   let govtRateYear = '', govtRatePerSqFt = '', govtRatePerSqM = '', govtRateSource = '';
@@ -244,15 +286,42 @@ export async function buildReportData(
     }
   }
 
+  // Unpack JSON blobs
+  const bd = (property?.boundaryDetails ?? {}) as Record<string, string>;
+  const ac = (property?.areaClassification ?? {}) as Record<string, string>;
+  const ph = (property?.physicalDetails ?? {}) as Record<string, string>;
+
+  // Composite rate per sq.ft (finalValue ÷ builtUpAreaSqFt)
+  const compositeRatePerSqFtNum = (() => {
+    if (finalValueNum > 0 && property?.builtUpAreaSqFt) {
+      const sqft = Number(property.builtUpAreaSqFt);
+      if (sqft > 0) return Math.round(finalValueNum / sqft);
+    }
+    return null;
+  })();
+
+  // Present stage value (for UC dual-stage valuation: BOI/UBI)
+  const presentStageValueNum = (() => {
+    if (assignment.isUnderConstruction && assignment.percentageCompletion && finalValueNum > 0) {
+      return Math.round(finalValueNum * Number(assignment.percentageCompletion) / 100 / 1000) * 1000;
+    }
+    return null;
+  })();
+
+  // Bank-conditional optional outputs from ValuationRun
+  const insuranceValueNum = valuationRun?.['insuranceValue'] ? Number(valuationRun['insuranceValue']) : null;
+  const rentalValueMonthlyNum = valuationRun?.['rentalValueMonthly'] ? Number(valuationRun['rentalValueMonthly']) : null;
+  const bookValueNum = valuationRun?.['bookValue'] ? Number(valuationRun['bookValue']) : null;
+
   const reportData: ReportData = {
-    // Reference & dates
+    // ── Reference & dates ──────────────────────────────────
     referenceNo: fmt(assignment.assignmentNo),
     firmReferenceNo: fmt(assignment.firmReferenceNo),
     reportDate: fmtDate(assignment.reportDate ?? new Date()),
     inspectionDate: fmtDate(assignment.inspectionDate),
     valuationDate: fmtDate(assignment.inspectionDate ?? new Date()),
 
-    // RV / Valuer details
+    // ── RV / Valuer details ────────────────────────────────
     rvFullName: fmt(valuer.fullName),
     rvIbbiRegNo: fmt(valuer.ibbiRegNo),
     rvIbbiRegCategory: fmt(valuer.ibbiRegCategory),
@@ -262,7 +331,7 @@ export async function buildReportData(
     rvPhone: fmt(valuer.phone),
     rvEmail: fmt(valuer.email),
 
-    // Firm details
+    // ── Firm details ───────────────────────────────────────
     firmName: fmt(tenant.name),
     firmAddress,
     firmCity: fmt(tenant.city),
@@ -270,94 +339,202 @@ export async function buildReportData(
     firmPhone: fmt(tenant.phone),
     firmEmail: fmt(tenant.email),
 
-    // Bank / Client details
+    // ── Bank / Client details ──────────────────────────────
     bankName: client.isBank ? fmt(client.bankName) : '',
     bankBranch: fmt(client.bankBranch),
     bankRefNo: fmt(assignment.bankRefNo),
     clientName,
     loanAccountNo: fmt(client.loanAccountNo),
 
-    // Purpose
+    // ── Purpose ────────────────────────────────────────────
     purposeOfValuation: fmt(assignment.purposeOfValuation),
     propertyTypeLabel: fmt(assignment.propertyType).replace(/_/g, ' '),
+    freshOrRevaluation: fmt(assignment.freshOrRevaluation),
 
-    // Property identification
-    ownerName: clientName,
+    // ── Property identification ────────────────────────────
+    ownerName,
+    ownershipNature: fmt(property?.ownershipNature),
+    ownerShareDetails: fmt(property?.ownerShareDetails),
+    developerName: fmt(property?.developerName),
+    reraNo: fmt(property?.reraNo),
     propertyAddress,
     surveyNo: fmt(property?.surveyNo),
+    hissaNo: fmt(property?.hissaNo),
     ctsSurveyNo: fmt(property?.ctsSurveyNo),
     municipalNo: fmt(property?.municipalNo),
     societyName: fmt(property?.societyName),
     flatNo: fmt(property?.flatNo),
     floor: fmt(property?.floor),
+    wingName: fmt(property?.wingName),
     buildingName: fmt(property?.buildingName),
     district: fmt(property?.district),
-    taluka: '',
+    taluka: fmt(property?.taluka),
+    village: fmt(property?.village),
+    landmark: fmt(property?.landmark),
+    municipalCorporation: fmt(property?.municipalCorporation),
     pincode: fmt(property?.pincode),
 
-    // Land
+    // ── Area classification (from JSON blob) ───────────────
+    areaType: fmt(ac['type']),
+    areaClassificationGrade: fmt(ac['highMiddlePoor']),
+    urbanRuralClass: fmt(ac['urbanRural']),
+    municipalBodyType: fmt(ac['corpType']),
+    govtEnactments: fmt(ac['govtEnactments']),
+
+    // ── Physical / site description (from JSON blob) ───────
+    landNature: fmt(ph['landNature']),
+    plotShape: fmt(ph['plotShape']),
+    directAccess: fmt(ph['directAccess']),
+    boundaryNature: fmt(ph['boundaryNature']),
+    possessionStatus: fmt(ph['possession']),
+
+    // ── Boundary details (from JSON blob) ─────────────────
+    northBoundaryDoc: fmt(bd['northDoc']),
+    southBoundaryDoc: fmt(bd['southDoc']),
+    eastBoundaryDoc: fmt(bd['eastDoc']),
+    westBoundaryDoc: fmt(bd['westDoc']),
+    northBoundaryActual: fmt(bd['northActual']),
+    southBoundaryActual: fmt(bd['southActual']),
+    eastBoundaryActual: fmt(bd['eastActual']),
+    westBoundaryActual: fmt(bd['westActual']),
+
+    // ── Land ───────────────────────────────────────────────
     landAreaSqFt: property?.landAreaSqFt ? fmtDecimal(property.landAreaSqFt) : '',
     landAreaSqM: property?.landAreaSqM ? fmtDecimal(property.landAreaSqM) : '',
     landTenure: fmt(property?.landTenure),
     zoningClassification: fmt(property?.zoningClassification),
+    udsArea: property?.udsArea ? fmtDecimal(property.udsArea) : '',
+    udsAreaFormatted: property?.udsArea ? fmtDecimal(property.udsArea) : '',
+    udsUnit: fmt(property?.udsUnit),
+    dpZone: fmt(property?.dpZone),
+    fsi: property?.fsi ? fmtDecimal(property.fsi, 2) : '',
+    permissibleUse: fmt(property?.permissibleUse),
+    naOrderDetails: fmt(property?.naOrderDetails),
+    miDcPlotNo: fmt(property?.miDcPlotNo),
 
-    // Building
+    // ── Building ───────────────────────────────────────────
     builtUpAreaSqFt: property?.builtUpAreaSqFt ? fmtDecimal(property.builtUpAreaSqFt) : '',
     builtUpAreaSqM: property?.builtUpAreaSqM ? fmtDecimal(property.builtUpAreaSqM) : '',
     carpetAreaSqFt: property?.carpetAreaSqFt ? fmtDecimal(property.carpetAreaSqFt) : '',
     carpetAreaSqM: property?.carpetAreaSqM ? fmtDecimal(property.carpetAreaSqM) : '',
+    superBuiltUpAreaSqFt: property?.superBuiltUpAreaSqFt ? fmtDecimal(property.superBuiltUpAreaSqFt) : '',
+    superBuiltUpAreaSqM: property?.superBuiltUpAreaSqM ? fmtDecimal(property.superBuiltUpAreaSqM) : '',
+    unitConfiguration: fmt(property?.unitConfiguration),
     numberOfFloors: property?.numberOfFloors ? fmt(property.numberOfFloors) : '',
     yearOfConstruction: property?.yearOfConstruction ? fmt(property.yearOfConstruction) : '',
     ageOfBuilding: property?.ageOfBuilding ? `${fmt(property.ageOfBuilding)} Years` : '',
+    remainingLifeYears: property?.remainingLifeYears ? `${fmt(property.remainingLifeYears)} Years` : '',
     structureType: fmt(property?.structureType).replace(/_/g, ' '),
     condition: fmt(property?.exteriorCondition),
 
-    // Under-construction
+    // ── Actual site-measured areas ─────────────────────────
+    builtUpAreaActualSqFt: property?.builtUpAreaActualSqFt ? fmtDecimal(property.builtUpAreaActualSqFt) : '',
+    builtUpAreaActualSqM: property?.builtUpAreaActualSqM ? fmtDecimal(property.builtUpAreaActualSqM) : '',
+    carpetAreaActualSqFt: property?.carpetAreaActualSqFt ? fmtDecimal(property.carpetAreaActualSqFt) : '',
+    carpetAreaActualSqM: property?.carpetAreaActualSqM ? fmtDecimal(property.carpetAreaActualSqM) : '',
+    landAreaActualSqFt: property?.landAreaActualSqFt ? fmtDecimal(property.landAreaActualSqFt) : '',
+    landAreaActualSqM: property?.landAreaActualSqM ? fmtDecimal(property.landAreaActualSqM) : '',
+
+    // ── Building compliance ────────────────────────────────
+    approvedPlanAuthority: fmt(property?.approvedPlanAuthority),
+    approvedPlanDateFormatted: fmtDate(property?.approvedPlanDate),
+    approvedPlanValidityFormatted: fmtDate(property?.approvedPlanValidity),
+    planGenuinenessVerified: fmtBool(property?.planGenuinenessVerified),
+    unauthorizedConstruction: fmtBool(property?.unauthorizedConstruction),
+    demolitionProceedings: fmtBool(property?.demolitionProceedings),
+
+    // ── L&B building floors breakdown ──────────────────────
+    buildingFloorsNarrative: (() => {
+      const floors = property?.buildingFloors as Array<{floorLabel: string; useType: string; builtUpAreaSqFt?: number; builtUpAreaSqM?: number; remarks?: string}> | null;
+      if (!floors || floors.length === 0) return '';
+      return floors.map(f =>
+        `${f.floorLabel}: ${f.useType}${f.builtUpAreaSqFt ? ` — ${fmtDecimal(f.builtUpAreaSqFt)} sq.ft.` : ''}${f.remarks ? ` (${f.remarks})` : ''}`
+      ).join('\n');
+    })(),
+
+    // ── Unit finishes (from inspection) ───────────────────
+    flooringType: fmt(inspection?.flooringType),
+    wallFinishing: fmt(inspection?.wallFinishing),
+    ceilingHeightFt: inspection?.ceilingHeightFt ? fmtDecimal(inspection.ceilingHeightFt, 1) : '',
+    electricalFittings: fmt(inspection?.electricalFittings),
+    sanitaryFittings: fmt(inspection?.sanitaryFittings),
+    acType: fmt(inspection?.acType),
+    leaseholdDetails: fmt(inspection?.leaseholdDetails),
+
+    // ── Site occupancy (from inspection) ──────────────────
+    occupantName: fmt(inspection?.occupantName),
+    occupantRelation: fmt(inspection?.occupantRelation),
+    occupiedSince: fmt(inspection?.occupiedSince),
+    nameOnBoard: fmt(inspection?.nameOnBoard),
+
+    // ── Under-construction ─────────────────────────────────
     percentageCompletion: assignment.percentageCompletion ? `${assignment.percentageCompletion}%` : undefined,
     expectedHandoverDate: assignment.expectedHandoverDate ? fmtDate(assignment.expectedHandoverDate) : undefined,
 
-    // Government rates
+    // ── Government rates ───────────────────────────────────
     govtRateYear,
     govtRatePerSqFt,
     govtRatePerSqM,
     govtRateSource,
 
-    // Valuation results
+    // ── Valuation results ──────────────────────────────────
     landValue: landValueNum > 0 ? fmtCurrency(landValueNum) : '',
     buildingValue: buildingValueNum > 0 ? fmtCurrency(buildingValueNum) : '',
     finalValue: fmtCurrency(finalValueNum),
     finalValueWords: rupeesToWords(finalValueNum),
     fairMarketValue: fmtCurrency(fairMarketValue),
-    realizableValue: fmtCurrency(realizableValue),
+    realizableValue: fmtCurrency(realizableValueNum),
+    realizableValueWords: rupeesToWords(realizableValueNum),
+    realizableValuePct: `${Math.round(realizableValuePct * 100)}%`,
     distressSaleValue: fmtCurrency(distressSaleValue),
 
-    // Extended valuation fields (computed where possible)
-    compositeRatePerSqFt: (() => {
-      if (finalValueNum > 0 && property?.builtUpAreaSqFt) {
-        const sqft = Number(property.builtUpAreaSqFt);
-        if (sqft > 0) return fmtDecimal(finalValueNum / sqft, 0);
-      }
-      return undefined;
-    })(),
+    // ── Market analysis (from ValuationRun) ───────────────
+    marketabilityRating: fmt(valuationRun?.['marketabilityRating']),
+    positiveFactors: fmt(valuationRun?.['positiveFactors']),
+    negativeFactors: fmt(valuationRun?.['negativeFactors']),
+    marketAnalysisNarrative: fmt(valuationRun?.['marketAnalysisNarrative']),
+
+    // ── Extended valuation fields ──────────────────────────
+    compositeRatePerSqFt: compositeRatePerSqFtNum !== null ? fmtDecimal(compositeRatePerSqFtNum, 0) : undefined,
+    compositeRateFormatted: compositeRatePerSqFtNum !== null ? fmtCurrency(compositeRatePerSqFtNum) : undefined,
     carParkingCount: undefined,
     carParkingValuePerUnit: undefined,
     carParkingTotalValue: undefined,
-    presentStageValue: (() => {
-      if (assignment.percentageCompletion && finalValueNum > 0) {
-        const pct = Number(assignment.percentageCompletion);
-        return fmtCurrency(Math.round(finalValueNum * pct / 100));
-      }
-      return undefined;
-    })(),
 
-    // Images (URLs to be resolved at generation time)
+    // ── Dual-stage UC valuation (BOI/UBI) ─────────────────
+    presentStageValue: showDualStageValuation && presentStageValueNum !== null
+      ? fmtCurrency(presentStageValueNum)
+      : undefined,
+    presentStageValueWords: showDualStageValuation && presentStageValueNum !== null
+      ? rupeesToWords(presentStageValueNum)
+      : undefined,
+
+    // ── Bank-conditional output values ─────────────────────
+    showDualStageValuation,
+    showInsuranceValue,
+    showBookValue,
+    showRentalValue,
+    showPurchasePrice,
+
+    insuranceValue: showInsuranceValue && insuranceValueNum !== null ? fmtCurrency(insuranceValueNum) : undefined,
+    insuranceValueWords: showInsuranceValue && insuranceValueNum !== null ? rupeesToWords(insuranceValueNum) : undefined,
+    insuranceValueFormatted: showInsuranceValue && insuranceValueNum !== null ? fmtCurrency(insuranceValueNum) : undefined,
+
+    rentalValueMonthly: showRentalValue && rentalValueMonthlyNum !== null ? fmtCurrency(rentalValueMonthlyNum) : undefined,
+    rentalValueFormatted: showRentalValue && rentalValueMonthlyNum !== null ? fmtCurrency(rentalValueMonthlyNum) : undefined,
+
+    bookValue: showBookValue && bookValueNum !== null ? fmtCurrency(bookValueNum) : undefined,
+    bookValueFormatted: showBookValue && bookValueNum !== null ? fmtCurrency(bookValueNum) : undefined,
+    bookValueWords: showBookValue && bookValueNum !== null ? rupeesToWords(bookValueNum) : undefined,
+
+    // ── Images (URLs to be resolved at generation time) ────
     rvSignature: valuer.signatureUrl ? fmt(valuer.signatureUrl) : undefined,
     rvStamp: valuer.stampUrl ? fmt(valuer.stampUrl) : undefined,
 
-    // Comparable transactions narrative
+    // ── Comparables narrative ──────────────────────────────
     comparablesNarrative,
 
-    // IBBI legal text
+    // ── IBBI legal text ────────────────────────────────────
     ibbiCertificateText: IBBI_CERTIFICATE_TEXT,
     independenceDeclaration: IBBI_INDEPENDENCE_DECLARATION,
     limitingConditions: IBBI_LIMITING_CONDITIONS,

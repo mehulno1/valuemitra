@@ -54,14 +54,20 @@ fi
 
 cd "$APP_DIR"
 
-# ── 5. Ensure Playwright Chromium is installed ────────────
+# ── 5. Seed report templates (uploads processed .docx to S3/local + upserts DB rows) ──
+echo ""
+echo "→ Seeding report templates..."
+cd "$APP_DIR"
+node scripts/seed-report-templates.js || echo "  ⚠ Template seed failed — check manually"
+
+# ── 7. Ensure Playwright Chromium is installed ────────────
 echo ""
 echo "→ Checking Playwright browser..."
 cd "$APP_DIR/apps/api"
 npx playwright install chromium --with-deps 2>/dev/null || true
 cd "$APP_DIR"
 
-# ── 6. Start or reload PM2 ────────────────────────────────
+# ── 8. Start or reload PM2 ────────────────────────────────
 echo ""
 echo "→ Reloading PM2 process..."
 if pm2 list | grep -q "valuemitra-api"; then

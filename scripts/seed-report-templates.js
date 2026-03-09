@@ -13,11 +13,35 @@
  */
 
 const { PrismaClient } = require('@prisma/client');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const fs   = require('fs');
 const path = require('path');
 
 const PROCESSED_DIR = path.join(__dirname, '..', 'apps', 'api', 'src', 'modules', 'reports', 'templates', 'processed');
 const UPLOADS_DIR   = path.join(__dirname, '..', 'apps', 'api', 'uploads', 'templates');
+
+// Load .env from apps/api/.env for DB + storage config
+const envPath = path.join(__dirname, '..', 'apps', 'api', '.env');
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const m = line.trim().match(/^([A-Z_]+)="?([^"]*)"?$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  }
+}
+
+const IS_S3 = process.env.STORAGE_PROVIDER === 's3';
+let s3Client = null;
+if (IS_S3) {
+  s3Client = new S3Client({
+    region: process.env.AWS_REGION || 'ap-south-1',
+    credentials: process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+      ? { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY }
+      : undefined,
+  });
+  console.log(`Storage: S3 (bucket: ${process.env.AWS_S3_BUCKET})`);
+} else {
+  console.log(`Storage: local (${UPLOADS_DIR})`);
+}
 
 const prisma = new PrismaClient();
 
@@ -223,8 +247,19 @@ async function main() {
       continue;
     }
 
-    // 1. Copy to uploads/templates/ for local dev
-    fs.copyFileSync(srcPath, destPath);
+    // 1. Copy/upload template to storage
+    const fileBuffer = fs.readFileSync(srcPath);
+    const MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (IS_S3) {
+      await s3Client.send(new PutObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET,
+        Key: `templates/${tpl.output}`,
+        Body: fileBuffer,
+        ContentType: MIME,
+      }));
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
     copied++;
 
     // 2. Extract tokens from the processed .docx

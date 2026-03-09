@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { resolveTenant } from '../../middleware/tenant.middleware.js';
-import { requireNotViewer, requireValuer } from '../../middleware/auth.middleware.js';
+import { requireNotViewer, requireValuer, requireInspectorOrAbove } from '../../middleware/auth.middleware.js';
 import { env } from '../../config/env.js';
 import {
   upload,
@@ -47,10 +47,10 @@ documentsRouter.use(authenticate, resolveTenant);
 // Document routes
 // ─────────────────────────────────────────────
 
-// Upload a document for an assignment
+// Upload a document for an assignment (INSPECTOR allowed — they upload inspection photos)
 documentsRouter.post(
   '/:assignmentId/upload',
-  requireNotViewer,
+  requireInspectorOrAbove,
   multerUpload.single('file'),
   upload,
 );

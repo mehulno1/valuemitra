@@ -46,7 +46,14 @@ export function generateDocx(options: DocxGeneratorOptions): Buffer {
     nullGetter: () => '',
   });
 
-  doc.render(templateData);
+  try {
+    doc.render(templateData);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const detail = (err as Record<string, unknown>)?.properties as Record<string, unknown> | undefined;
+    const tagName = detail?.id ?? detail?.xtag ?? '';
+    throw new Error(`Template rendering failed${tagName ? ` at tag {${String(tagName)}}` : ''}: ${msg}`);
+  }
 
   const buf: Buffer = doc.getZip().generate({
     type: 'nodebuffer',

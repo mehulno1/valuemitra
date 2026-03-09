@@ -46,6 +46,7 @@ export default function NewClientPage() {
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { clientType: 'INDIVIDUAL' },
+    shouldUnregister: true,
   });
 
   const clientType = watch('clientType');
@@ -53,7 +54,11 @@ export default function NewClientPage() {
   const isBank = clientType === 'BANK' || clientType === 'NBFC' || clientType === 'HFC';
 
   const onSubmit = (values: FormValues) => {
-    createClient(values, {
+    // Strip empty strings so optional regex-validated fields (pan, gstin, ifscCode) don't fail server validation
+    const clean = Object.fromEntries(
+      Object.entries(values).filter(([, v]) => v !== ''),
+    ) as FormValues;
+    createClient(clean, {
       onSuccess: (res) => {
         toast({ title: 'Client created' });
         navigate(`/clients/${(res as { data: { id: string } }).data.id}`);

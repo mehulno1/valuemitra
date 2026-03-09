@@ -19,7 +19,7 @@ export default function LoginPage() {
 
   const onSubmit = (data: LoginInput) => login(data);
 
-  const errMsg = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
+  const errMsg = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 px-4">

@@ -10,6 +10,7 @@ const STATUS_CONFIG: Record<AssignmentStatus, { label: string; variant: 'default
   DOCUMENTS_PENDING:    { label: 'Docs Pending',        variant: 'secondary', className: 'bg-yellow-100 text-yellow-700' },
   DOCUMENTS_RECEIVED:   { label: 'Docs Received',       variant: 'secondary', className: 'bg-yellow-100 text-yellow-800' },
   OCR_COMPLETE:         { label: 'OCR Complete',        variant: 'secondary', className: 'bg-purple-100 text-purple-700' },
+  DATA_VERIFIED:        { label: 'Data Verified',       variant: 'secondary', className: 'bg-teal-100 text-teal-700' },
   ANALYSIS_IN_PROGRESS: { label: 'Analysis',            variant: 'secondary', className: 'bg-purple-100 text-purple-800' },
   REPORT_DRAFT:         { label: 'Report Draft',        variant: 'secondary', className: 'bg-orange-100 text-orange-700' },
   INTERNAL_REVIEW:      { label: 'Internal Review',     variant: 'secondary', className: 'bg-amber-100 text-amber-700' },

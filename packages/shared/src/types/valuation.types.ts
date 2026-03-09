@@ -93,6 +93,8 @@ export interface AIValuationResult {
   suggestedValueLow: number;
   suggestedValueMid: number;
   suggestedValueHigh: number;
+  suggestedLandRateMarket?: number;  // Advisory market land rate (₹/sq.m.)
+  suggestedLandRateGovt?: number;    // Advisory govt ready reckoner rate (₹/sq.m.)
   confidenceLevel: 'HIGH' | 'MEDIUM' | 'LOW';
   reasoning: string;
   keyFactors: string[];

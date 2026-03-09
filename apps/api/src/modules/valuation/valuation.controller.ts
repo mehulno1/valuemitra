@@ -8,6 +8,7 @@ import {
   updateCostApproach,
   updateIncomeApproach,
   finalizeValuationRun,
+  deleteValuationRun,
 } from './valuation.service.js';
 import {
   CreateValuationRunSchema,
@@ -62,4 +63,10 @@ export const finalize = asyncHandler(async (req: Request, res: Response) => {
   const input = FinalizeValuationSchema.parse(req.body);
   const run = await finalizeValuationRun(req.params['id']!, req.user!.tenantId, input);
   res.json({ success: true, data: run });
+});
+
+// DELETE /api/valuation/run/:id
+export const deleteOne = asyncHandler(async (req: Request, res: Response) => {
+  await deleteValuationRun(req.params['id']!, req.user!.tenantId);
+  res.json({ success: true });
 });

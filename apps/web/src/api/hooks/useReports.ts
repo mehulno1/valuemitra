@@ -42,7 +42,7 @@ export function useReports(assignmentId: string) {
     queryKey: [REPORTS_KEY, assignmentId],
     queryFn: () =>
       api
-        .get<{ success: boolean; data: Report[] }>('/reports', { params: { assignmentId } })
+        .get<{ success: boolean; data: Report[] }>(`/reports/assignment/${assignmentId}`)
         .then((r) => r.data.data),
     enabled: !!assignmentId,
   });

@@ -97,7 +97,11 @@ export default function NewAssignmentPage() {
   }
 
   const onSubmit = (values: FormValues) => {
-    createAssignment(values, {
+    // Strip empty strings so optional regex-validated fields (propertyPincode, etc.) don't fail server validation
+    const clean = Object.fromEntries(
+      Object.entries(values).filter(([, v]) => v !== ''),
+    ) as FormValues;
+    createAssignment(clean, {
       onSuccess: (res) => {
         toast({ title: 'Assignment created' });
         navigate(`/assignments/${(res as { data: { id: string } }).data.id}`);
@@ -182,6 +186,17 @@ export default function NewAssignmentPage() {
                   </SelectContent>
                 </Select>
                 {errors.purposeOfValuation && <p className="text-xs text-destructive">{errors.purposeOfValuation.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label>Fresh / Revaluation / Review</Label>
+                <Select onValueChange={(v) => setValue('freshOrRevaluation' as never, v as never)}>
+                  <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Fresh">Fresh</SelectItem>
+                    <SelectItem value="Revaluation">Revaluation</SelectItem>
+                    <SelectItem value="Review">Review</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

@@ -68,96 +68,147 @@ async function getGoogleAccessToken(): Promise<string> {
 
 // ─────────────────────────────────────────────
 // Call Google Cloud Vision DOCUMENT_TEXT_DETECTION
+// images:annotate  — for images (PNG, JPEG, WEBP, etc.)
+// files:annotate   — for PDFs and TIFFs (inline, up to 5 pages synchronously)
 // ─────────────────────────────────────────────
 
-interface VisionResponse {
-  responses: Array<{
-    fullTextAnnotation?: {
-      text: string;
-      pages?: Array<{
-        blocks?: Array<{
-          paragraphs?: Array<{
-            words?: Array<{
-              symbols?: Array<{ text: string; confidence?: number }>;
-            }>;
+interface VisionPageAnnotation {
+  fullTextAnnotation?: {
+    text: string;
+    pages?: Array<{
+      blocks?: Array<{
+        paragraphs?: Array<{
+          words?: Array<{
+            symbols?: Array<{ text: string; confidence?: number }>;
           }>;
         }>;
       }>;
-    };
+    }>;
+  };
+  error?: { message: string };
+}
+
+interface VisionResponse {
+  responses: Array<VisionPageAnnotation>;
+}
+
+// Response shape from files:annotate (one outer response per request, pages nested inside)
+interface VisionFilesResponse {
+  responses: Array<{
+    responses?: Array<VisionPageAnnotation>;
     error?: { message: string };
   }>;
+}
+
+function extractTextAndConfidence(annotations: VisionPageAnnotation[]): { text: string; confidence: number } {
+  const textParts: string[] = [];
+  const symbols: number[] = [];
+
+  for (const annotation of annotations) {
+    if (annotation.fullTextAnnotation?.text) {
+      textParts.push(annotation.fullTextAnnotation.text);
+    }
+    annotation.fullTextAnnotation?.pages?.forEach(page =>
+      page.blocks?.forEach(block =>
+        block.paragraphs?.forEach(para =>
+          para.words?.forEach(word =>
+            word.symbols?.forEach(sym => {
+              if (sym.confidence !== undefined) symbols.push(sym.confidence);
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+
+  const text = textParts.join('\n\n');
+  const confidence = symbols.length ? symbols.reduce((a, b) => a + b, 0) / symbols.length : 0;
+  return { text, confidence };
 }
 
 async function runGoogleVision(
   buffer: Buffer,
   mimeType: string,
-): Promise<{ text: string; confidence: number; raw: VisionResponse }> {
+): Promise<{ text: string; confidence: number; raw: VisionResponse | VisionFilesResponse }> {
   const accessToken = await getGoogleAccessToken();
   const base64 = buffer.toString('base64');
 
-  const body = {
-    requests: [
-      {
-        image: { content: base64 },
-        features: [{ type: 'DOCUMENT_TEXT_DETECTION', maxResults: 1 }],
-        imageContext: {
-          languageHints: ['en', 'hi'],
-        },
-      },
-    ],
-  };
+  const isPdf = mimeType === 'application/pdf' || mimeType === 'image/tiff';
 
-  // For PDFs Vision requires the PDF/TIFF source input format
-  const isPdf = mimeType === 'application/pdf';
   if (isPdf) {
-    // Inline PDF via base64 is supported for single-page PDFs.
-    // For multi-page, Vision async batch would be needed. We handle inline for now.
-    (body.requests[0] as Record<string, unknown>)['image'] = {
-      content: base64,
+    // PDFs must use files:annotate with inputConfig (not images:annotate)
+    // Supports up to 5 pages inline synchronously.
+    const body = {
+      requests: [
+        {
+          inputConfig: { content: base64, mimeType },
+          features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+          imageContext: { languageHints: ['en', 'hi'] },
+          // pages array omitted → Vision processes all pages (up to 5 for inline)
+        },
+      ],
     };
+
+    const resp = await fetch('https://vision.googleapis.com/v1/files:annotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Vision files:annotate error: ${err}`);
+    }
+
+    const data = await resp.json() as VisionFilesResponse;
+    const outerResponse = data.responses[0];
+
+    if (outerResponse?.error) {
+      throw new Error(`Vision files:annotate returned error: ${outerResponse.error.message}`);
+    }
+
+    const pageAnnotations = outerResponse?.responses ?? [];
+    const firstError = pageAnnotations.find(r => r.error);
+    if (firstError?.error) {
+      throw new Error(`Vision page error: ${firstError.error.message}`);
+    }
+
+    const { text, confidence } = extractTextAndConfidence(pageAnnotations);
+    return { text, confidence, raw: data };
+
+  } else {
+    // Images: use images:annotate
+    const body = {
+      requests: [
+        {
+          image: { content: base64 },
+          features: [{ type: 'DOCUMENT_TEXT_DETECTION', maxResults: 1 }],
+          imageContext: { languageHints: ['en', 'hi'] },
+        },
+      ],
+    };
+
+    const resp = await fetch('https://vision.googleapis.com/v1/images:annotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Vision images:annotate error: ${err}`);
+    }
+
+    const data = await resp.json() as VisionResponse;
+    const response = data.responses[0];
+
+    if (response?.error) {
+      throw new Error(`Vision images:annotate returned error: ${response.error.message}`);
+    }
+
+    const { text, confidence } = extractTextAndConfidence(response ? [response] : []);
+    return { text, confidence, raw: data };
   }
-
-  const resp = await fetch('https://vision.googleapis.com/v1/images:annotate', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Vision API error: ${err}`);
-  }
-
-  const data = await resp.json() as VisionResponse;
-  const response = data.responses[0];
-
-  if (response?.error) {
-    throw new Error(`Vision API returned error: ${response.error.message}`);
-  }
-
-  const text = response?.fullTextAnnotation?.text ?? '';
-
-  // Estimate confidence from symbol-level scores
-  const symbols: number[] = [];
-  response?.fullTextAnnotation?.pages?.forEach(page =>
-    page.blocks?.forEach(block =>
-      block.paragraphs?.forEach(para =>
-        para.words?.forEach(word =>
-          word.symbols?.forEach(sym => {
-            if (sym.confidence !== undefined) symbols.push(sym.confidence);
-          }),
-        ),
-      ),
-    ),
-  );
-  const confidence = symbols.length
-    ? symbols.reduce((a, b) => a + b, 0) / symbols.length
-    : 0;
-
-  return { text, confidence, raw: data };
 }
 
 // ─────────────────────────────────────────────
@@ -383,7 +434,10 @@ async function processSingleOcrJob(
     let provider = '';
     let rawResponse: Record<string, unknown> = {};
 
-    if (env.GOOGLE_APPLICATION_CREDENTIALS) {
+    // Google Vision inline API limit is 20 MB for the base64 payload.
+    // Base64 adds ~33% overhead, so skip Vision for buffers > 14 MB.
+    const VISION_MAX_BYTES = 14 * 1024 * 1024;
+    if (env.GOOGLE_APPLICATION_CREDENTIALS && buffer.length <= VISION_MAX_BYTES) {
       try {
         const result = await runGoogleVision(buffer, document.mimeType);
         text = result.text;
@@ -393,6 +447,8 @@ async function processSingleOcrJob(
       } catch (err) {
         console.warn(`Google Vision failed for ${documentId}, trying Azure:`, err);
       }
+    } else if (env.GOOGLE_APPLICATION_CREDENTIALS && buffer.length > VISION_MAX_BYTES) {
+      console.info(`Document ${documentId} is ${(buffer.length / 1024 / 1024).toFixed(1)} MB — too large for Vision inline API, trying Azure`);
     }
 
     if (!provider && env.AZURE_FORM_RECOGNIZER_ENDPOINT && env.AZURE_FORM_RECOGNIZER_KEY) {
@@ -429,7 +485,7 @@ async function processSingleOcrJob(
     await saveOcrResult(documentId, {
       status: ocrStatus,
       provider,
-      rawResponse: { ...rawResponse, fullText: text },
+      rawResponse: { fullText: text },   // store only extracted text — raw provider JSON is too large for MySQL max_allowed_packet
       extracted: extracted as unknown as Record<string, unknown>,
       confidence,
     });
