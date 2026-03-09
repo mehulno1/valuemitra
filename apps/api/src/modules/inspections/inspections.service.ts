@@ -10,7 +10,6 @@
  */
 
 import { prisma } from '../../config/database.js';
-import { Prisma } from '@prisma/client';
 import { createAuditLog } from '../../middleware/audit.middleware.js';
 import { NotFoundError, AppError, ForbiddenError } from '../../middleware/error.middleware.js';
 import { AssignmentStatus, ASSIGNMENT_STATUS_TRANSITIONS, UserRole } from '@valuemitra/shared';
@@ -281,10 +280,10 @@ export async function updateInspection(
       useOfProperty: data.useOfProperty || null,
       parkingType: data.parkingType || null,
       parkingCount: data.parkingCount ?? null,
-      documentsAvailableAtSite: data.documentsAvailableAtSite ?? Prisma.JsonNull,
+      documentsAvailableAtSite: data.documentsAvailableAtSite ?? undefined,
       otherDocumentsNote: data.otherDocumentsNote || null,
       internalAccessAllowed: data.internalAccessAllowed ?? null,
-      observedBoundaries: data.observedBoundaries ?? Prisma.JsonNull,
+      observedBoundaries: data.observedBoundaries ?? undefined,
 
       // Actual site measurements
       builtUpAreaActualSqM: data.builtUpAreaActualSqM != null ? String(data.builtUpAreaActualSqM) : null,

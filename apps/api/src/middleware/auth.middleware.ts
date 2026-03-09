@@ -62,6 +62,15 @@ export const requireValuer = requireRoles(UserRole.SUPER_ADMIN, UserRole.TENANT_
 export const requireNotViewer = requireRoles(
   UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.VALUER, UserRole.ASSISTANT
 );
+// Inspector-aware guards
+// requireNotInspector: blocks INSPECTOR from routes that require full valuer access
+export const requireNotInspector = requireRoles(
+  UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.VALUER, UserRole.ASSISTANT
+);
+// requireInspectorOrAbove: allows INSPECTOR + all higher roles (for inspection-specific writes)
+export const requireInspectorOrAbove = requireRoles(
+  UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.VALUER, UserRole.ASSISTANT, UserRole.INSPECTOR
+);
 export const requireSuperAdmin = requireRoles(UserRole.SUPER_ADMIN);
 
 // ─────────────────────────────────────────────

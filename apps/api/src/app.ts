@@ -87,6 +87,8 @@ async function registerRoutes(): Promise<void> {
   const { aiValuationRouter } = await import('./modules/ai-valuation/ai-valuation.router.js');
   const { reviewRouter } = await import('./modules/review/review.router.js');
   const { reportsRouter } = await import('./modules/reports/reports.router.js');
+  const propertyDataRouter = (await import('./modules/property-data/property-data.router.js')).default;
+  const inspectionsRouter = (await import('./modules/inspections/inspections.router.js')).default;
 
   app.use('/api/auth', authRouter);
   app.use('/api/tenants', tenantsRouter);
@@ -99,6 +101,8 @@ async function registerRoutes(): Promise<void> {
   app.use('/api/ai-valuation', aiValuationRouter);
   app.use('/api/review', reviewRouter);
   app.use('/api/reports', reportsRouter);
+  app.use('/api/property-data', propertyDataRouter);
+  app.use('/api/inspections', inspectionsRouter);
 }
 
 export { app, registerRoutes };
