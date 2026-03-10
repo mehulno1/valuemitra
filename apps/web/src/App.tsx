@@ -13,6 +13,7 @@ const ClientDetailPage   = lazy(() => import('./pages/clients/ClientDetailPage.j
 const AssignmentsPage    = lazy(() => import('./pages/assignments/AssignmentsPage.js'));
 const NewAssignmentPage  = lazy(() => import('./pages/assignments/NewAssignmentPage.js'));
 const AssignmentDetailPage = lazy(() => import('./pages/assignments/AssignmentDetailPage.js'));
+const UsersPage            = lazy(() => import('./pages/users/UsersPage.js'));
 
 export default function App() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
             <Route path="/assignments"                element={<AssignmentsPage />} />
             <Route path="/assignments/new"            element={<NewAssignmentPage />} />
             <Route path="/assignments/:assignmentId"  element={<AssignmentDetailPage />} />
+            <Route path="/team"       element={<UsersPage />} />
             <Route path="/documents"  element={<Navigate to="/assignments" replace />} />
             <Route path="/valuation"  element={<Navigate to="/assignments" replace />} />
             <Route path="/reports"    element={<Navigate to="/assignments" replace />} />

@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ClipboardList, Users, FileText,
-  Calculator, BarChart3, LogOut,
+  Calculator, BarChart3, LogOut, UsersRound,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useLogout } from '../../api/hooks/useAuth.js';
@@ -9,19 +9,25 @@ import { cn } from '../../lib/utils.js';
 import { Avatar, AvatarFallback } from '../ui/avatar.js';
 
 const allNavItems = [
-  { label: 'Dashboard',   to: '/dashboard',   icon: LayoutDashboard, inspectorAllowed: false },
-  { label: 'Assignments', to: '/assignments',  icon: ClipboardList,   inspectorAllowed: true  },
-  { label: 'Clients',     to: '/clients',      icon: Users,           inspectorAllowed: false },
-  { label: 'Documents',   to: '/documents',    icon: FileText,        inspectorAllowed: false },
-  { label: 'Valuation',   to: '/valuation',    icon: Calculator,      inspectorAllowed: false },
-  { label: 'Reports',     to: '/reports',      icon: BarChart3,       inspectorAllowed: false },
+  { label: 'Dashboard',   to: '/dashboard',   icon: LayoutDashboard, inspectorAllowed: false, adminOnly: false },
+  { label: 'Assignments', to: '/assignments',  icon: ClipboardList,   inspectorAllowed: true,  adminOnly: false },
+  { label: 'Clients',     to: '/clients',      icon: Users,           inspectorAllowed: false, adminOnly: false },
+  { label: 'Documents',   to: '/documents',    icon: FileText,        inspectorAllowed: false, adminOnly: false },
+  { label: 'Valuation',   to: '/valuation',    icon: Calculator,      inspectorAllowed: false, adminOnly: false },
+  { label: 'Reports',     to: '/reports',      icon: BarChart3,       inspectorAllowed: false, adminOnly: false },
+  { label: 'Team',        to: '/team',         icon: UsersRound,      inspectorAllowed: false, adminOnly: true  },
 ];
 
 export default function AppLayout() {
   const user   = useAuthStore((s) => s.user);
   const tenant = useAuthStore((s) => s.tenant);
   const isInspector = user?.role === 'INSPECTOR';
-  const navItems = allNavItems.filter((item) => !isInspector || item.inspectorAllowed);
+  const isAdmin = user?.role === 'TENANT_ADMIN' || user?.role === 'SUPER_ADMIN';
+  const navItems = allNavItems.filter((item) => {
+    if (isInspector && !item.inspectorAllowed) return false;
+    if (item.adminOnly && !isAdmin) return false;
+    return true;
+  });
   const { mutate: logout } = useLogout();
 
   const initials = user?.fullName
