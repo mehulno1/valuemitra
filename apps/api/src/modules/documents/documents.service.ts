@@ -213,6 +213,9 @@ export async function listDocuments(tenantId: string, assignmentId: string) {
       subType: true,
       mimeType: true,
       fileSizeBytes: true,
+      storagePath: true,
+      storageProvider: true,
+      photoCategory: true,
       ocrStatus: true,
       ocrConfidence: true,
       ocrExtracted: true,
@@ -223,6 +226,13 @@ export async function listDocuments(tenantId: string, assignmentId: string) {
     },
     orderBy: { createdAt: 'desc' },
   });
+
+  const documentsWithUrls = await Promise.all(
+    documents.map(async (doc) => ({
+      ...doc,
+      signedUrl: await getSignedDownloadUrl(doc.storagePath),
+    })),
+  );
 
   const checklist = await prisma.checklistItem.findMany({
     where: { assignmentId },
@@ -237,7 +247,7 @@ export async function listDocuments(tenantId: string, assignmentId: string) {
     },
   });
 
-  return { documents, checklist };
+  return { documents: documentsWithUrls, checklist };
 }
 
 // ─────────────────────────────────────────────

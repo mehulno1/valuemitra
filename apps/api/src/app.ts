@@ -10,6 +10,10 @@ import { errorHandler, NotFoundError } from './middleware/error.middleware.js';
 
 const app = express();
 
+// Trust Nginx reverse proxy — required for express-rate-limit to work correctly
+// behind Nginx (reads X-Forwarded-For to get real client IP)
+app.set('trust proxy', 1);
+
 // ─────────────────────────────────────────────
 // Security headers
 // ─────────────────────────────────────────────
