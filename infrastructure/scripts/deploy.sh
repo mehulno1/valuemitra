@@ -19,7 +19,10 @@ cd "$APP_DIR"
 
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
-echo "→ Cleaning node_modules before install..."
+echo "→ Cleaning root node_modules before install..."
+# Only clean root node_modules. Workspace-level node_modules (apps/web, apps/api)
+# may contain workspace-specific packages that npm does NOT hoist to root.
+# Deleting them causes "Cannot resolve @radix-ui/..." errors during vite build.
 rm -rf "$APP_DIR/node_modules"
 
 echo "→ Installing dependencies..."
