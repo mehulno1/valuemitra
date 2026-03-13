@@ -19,14 +19,23 @@ cd "$APP_DIR"
 
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
-echo "→ Cleaning node_modules before install..."
-rm -rf "$APP_DIR/node_modules" "$APP_DIR/apps/web/node_modules" "$APP_DIR/apps/api/node_modules"
-
-echo "→ Installing dependencies..."
+echo "→ Installing dependencies (clean install)..."
+# npm ci handles its own cleanup; we do not pre-delete node_modules to avoid
+# the async-write race where files are missing immediately after rm -rf + npm ci.
 npm ci --include=dev
+
+# Wait for npm's async file writes to fully flush
+sync
 
 # Ensure root node_modules/.bin is on PATH so workspace scripts can find tsc/vite
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
+
+# Verify vite is fully installed before using it
+VITE_JS="$APP_DIR/node_modules/vite/bin/vite.js"
+if [ ! -f "$VITE_JS" ]; then
+  echo "  vite not found after npm ci — running npm install to repair..."
+  npm install --include=dev
+fi
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
