@@ -7,6 +7,7 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError, AppError } from '../../middleware/error.middleware.js';
 import { rupeesToWords } from './utils/number-to-words.js';
+import { env } from '../../config/env.js';
 import {
   IBBI_CERTIFICATE_TEXT,
   IBBI_INDEPENDENCE_DECLARATION,
@@ -118,7 +119,7 @@ export async function buildReportData(
   userId: string,
   valuationRunId?: string,
   templateId?: string,
-): Promise<ReportData> {
+): Promise<{ data: ReportData; imageTokens: Record<string, string> }> {
   // Fetch assignment with all required relations
   const assignment = await prisma.assignment.findFirst({
     where: { id: assignmentId, tenantId },
@@ -527,9 +528,9 @@ export async function buildReportData(
     bookValueFormatted: showBookValue && bookValueNum !== null ? fmtCurrency(bookValueNum) : undefined,
     bookValueWords: showBookValue && bookValueNum !== null ? rupeesToWords(bookValueNum) : undefined,
 
-    // ── Images (URLs to be resolved at generation time) ────
-    rvSignature: valuer.signatureUrl ? fmt(valuer.signatureUrl) : undefined,
-    rvStamp: valuer.stampUrl ? fmt(valuer.stampUrl) : undefined,
+    // ── Images (placeholder token names — resolved to buffers in reports.service.ts) ──
+    rvSignature: valuer.signatureUrl ? 'rvSignature' : undefined,
+    rvStamp: valuer.stampUrl ? 'rvStamp' : undefined,
 
     // ── Comparables narrative ──────────────────────────────
     comparablesNarrative,
@@ -540,5 +541,77 @@ export async function buildReportData(
     limitingConditions: IBBI_LIMITING_CONDITIONS,
   };
 
-  return reportData;
+  // ── Build image token map ──────────────────────────────
+  // Maps docxtemplater image token → storagePath or full URL
+  const imageTokens: Record<string, string> = {};
+
+  // RV signature + stamp (direct storage paths from user profile)
+  if (valuer.signatureUrl) imageTokens['rvSignature'] = fmt(valuer.signatureUrl);
+  if ((valuer as Record<string, unknown>)['stampUrl']) imageTokens['rvStamp'] = fmt((valuer as Record<string, unknown>)['stampUrl']);
+
+  // Site visit / inspection photos from uploaded documents
+  const photoDocs = await prisma.document.findMany({
+    where: {
+      assignmentId,
+      documentType: { in: ['SITE_PHOTOGRAPH', 'INSPECTION_PHOTO', 'EXTERIOR_PHOTO'] },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 12,
+    select: { storagePath: true },
+  });
+  const photoTokenNames = ['propertyPhoto1','propertyPhoto2','propertyPhoto3','propertyPhoto4',
+    'propertyPhoto5','propertyPhoto6','propertyPhoto7','propertyPhoto8',
+    'propertyPhoto9','propertyPhoto10','propertyPhoto11','propertyPhoto12'] as const;
+  photoDocs.forEach((doc, idx) => {
+    const token = photoTokenNames[idx];
+    if (token && doc.storagePath) {
+      imageTokens[token] = doc.storagePath;
+      (reportData as unknown as Record<string, unknown>)[token] = token;
+    }
+  });
+
+  // Location map — prefer uploaded LOCATION_MAP doc, fallback to Google Maps Static API
+  const locationMapDoc = await prisma.document.findFirst({
+    where: { assignmentId, documentType: 'LOCATION_MAP' },
+    select: { storagePath: true },
+  });
+  if (locationMapDoc?.storagePath) {
+    imageTokens['locationMap'] = locationMapDoc.storagePath;
+    reportData.locationMap = 'locationMap';
+  } else if (env.GOOGLE_MAPS_API_KEY && property?.latitude && property?.longitude) {
+    const lat = property.latitude;
+    const lng = property.longitude;
+    const mapsUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=15&size=600x400&markers=color:red%7C${lat},${lng}&key=${env.GOOGLE_MAPS_API_KEY}`;
+    imageTokens['locationMap'] = mapsUrl;
+    reportData.locationMap = 'locationMap';
+  }
+
+  // RR rate screenshot from valuation run
+  const rrScreenshotUrl = valuationRun?.['rrScreenshotUrl'] as string | null;
+  if (rrScreenshotUrl) {
+    imageTokens['rrRateScreenshot'] = rrScreenshotUrl;
+    reportData.rrRateScreenshot = 'rrRateScreenshot';
+  }
+
+  // Online property rate evidence (OTHER docs whose original filename contains "rate", limited 4)
+  const onlineRateDocs = await prisma.document.findMany({
+    where: {
+      assignmentId,
+      documentType: 'OTHER',
+      originalName: { contains: 'rate' },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 4,
+    select: { storagePath: true },
+  });
+  const onlineRateTokens = ['onlineRate1','onlineRate2','onlineRate3','onlineRate4'] as const;
+  onlineRateDocs.forEach((doc, idx) => {
+    const token = onlineRateTokens[idx];
+    if (token && doc.storagePath) {
+      imageTokens[token] = doc.storagePath;
+      (reportData as unknown as Record<string, unknown>)[token] = token;
+    }
+  });
+
+  return { data: reportData, imageTokens };
 }

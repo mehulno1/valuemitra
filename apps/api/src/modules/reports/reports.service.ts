@@ -70,7 +70,7 @@ export async function generateReport(
   const template = await getTemplate(input.templateId, tenantId);
 
   // 2. Build report data (includes IBBI compliance gate)
-  const reportData = await buildReportData(
+  const { data: reportData, imageTokens } = await buildReportData(
     input.assignmentId,
     tenantId,
     userId,
@@ -81,13 +81,33 @@ export async function generateReport(
   // 3. Fetch template file from storage
   const templateBuffer = await getFileBuffer(template.templateFilePath);
 
-  // 4. Generate DOCX
-  const docxBuffer = generateDocx({ templateBuffer, data: reportData });
+  // 4. Fetch image buffers for all image tokens
+  const imageBuffers: Record<string, Buffer> = {};
+  await Promise.allSettled(
+    Object.entries(imageTokens).map(async ([token, pathOrUrl]) => {
+      try {
+        if (pathOrUrl.startsWith('https://') || pathOrUrl.startsWith('http://')) {
+          const res = await fetch(pathOrUrl);
+          if (res.ok) {
+            const ab = await res.arrayBuffer();
+            imageBuffers[token] = Buffer.from(ab);
+          }
+        } else {
+          imageBuffers[token] = await getFileBuffer(pathOrUrl);
+        }
+      } catch {
+        // Image unavailable — skip, token will render as empty
+      }
+    }),
+  );
 
-  // 5. Convert to PDF
+  // 5. Generate DOCX
+  const docxBuffer = generateDocx({ templateBuffer, data: reportData, images: imageBuffers });
+
+  // 6. Convert to PDF
   const pdfBuffer = await convertDocxToPdf(docxBuffer);
 
-  // 6. Determine version number (mark old reports as not latest)
+  // 7. Determine version number (mark old reports as not latest)
   const existingCount = await prisma.report.count({
     where: { assignmentId: input.assignmentId },
   });
@@ -99,7 +119,7 @@ export async function generateReport(
     data: { isLatest: false },
   });
 
-  // 7. Upload DOCX + PDF to storage
+  // 8. Upload DOCX + PDF to storage
   const timestamp = Date.now();
   const docxStoragePath = `reports/${tenantId}/${input.assignmentId}/v${version}_${timestamp}.docx`;
   const pdfStoragePath  = `reports/${tenantId}/${input.assignmentId}/v${version}_${timestamp}.pdf`;
@@ -109,7 +129,7 @@ export async function generateReport(
     uploadFile(pdfBuffer, pdfStoragePath, 'application/pdf'),
   ]);
 
-  // 8. Create Report DB record
+  // 9. Create Report DB record
   const report = await prisma.report.create({
     data: {
       assignmentId: input.assignmentId,

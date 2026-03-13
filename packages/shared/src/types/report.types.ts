@@ -289,14 +289,31 @@ export interface ReportData {
   presentStageValue?: string;
   presentStageValueWords?: string;
 
-  // Images (base64 or S3 signed URLs)
+  // Site visit / inspection photos (up to 12)
   propertyPhoto1?: string;
   propertyPhoto2?: string;
   propertyPhoto3?: string;
   propertyPhoto4?: string;
+  propertyPhoto5?: string;
+  propertyPhoto6?: string;
+  propertyPhoto7?: string;
+  propertyPhoto8?: string;
+  propertyPhoto9?: string;
+  propertyPhoto10?: string;
+  propertyPhoto11?: string;
+  propertyPhoto12?: string;
+  // Location map (Google Maps Static API or uploaded LOCATION_MAP doc)
   locationMap?: string;
+  // RV signature + stamp
   rvSignature?: string;
   rvStamp?: string;
+  // Government RR rate screenshot
+  rrRateScreenshot?: string;
+  // Online property rate evidence screenshots (from documents)
+  onlineRate1?: string;
+  onlineRate2?: string;
+  onlineRate3?: string;
+  onlineRate4?: string;
 
   // Comparable transactions (for narrative)
   comparablesNarrative?: string;

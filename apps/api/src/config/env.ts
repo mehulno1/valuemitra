@@ -39,6 +39,9 @@ const EnvSchema = z.object({
   AZURE_FORM_RECOGNIZER_ENDPOINT: z.string().optional(),
   AZURE_FORM_RECOGNIZER_KEY: z.string().optional(),
 
+  // Google Maps (for location map in reports)
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
+
   // Claude AI
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
