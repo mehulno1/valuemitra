@@ -32,11 +32,12 @@ npm ci --include=dev
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
 # npm ci uses parallel workers that can still be writing package files when the
-# main npm process exits. Wait for critical binaries and type definition files
-# to be fully written before proceeding with builds.
+# main npm process exits. The initial sleep covers most async writes; the polls
+# below handle specific files that take longer (native binaries, large packages).
 echo "→ Waiting for npm writes to complete..."
+sleep 15
 
-# 1) esbuild native binary (postinstall downloads and writes it asynchronously)
+# 1) esbuild native binary (postinstall downloads it; can lag even after sleep)
 ESBUILD_BIN="$APP_DIR/node_modules/esbuild/bin/esbuild"
 ATTEMPTS=0
 until "$ESBUILD_BIN" --version >/dev/null 2>&1; do
@@ -47,10 +48,9 @@ until "$ESBUILD_BIN" --version >/dev/null 2>&1; do
   fi
   sleep 1
 done
-echo "  esbuild ready (${ATTEMPTS}s)"
+echo "  esbuild ready (${ATTEMPTS}s extra)"
 
-# 2) TypeScript lib files — tsc picks these up implicitly; if lib.es2022.d.ts
-#    is missing tsc fails even though the binary exists.
+# 2) TypeScript lib files — tsc fails if lib.es2022.d.ts not yet written
 TSC_LIB="$APP_DIR/node_modules/typescript/lib/lib.es2022.d.ts"
 ATTEMPTS=0
 until [ -f "$TSC_LIB" ]; do
@@ -61,7 +61,20 @@ until [ -f "$TSC_LIB" ]; do
   fi
   sleep 1
 done
-echo "  TypeScript libs ready (${ATTEMPTS}s)"
+echo "  TypeScript libs ready (${ATTEMPTS}s extra)"
+
+# 3) zustand ESM files — Rollup fails if vanilla.mjs not yet written
+ZUSTAND_MJS="$APP_DIR/node_modules/zustand/esm/vanilla.mjs"
+ATTEMPTS=0
+until [ -f "$ZUSTAND_MJS" ]; do
+  ATTEMPTS=$((ATTEMPTS + 1))
+  if [ $ATTEMPTS -gt 60 ]; then
+    echo "  ❌ zustand/esm/vanilla.mjs not ready after 60s"
+    exit 1
+  fi
+  sleep 1
+done
+echo "  zustand ready (${ATTEMPTS}s extra)"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
