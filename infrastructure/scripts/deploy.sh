@@ -19,6 +19,9 @@ cd "$APP_DIR"
 
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
+echo "→ Cleaning node_modules before install..."
+rm -rf "$APP_DIR/node_modules"
+
 echo "→ Installing dependencies..."
 npm ci --include=dev
 
