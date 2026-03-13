@@ -20,36 +20,39 @@ cd "$APP_DIR"
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
 echo "→ Installing dependencies (clean install)..."
-# npm ci handles its own cleanup; we do not pre-delete node_modules to avoid
-# the async-write race where files are missing immediately after rm -rf + npm ci.
 npm ci --include=dev
-
-# Wait for npm's async file writes to fully flush
-sync
 
 # Ensure root node_modules/.bin is on PATH so workspace scripts can find tsc/vite
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
-# Verify vite is fully installed before using it
-VITE_JS="$APP_DIR/node_modules/vite/bin/vite.js"
-echo "  [debug] vite after npm ci: $(ls $VITE_JS 2>/dev/null && echo EXISTS || echo MISSING)"
+# Wait for esbuild native binary to be fully written (npm ci child processes write
+# native binaries asynchronously and can still be in progress when npm ci exits).
+# Vite spawns esbuild to bundle vite.config.ts; if esbuild is still being written,
+# we get ETXTBSY (text file busy) error.
+echo "→ Waiting for esbuild to be ready..."
+ESBUILD_BIN="$APP_DIR/node_modules/esbuild/bin/esbuild"
+ATTEMPTS=0
+until "$ESBUILD_BIN" --version >/dev/null 2>&1; do
+  ATTEMPTS=$((ATTEMPTS + 1))
+  if [ $ATTEMPTS -gt 30 ]; then
+    echo "  ❌ esbuild not ready after 30s"
+    exit 1
+  fi
+  sleep 1
+done
+echo "  esbuild ready after ${ATTEMPTS}s"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
 echo "→ Building shared package..."
 npm run build -w packages/shared
-echo "  [debug] vite after shared build: $(ls $VITE_JS 2>/dev/null && echo EXISTS || echo MISSING)"
 
 echo "→ Building API..."
 npm run build -w apps/api
-echo "  [debug] vite after api build: $(ls $VITE_JS 2>/dev/null && echo EXISTS || echo MISSING)"
 
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
 node "$APP_DIR/node_modules/typescript/bin/tsc"
-
-# Debug: verify vite.js is present immediately before running it
-echo "  [debug] vite.js present: $(ls $APP_DIR/node_modules/vite/bin/vite.js 2>/dev/null && echo YES || echo NO)"
 node "$APP_DIR/node_modules/vite/bin/vite.js" build
 cd "$APP_DIR"
 
