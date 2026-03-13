@@ -238,12 +238,17 @@ export async function finalizeValuationRun(
   const totalWeight = mw + cw + iw;
 
   if (totalWeight > 0) {
-    // Weighted average — only include approaches that have been computed
-    const numerator =
-      (marketVal ?? 0) * mw +
-      (costVal ?? 0) * cw +
-      (incomeVal ?? 0) * iw;
-    weightedValue = Math.round(numerator / totalWeight / 1000) * 1000;
+    // Weighted average — only count weights for approaches that have a computed value
+    const effectiveNumerator =
+      (marketVal !== null ? marketVal * mw : 0) +
+      (costVal   !== null ? costVal   * cw : 0) +
+      (incomeVal !== null ? incomeVal * iw : 0);
+    const effectiveDenominator =
+      (marketVal !== null ? mw : 0) +
+      (costVal   !== null ? cw : 0) +
+      (incomeVal !== null ? iw : 0);
+    if (effectiveDenominator === 0) throw new AppError(422, 'No approach values computed yet — update at least one approach before finalizing');
+    weightedValue = Math.round(effectiveNumerator / effectiveDenominator / 1000) * 1000;
   } else {
     // Auto: use the single available value, or average of all computed
     const available = [marketVal, costVal, incomeVal].filter((v): v is number => v !== null);
