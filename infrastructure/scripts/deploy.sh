@@ -84,11 +84,11 @@ echo ""
 echo "→ Generating Prisma client..."
 cd "$APP_DIR/apps/api"
 # Use the project-installed prisma (^5.x).
-# prisma is a direct dep of apps/api, so npm may not create root .bin symlink.
-# Prefer root .bin; fall back to workspace-local .bin.
-PRISMA_BIN="$APP_DIR/node_modules/.bin/prisma"
-[ ! -x "$PRISMA_BIN" ] && PRISMA_BIN="$APP_DIR/apps/api/node_modules/.bin/prisma"
-"$PRISMA_BIN" generate
+# .bin symlinks are unreliable after partial cleanup — invoke JS entry directly.
+# apps/api/node_modules/prisma is always present (we never delete workspace node_modules).
+PRISMA_JS="$APP_DIR/apps/api/node_modules/prisma/build/index.js"
+[ ! -f "$PRISMA_JS" ] && PRISMA_JS="$APP_DIR/node_modules/prisma/build/index.js"
+node "$PRISMA_JS" generate
 
 # ── 4. Apply DB schema changes ─────────────────────────────
 # FIRST DEPLOY: uses db push (no migration history in dev)
@@ -97,10 +97,10 @@ echo ""
 echo "→ Applying database schema changes..."
 if [ -d "$APP_DIR/apps/api/prisma/migrations" ] && [ "$(ls -A $APP_DIR/apps/api/prisma/migrations)" ]; then
     echo "  Using prisma migrate deploy..."
-    "$PRISMA_BIN" migrate deploy
+    node "$PRISMA_JS" migrate deploy
 else
     echo "  No migration history found — using prisma db push..."
-    "$PRISMA_BIN" db push --accept-data-loss
+    node "$PRISMA_JS" db push --accept-data-loss
 fi
 
 cd "$APP_DIR"
