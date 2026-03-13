@@ -25,7 +25,11 @@ rm -rf "$APP_DIR/node_modules"
 echo "→ Installing dependencies..."
 npm ci --include=dev
 
-# Ensure root node_modules/.bin is on PATH (npm workspaces may not resolve it otherwise)
+# Flush all filesystem writes before proceeding (npm ci can return before all
+# file handles are closed on some virtualized filesystems)
+sync
+
+# Ensure root node_modules/.bin is on PATH
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
 # ── 2. Build all workspaces ────────────────────────────────
@@ -38,8 +42,9 @@ npm run build -w apps/api
 
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
-node "$APP_DIR/node_modules/typescript/bin/tsc"
-node "$APP_DIR/node_modules/vite/bin/vite.js" build
+# Use .bin symlinks (more reliable than direct paths after fresh npm ci)
+"$APP_DIR/node_modules/.bin/tsc"
+"$APP_DIR/node_modules/.bin/vite" build
 cd "$APP_DIR"
 
 # ── 3. Generate Prisma client ──────────────────────────────
