@@ -17,13 +17,13 @@ echo "======================================================"
 
 cd "$APP_DIR"
 
-# Ensure root node_modules/.bin is on PATH (workspace bins may not be resolved otherwise)
-export PATH="$APP_DIR/node_modules/.bin:$PATH"
-
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
 echo "→ Installing dependencies..."
 npm ci --include=dev
+
+# Ensure root node_modules/.bin is on PATH (npm workspaces may not resolve it otherwise)
+export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
