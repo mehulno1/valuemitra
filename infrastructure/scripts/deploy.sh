@@ -83,10 +83,14 @@ echo "  zustand ready (${ATTEMPTS}s extra)"
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
 echo "→ Building shared package..."
-npm run build -w packages/shared
+cd "$APP_DIR/packages/shared"
+node "$APP_DIR/node_modules/typescript/bin/tsc"
+cd "$APP_DIR"
 
 echo "→ Building API..."
-npm run build -w apps/api
+cd "$APP_DIR/apps/api"
+node "$APP_DIR/node_modules/typescript/bin/tsc"
+cd "$APP_DIR"
 
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
