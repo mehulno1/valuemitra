@@ -37,7 +37,10 @@ echo "→ Building API..."
 npm run build -w apps/api
 
 echo "→ Building web frontend..."
-npm run build -w apps/web
+cd "$APP_DIR/apps/web"
+"$APP_DIR/node_modules/.bin/tsc"
+"$APP_DIR/node_modules/.bin/vite" build
+cd "$APP_DIR"
 
 # ── 3. Generate Prisma client ──────────────────────────────
 echo ""
