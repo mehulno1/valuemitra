@@ -31,22 +31,24 @@ npm ci --include=dev
 # Ensure root node_modules/.bin is on PATH so workspace scripts can find tsc/vite
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
-# Wait for native build tool binaries to be fully written.
-# npm ci child processes (esbuild postinstall) write native binaries
-# asynchronously and can still be in progress when npm ci exits.
-echo "→ Waiting for build tools to be ready..."
+# npm ci uses parallel workers that can still be writing package files when the
+# main npm process exits. A short wait ensures all tar extractions are complete.
+echo "→ Waiting for npm writes to complete..."
+sleep 10
+
+# Also wait until esbuild native binary is actually executable (postinstall
+# downloads it; can still be in transit even after the sleep).
 ESBUILD_BIN="$APP_DIR/node_modules/esbuild/bin/esbuild"
-VITE_BIN="$APP_DIR/node_modules/vite/bin/vite.js"
 ATTEMPTS=0
-until "$ESBUILD_BIN" --version >/dev/null 2>&1 && [ -s "$VITE_BIN" ]; do
+until "$ESBUILD_BIN" --version >/dev/null 2>&1; do
   ATTEMPTS=$((ATTEMPTS + 1))
-  if [ $ATTEMPTS -gt 60 ]; then
-    echo "  ❌ Build tools not ready after 60s"
+  if [ $ATTEMPTS -gt 30 ]; then
+    echo "  ❌ esbuild not ready after additional 30s"
     exit 1
   fi
   sleep 1
 done
-echo "  Build tools ready after ${ATTEMPTS}s"
+echo "  Ready (${ATTEMPTS}s extra wait for esbuild)"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
