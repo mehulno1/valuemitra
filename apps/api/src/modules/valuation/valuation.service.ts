@@ -110,9 +110,14 @@ export async function updateMarketComparison(
     where: { id: run.assignmentId },
     include: { property: true },
   });
-  const subjectAreaSqFt = assignment?.property?.builtUpAreaSqM
-    ? Number(assignment.property.builtUpAreaSqM) * 10.764    // convert sq.m. to sq.ft.
-    : 0;
+  // Pick the right area: land properties use landArea, others use builtUpArea
+  const LAND_TYPES = ['OPEN_LAND', 'AGRICULTURAL_LAND', 'RESIDENTIAL_PLOT', 'INDUSTRIAL_PLOT'];
+  const propertyType = assignment?.propertyType ?? '';
+  const isLandType = LAND_TYPES.includes(propertyType);
+  const areaSqM = isLandType
+    ? Number(assignment?.property?.landAreaActualSqM ?? assignment?.property?.landAreaSqM ?? 0)
+    : Number(assignment?.property?.builtUpAreaActualSqM ?? assignment?.property?.builtUpAreaSqM ?? 0);
+  const subjectAreaSqFt = areaSqM * 10.764;
 
   const result = computeMarketComparison(input.comparables, subjectAreaSqFt, input.correlatedValue);
 
