@@ -83,10 +83,9 @@ cd "$APP_DIR"
 echo ""
 echo "→ Generating Prisma client..."
 cd "$APP_DIR/apps/api"
-# Use the project-installed prisma (^5.x) not the latest via bare npx
-node "$APP_DIR/node_modules/.bin/prisma" generate 2>/dev/null || \
-  "$APP_DIR/node_modules/prisma/build/index.js" generate 2>/dev/null || \
-  npx prisma@5 generate
+# Use the project-installed prisma (^5.x).
+# .bin/prisma is a shell script — execute directly, NOT via `node`.
+"$APP_DIR/node_modules/.bin/prisma" generate
 
 # ── 4. Apply DB schema changes ─────────────────────────────
 # FIRST DEPLOY: uses db push (no migration history in dev)
@@ -95,10 +94,10 @@ echo ""
 echo "→ Applying database schema changes..."
 if [ -d "$APP_DIR/apps/api/prisma/migrations" ] && [ "$(ls -A $APP_DIR/apps/api/prisma/migrations)" ]; then
     echo "  Using prisma migrate deploy..."
-    node "$APP_DIR/node_modules/.bin/prisma" migrate deploy 2>/dev/null || npx prisma@5 migrate deploy
+    "$APP_DIR/node_modules/.bin/prisma" migrate deploy
 else
     echo "  No migration history found — using prisma db push..."
-    node "$APP_DIR/node_modules/.bin/prisma" db push --accept-data-loss 2>/dev/null || npx prisma@5 db push --accept-data-loss
+    "$APP_DIR/node_modules/.bin/prisma" db push --accept-data-loss
 fi
 
 cd "$APP_DIR"
