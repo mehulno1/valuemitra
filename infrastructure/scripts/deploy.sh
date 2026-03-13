@@ -32,18 +32,17 @@ export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
 # Verify vite is fully installed before using it
 VITE_JS="$APP_DIR/node_modules/vite/bin/vite.js"
-if [ ! -f "$VITE_JS" ]; then
-  echo "  vite not found after npm ci — running npm install to repair..."
-  npm install --include=dev
-fi
+echo "  [debug] vite after npm ci: $(ls $VITE_JS 2>/dev/null && echo EXISTS || echo MISSING)"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
 echo "→ Building shared package..."
 npm run build -w packages/shared
+echo "  [debug] vite after shared build: $(ls $VITE_JS 2>/dev/null && echo EXISTS || echo MISSING)"
 
 echo "→ Building API..."
 npm run build -w apps/api
+echo "  [debug] vite after api build: $(ls $VITE_JS 2>/dev/null && echo EXISTS || echo MISSING)"
 
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
