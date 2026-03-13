@@ -56,6 +56,11 @@ export const UpdateCostApproachSchema = z.object({
   wdvRate: z.number().min(0).max(1).optional(),
   observedCondition: z.enum(['EXCELLENT', 'GOOD', 'FAIR', 'POOR', 'VERY_POOR']).optional(),
   servicesCostPercent: z.number().min(0).max(20).optional(), // % of replacement cost
+  // External development (VAL_011 — L&B)
+  externalDevelopmentValue: z.number().min(0).optional(),
+  // Government RR / Jantri rate (VAL_002, VAL_004)
+  rrRatePerSqM: z.number().positive().optional(),
+  rrRateYear: z.string().max(10).optional(),
 });
 
 export const UpdateIncomeApproachSchema = z.object({
@@ -70,6 +75,11 @@ export const FinalizeValuationSchema = z.object({
   costApproachWeight: z.number().min(0).max(1).optional(),
   incomeApproachWeight: z.number().min(0).max(1).optional(),
   reconciliationNotes: z.string().max(2000).optional(),
+  // Manual bank-specific outputs
+  insuranceValue: z.number().min(0).optional(),        // VAL_016
+  rentalValueMonthly: z.number().min(0).optional(),    // VAL_017
+  bookValue: z.number().min(0).optional(),             // VAL_018
+  compositeRatePerSqFt: z.number().min(0).optional(),  // VAL_006
 }).refine((data) => {
   const total =
     (data.marketApproachWeight ?? 0) +
@@ -95,3 +105,6 @@ export type UpdateIncomeApproachInput = z.infer<typeof UpdateIncomeApproachSchem
 export type FinalizeValuationInput = z.infer<typeof FinalizeValuationSchema>;
 export type RequestAIValuationInput = z.infer<typeof RequestAIValuationSchema>;
 export type ComparableSaleInput = z.infer<typeof ComparableSaleSchema>;
+
+// Re-export for convenience
+export type { FinalizeValuationInput as FinalizeValuationData };

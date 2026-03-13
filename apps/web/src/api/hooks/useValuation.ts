@@ -60,6 +60,20 @@ export interface ValuationRun {
   positiveFactors?: string;
   negativeFactors?: string;
   marketAnalysisNarrative?: string;
+  // Government RR rate (VAL_002–004)
+  rrRatePerSqM?: number;
+  rrRatePerSqFt?: number;
+  rrRateYear?: string;
+  rrScreenshotUrl?: string;
+  // Derived outputs
+  externalDevelopmentValue?: number;
+  realizableValue?: number;
+  distressValue?: number;
+  govtGuidelineValue?: number;
+  compositeRatePerSqFt?: number;
+  insuranceValue?: number;
+  rentalValueMonthly?: number;
+  bookValue?: number;
   aiValuationResult?: {
     suggestedValueLow: number;
     suggestedValueMid: number;

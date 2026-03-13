@@ -145,6 +145,19 @@ export async function updateCostApproach(
   await getRunOrThrow(id, tenantId);
   const result = computeCostApproach(input);
 
+  // Compute govt guideline value = RR rate × land area (if both provided)
+  const rrRatePerSqM = input.rrRatePerSqM;
+  const rrRatePerSqFt = rrRatePerSqM != null ? rrRatePerSqM / 10.764 : undefined;
+  const landAreaForGovt = input.landArea;
+  const govtGuidelineValue =
+    rrRatePerSqM != null && landAreaForGovt != null
+      ? rrRatePerSqM * landAreaForGovt
+      : undefined;
+
+  // Total cost approach value includes external development value if provided
+  const extDev = input.externalDevelopmentValue ?? 0;
+  const totalCostValue = result.costApproachValue + extDev;
+
   return prisma.valuationRun.update({
     where: { id },
     data: {
@@ -160,7 +173,14 @@ export async function updateCostApproach(
       depreciationAmount: String(result.depreciationAmount),
       depreciatedValue: String(result.depreciatedValue),
       servicesCost: String(result.servicesCost),
-      costApproachValue: String(result.costApproachValue),
+      costApproachValue: String(totalCostValue),
+      // Government rate fields
+      rrRatePerSqM: rrRatePerSqM != null ? String(rrRatePerSqM) : undefined,
+      rrRatePerSqFt: rrRatePerSqFt != null ? String(rrRatePerSqFt) : undefined,
+      rrRateYear: input.rrRateYear ?? undefined,
+      govtGuidelineValue: govtGuidelineValue != null ? String(govtGuidelineValue) : undefined,
+      // External development
+      externalDevelopmentValue: extDev > 0 ? String(extDev) : undefined,
       inputSnapshot: { costApproach: { input, result } } as unknown as object,
       computedAt: new Date(),
     },
@@ -183,7 +203,7 @@ export async function updateIncomeApproach(
     where: { id },
     data: {
       grossRent: String(result.grossRentAnnual / 12),   // store monthly
-      vacancyRate: String(result.capitalizationRate),
+      vacancyRate: String(input.vacancyRate),
       effectiveGrossIncome: String(result.effectiveGrossIncome),
       operatingExpenses: String(result.operatingExpenses),
       netOperatingIncome: String(result.netOperatingIncome),
@@ -233,6 +253,10 @@ export async function finalizeValuationRun(
 
   const roundedValue = weightedValue; // already rounded to 1000
 
+  // Derived value outputs
+  const realizableValue = Math.round(roundedValue * 0.90 / 1000) * 1000;
+  const distressValue   = Math.round(roundedValue * 0.80 / 1000) * 1000;
+
   // Update run + assignment final value atomically
   const [updated] = await prisma.$transaction([
     prisma.valuationRun.update({
@@ -244,7 +268,14 @@ export async function finalizeValuationRun(
         incomeApproachWeight: iw > 0 ? String(iw) : null,
         weightedValue: String(weightedValue),
         roundedValue: String(roundedValue),
+        realizableValue: String(realizableValue),
+        distressValue: String(distressValue),
         reconciliationNotes: input.reconciliationNotes,
+        // Bank-specific manual outputs
+        insuranceValue: input.insuranceValue != null ? String(input.insuranceValue) : undefined,
+        rentalValueMonthly: input.rentalValueMonthly != null ? String(input.rentalValueMonthly) : undefined,
+        bookValue: input.bookValue != null ? String(input.bookValue) : undefined,
+        compositeRatePerSqFt: input.compositeRatePerSqFt != null ? String(input.compositeRatePerSqFt) : undefined,
         computedAt: new Date(),
       },
     }),

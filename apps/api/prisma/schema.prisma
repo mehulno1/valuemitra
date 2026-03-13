@@ -573,11 +573,17 @@ model ValuationRun {
   negativeFactors       String?   @db.Text           // MKT_011: Canara "negative factors"
   marketAnalysisNarrative String? @db.Text           // MKT_012: AI-drafted + RV edits
 
+  // Government RR / Jantri rate inputs (VAL_002, VAL_004)
+  rrRatePerSqM          Decimal?  @db.Decimal(12, 2) // VAL_002: Govt RR/Jantri rate per sq.m.
+  rrRatePerSqFt         Decimal?  @db.Decimal(12, 2) // VAL_002: Govt RR/Jantri rate per sq.ft.
+  rrRateYear            String?   @db.VarChar(10)    // VAL_004: e.g. "2025-26"
+  rrScreenshotUrl       String?   @db.VarChar(500)   // VAL_003: time-stamped RR screenshot
+
   // Derived value outputs (stored explicitly for display + report)
+  externalDevelopmentValue Decimal? @db.Decimal(15, 2) // VAL_011: compound wall, paving, gate
   realizableValue       Decimal?  @db.Decimal(15, 2) // VAL_013: typically 90% of FMV
   distressValue         Decimal?  @db.Decimal(15, 2) // VAL_014: typically 80% of FMV
   govtGuidelineValue    Decimal?  @db.Decimal(15, 2) // VAL_015: Area × RR/Jantri rate
-  rrScreenshotUrl       String?   @db.VarChar(500)   // VAL_003: time-stamped RR screenshot
 
   // Bank-specific outputs (populated where template requires them)
   compositeRatePerSqFt  Decimal?  @db.Decimal(12, 2) // VAL_006: auto-computed or overridden

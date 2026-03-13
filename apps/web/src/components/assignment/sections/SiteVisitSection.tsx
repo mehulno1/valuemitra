@@ -149,18 +149,18 @@ const STAGE_STATUS_OPTIONS = [
 ];
 
 const PHOTO_CATEGORY_LABELS: Record<string, string> = {
-  BUILDING_EXTERIOR: 'Building Exterior ★',
-  ENTRANCE_DOOR: 'Entrance Door ★',
-  SOCIETY_BOARD: 'Society Board ★',
-  LIVING_ROOM: 'Living Room / Hall ★',
-  KITCHEN: 'Kitchen ★',
+  BUILDING_EXTERIOR: 'Building Exterior',
+  ENTRANCE_DOOR: 'Entrance Door',
+  SOCIETY_BOARD: 'Society Board',
+  LIVING_ROOM: 'Living Room / Hall',
+  KITCHEN: 'Kitchen',
   BEDROOM: 'Bedroom',
   TOILET_BATHROOM: 'Toilet / Bathroom',
   TERRACE_BALCONY: 'Terrace / Balcony',
-  INTERIOR_GENERAL: 'Interior General ★',
+  INTERIOR_GENERAL: 'Interior General',
   DAMAGE_DEFECTS: 'Damage / Defects',
-  APPROACH_ROAD: 'Approach Road ★',
-  FLOOR_PLAN_SKETCH: 'Floor Plan Sketch ★',
+  APPROACH_ROAD: 'Approach Road',
+  FLOOR_PLAN_SKETCH: 'Floor Plan Sketch',
 };
 
 // ── Amenity config ─────────────────────────────────────────────
@@ -1273,7 +1273,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankName, loanTyp
               <SectionCard letter="O" title="Site Photographs">
                 <CardHeader className="p-0 pb-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground">★ = Compulsory photo. Upload all photos at site.</p>
+                    <p className="text-xs text-muted-foreground">Upload site photos. All categories are optional.</p>
                     {canFillForm && !formDisabled && (
                       <label className="cursor-pointer">
                         <Button asChild size="sm" variant="outline" disabled={uploadingCount > 0}>
@@ -1339,7 +1339,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankName, loanTyp
               </SectionCard>
 
               {/* ── P: Floor Plan Sketch ──────────────────────────────── */}
-              <SectionCard letter="P" title="Floor Plan / Sketch ★ COMPULSORY">
+              <SectionCard letter="P" title="Floor Plan / Sketch">
                 <div className="flex items-center gap-3">
                   <p className="text-xs text-muted-foreground flex-1">
                     Draw a dimensioned sketch at site (room names, L×W, door/window positions, N-S-E-W orientation).
@@ -1391,7 +1391,7 @@ export function SiteVisitSection({ assignmentId, propertyType, bankName, loanTyp
                 <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs text-amber-800">
                   <p className="font-semibold mb-1">✓ Checklist before submitting:</p>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
-                    {['GPS captured (Section B)', 'Hand-drawn sketch uploaded (Section P)', 'All ★ mandatory photos taken (Section O)',
+                    {['GPS captured (Section B)', 'Floor plan / sketch uploaded (Section P)', 'Site photos uploaded (Section O)',
                       'Documents checklist ticked (Section H)', 'Measurements recorded (Section I)', 'Inspection date set (Section A)'].map((item) => (
                       <span key={item} className="flex items-center gap-1">☐ {item}</span>
                     ))}

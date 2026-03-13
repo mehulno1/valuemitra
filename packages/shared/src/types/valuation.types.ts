@@ -76,6 +76,28 @@ export interface ValuationRun {
 
   reconciliationNotes?: string;
 
+  // Market analysis & marketability (MKT_009-012)
+  marketabilityRating?: string;
+  positiveFactors?: string;
+  negativeFactors?: string;
+  marketAnalysisNarrative?: string;
+
+  // Government RR / Jantri rate (VAL_002, VAL_003, VAL_004)
+  rrRatePerSqM?: number;
+  rrRatePerSqFt?: number;
+  rrRateYear?: string;
+  rrScreenshotUrl?: string;
+
+  // Derived + bank-specific outputs
+  externalDevelopmentValue?: number;    // VAL_011: L&B only
+  realizableValue?: number;             // VAL_013: 90% of FMV
+  distressValue?: number;               // VAL_014: 80% of FMV
+  govtGuidelineValue?: number;          // VAL_015: Area × RR rate
+  compositeRatePerSqFt?: number;        // VAL_006: for flat/unit templates
+  insuranceValue?: number;              // VAL_016: reinstatement value
+  rentalValueMonthly?: number;          // VAL_017: monthly rental
+  bookValue?: number;                   // VAL_018: L&B book value
+
   // Immutable audit snapshot
   inputSnapshot?: Record<string, unknown>;
 

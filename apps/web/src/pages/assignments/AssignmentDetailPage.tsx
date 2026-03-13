@@ -381,7 +381,8 @@ function DocumentsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit
 // ─── Market Comparable Dialog ───────────────────────────────
 const EMPTY_COMP: Omit<ComparableSale, 'id'> = {
   address: '', locality: '', transactionDate: '', totalArea: 0, salePrice: 0,
-  sourceType: 'MANUAL', adjustmentTime: 0, adjustmentLocation: 0,
+  sourceType: 'MANUAL', sourceUrl: '',
+  adjustmentTime: 0, adjustmentLocation: 0,
   adjustmentSize: 0, adjustmentCondition: 0, adjustmentAmenities: 0,
 };
 
@@ -440,6 +441,10 @@ function ComparableDialog({
             <Label>Rate / sq.ft.</Label>
             <Input readOnly value={form.totalArea > 0 ? `₹${Math.round(form.salePrice / form.totalArea).toLocaleString('en-IN')}` : '—'} className="bg-muted" />
           </div>
+          <div className="col-span-2 space-y-1">
+            <Label>Source URL (MKT_006) — IGRS / SRO / listing link</Label>
+            <Input value={form.sourceUrl ?? ''} onChange={(e) => setForm((p) => ({ ...p, sourceUrl: e.target.value }))} placeholder="https://igrmaharashtra.gov.in/…" />
+          </div>
         </div>
         <Separator />
         <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Adjustments (%) — positive = better than subject</p>
@@ -462,47 +467,23 @@ function ComparableDialog({
   );
 }
 
-// ─── Valuation Tab ─────────────────────────────────────────
-function ValuationTab({
-  assignmentId, canEdit, inspectionComplete, assignmentStatus,
+// ─── Marketability Tab ──────────────────────────────────────
+function MarketabilityTab({
+  assignmentId, canEdit,
 }: {
   assignmentId: string;
   canEdit: boolean;
-  inspectionComplete: boolean;
-  assignmentStatus: string;
 }) {
   const { toast } = useToast();
   const { data: runs, isLoading } = useValuationRuns(assignmentId);
-  const { mutate: createRun, isPending: creating } = useCreateValuationRun();
-  const { mutate: updateMarket, isPending: savingMarket } = useUpdateMarket();
-  const { mutate: updateCost, isPending: savingCost } = useUpdateCost();
-  const { mutate: updateIncome, isPending: savingIncome } = useUpdateIncome();
-  const { mutate: finalize, isPending: finalizing } = useFinalizeValuation();
-  const { mutate: requestAI, isPending: aiLoading } = useRequestAIValuation();
-  const { mutate: deleteRun, isPending: deletingRun } = useDeleteValuationRun();
-  const { data: propertyData } = usePropertyData(assignmentId);
+  const { mutate: updateMarket, isPending: saving } = useUpdateMarket();
 
   const run = runs?.[0];
 
   const [comparables, setComparables] = useState<Omit<ComparableSale, 'id'>[]>([]);
   const [showCompDialog, setShowCompDialog] = useState(false);
   const [correlatedValue, setCorrelatedValue] = useState('');
-
-  const [cost, setCost] = useState({
-    landArea: '', landRatePerSqM: '', landRateSource: 'market',
-    buildingPlinthArea: '', buildingRatePerSqM: '',
-    ageYears: '', totalLifeYears: '60',
-    depreciationMethod: 'STRAIGHT_LINE',
-    servicesCostPercent: '5',
-  });
-
-  const [income, setIncome] = useState({
-    grossRent: '', vacancyRate: '5', operatingExpenses: '', capitalizationRate: '8',
-  });
-
-  const [weights, setWeights] = useState({ market: '33', cost: '33', income: '34' });
-  const [notes, setNotes] = useState('');
-  const [marketAnalysis, setMarketAnalysis] = useState({
+  const [analysis, setAnalysis] = useState({
     marketabilityRating: '',
     positiveFactors: '',
     negativeFactors: '',
@@ -513,18 +494,288 @@ function ValuationTab({
     if (!run) return;
     if (run.comparables?.length) setComparables(run.comparables as Omit<ComparableSale, 'id'>[]);
     if (run.correlatedValue) setCorrelatedValue(String(run.correlatedValue));
-    if (run.landRateUsed) setCost((p) => ({ ...p, landRatePerSqM: String(run.landRateUsed ?? '') }));
-    if (run.buildingPlinthArea) setCost((p) => ({ ...p, buildingPlinthArea: String(run.buildingPlinthArea ?? '') }));
-    if (run.buildingRatePerSqM) setCost((p) => ({ ...p, buildingRatePerSqM: String(run.buildingRatePerSqM ?? '') }));
-    if (run.grossRent) setIncome((p) => ({ ...p, grossRent: String(run.grossRent ?? '') }));
-    if (run.capitalizationRate) setIncome((p) => ({ ...p, capitalizationRate: String((run.capitalizationRate ?? 0) * 100) }));
-    if (run.reconciliationNotes) setNotes(run.reconciliationNotes);
-    if (run.marketApproachWeight) setWeights({ market: String((run.marketApproachWeight ?? 0) * 100), cost: String((run.costApproachWeight ?? 0) * 100), income: String((run.incomeApproachWeight ?? 0) * 100) });
-    setMarketAnalysis({
+    setAnalysis({
       marketabilityRating: run.marketabilityRating ?? '',
       positiveFactors: run.positiveFactors ?? '',
       negativeFactors: run.negativeFactors ?? '',
       marketAnalysisNarrative: run.marketAnalysisNarrative ?? '',
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id]);
+
+  function handleSave() {
+    if (!run || comparables.length === 0) {
+      toast({ title: 'Add at least one comparable before saving', variant: 'destructive' });
+      return;
+    }
+    const dateFixed = comparables.map((c) => ({
+      ...c,
+      transactionDate: c.transactionDate.includes('T') ? c.transactionDate : `${c.transactionDate}T00:00:00.000Z`,
+    }));
+    updateMarket({ id: run.id, assignmentId, data: {
+      comparables: dateFixed,
+      correlatedValue: num(correlatedValue) || undefined,
+      marketabilityRating: analysis.marketabilityRating || undefined,
+      positiveFactors: analysis.positiveFactors || undefined,
+      negativeFactors: analysis.negativeFactors || undefined,
+      marketAnalysisNarrative: analysis.marketAnalysisNarrative || undefined,
+    }}, {
+      onSuccess: () => toast({ title: 'Marketability data saved' }),
+      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed', variant: 'destructive' }),
+    });
+  }
+
+  if (isLoading) return <LoadingSpinner />;
+
+  if (!run) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <p className="text-sm text-muted-foreground text-center">
+            Start a valuation run on the <strong>Valuation</strong> tab first, then return here to enter comparable transactions and marketability data.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const locked = run.isFinalized;
+  const disabled = locked || !canEdit;
+
+  return (
+    <div className="space-y-4">
+      {/* ── Comparable Transactions (MKT_001–008) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-4 w-4" />Comparable Transactions</CardTitle>
+              <CardDescription className="text-xs">MKT_001–008 · Min. 2–3 comparables required by most banks</CardDescription>
+            </div>
+            {canEdit && !locked && (
+              <Button size="sm" variant="outline" onClick={() => setShowCompDialog(true)}>
+                <Plus className="h-3 w-3 mr-1" /> Add Comparable
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {comparables.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">
+              No comparable transactions yet. Click <strong>Add Comparable</strong> to begin.
+            </p>
+          ) : (
+            <div className="border rounded text-sm overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>#</TableHead>
+                    <TableHead>Address / Locality</TableHead>
+                    <TableHead className="text-right">Area (sq.ft.)</TableHead>
+                    <TableHead className="text-right">Sale Price</TableHead>
+                    <TableHead className="text-right">Rate/sq.ft.</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Source</TableHead>
+                    {!locked && <TableHead />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {comparables.map((c, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                      <TableCell>
+                        <div className="font-medium text-xs">{c.address}</div>
+                        <div className="text-muted-foreground text-xs">{c.locality}</div>
+                      </TableCell>
+                      <TableCell className="text-right">{c.totalArea.toLocaleString('en-IN')}</TableCell>
+                      <TableCell className="text-right">{fmt(c.salePrice)}</TableCell>
+                      <TableCell className="text-right text-primary font-semibold">
+                        {c.totalArea > 0 ? `₹${Math.round(c.salePrice / c.totalArea).toLocaleString('en-IN')}` : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {c.transactionDate ? new Date(c.transactionDate).toLocaleDateString('en-IN') : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <div className="font-medium">{c.sourceType}</div>
+                        {c.sourceUrl && (
+                          <a href={c.sourceUrl} target="_blank" rel="noreferrer" className="text-primary underline text-xs">
+                            Source link
+                          </a>
+                        )}
+                      </TableCell>
+                      {!locked && (
+                        <TableCell>
+                          <button onClick={() => setComparables((p) => p.filter((_, j) => j !== i))}
+                            className="text-muted-foreground hover:text-destructive">
+                            <XCircle className="h-4 w-4" />
+                          </button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {/* Correlated / Adopted Value */}
+          {run.correlatedValue && (
+            <div className="flex items-center gap-2 text-sm pt-1">
+              <span className="text-muted-foreground">Auto-correlated Market Value:</span>
+              <span className="font-bold text-primary">{fmt(run.correlatedValue)}</span>
+            </div>
+          )}
+          {canEdit && !locked && comparables.length > 0 && (
+            <div className="flex items-center gap-3">
+              <Label className="text-sm whitespace-nowrap">Adopted Market Value (₹)</Label>
+              <Input type="number" className="max-w-[200px]" value={correlatedValue}
+                onChange={(e) => setCorrelatedValue(e.target.value)} placeholder="Override if needed" />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Marketability Assessment (MKT_009–012) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Marketability Assessment</CardTitle>
+          <CardDescription className="text-xs">MKT_009–012 · Required by all bank formats</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs">Marketability Rating <span className="text-destructive">*</span> (MKT_009)</Label>
+              <Select disabled={disabled} value={analysis.marketabilityRating}
+                onValueChange={(v) => setAnalysis((p) => ({ ...p, marketabilityRating: v }))}>
+                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Good">Good</SelectItem>
+                  <SelectItem value="Average">Average</SelectItem>
+                  <SelectItem value="Poor">Poor</SelectItem>
+                  <SelectItem value="Low">Low</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Factors Favouring Extra Potential Value (MKT_010)</Label>
+            <Textarea disabled={disabled} rows={2} value={analysis.positiveFactors}
+              onChange={(e) => setAnalysis((p) => ({ ...p, positiveFactors: e.target.value }))}
+              placeholder="e.g. Good connectivity, near railway station, high demand area, upcoming metro…" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Negative Factors Affecting Market Value (MKT_011)</Label>
+            <Textarea disabled={disabled} rows={2} value={analysis.negativeFactors}
+              onChange={(e) => setAnalysis((p) => ({ ...p, negativeFactors: e.target.value }))}
+              placeholder="e.g. Narrow approach road, flood-prone zone, no RERA registration, ageing structure…" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Market Analysis Summary Narrative <span className="text-destructive">*</span> (MKT_012)</Label>
+            <Textarea disabled={disabled} rows={4} value={analysis.marketAnalysisNarrative}
+              onChange={(e) => setAnalysis((p) => ({ ...p, marketAnalysisNarrative: e.target.value }))}
+              placeholder="Describe overall market conditions, demand-supply, recent price trends, micro-market outlook…" />
+          </div>
+          {canEdit && !locked && (
+            <Button disabled={saving || comparables.length === 0} onClick={handleSave}>
+              <Save className="h-4 w-4 mr-2" />{saving ? 'Saving…' : 'Save Marketability Data'}
+            </Button>
+          )}
+          {locked && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Lock className="h-3 w-3" /> Valuation is finalized — data is locked.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <ComparableDialog open={showCompDialog} onClose={() => setShowCompDialog(false)} onSave={(c) => setComparables((p) => [...p, c])} />
+    </div>
+  );
+}
+
+// ─── Asset type helpers ─────────────────────────────────────
+const LAND_TYPES = ['OPEN_LAND', 'AGRICULTURAL_LAND', 'RESIDENTIAL_PLOT', 'INDUSTRIAL_PLOT'];
+const LB_TYPES   = ['LAND_AND_BUILDING', 'INDUSTRIAL_FACTORY', 'MIXED_USE'];
+const UC_TYPES   = ['UC_FLAT'];
+
+function assetFlags(propertyType: string) {
+  const isLand = LAND_TYPES.includes(propertyType);
+  const isLB   = LB_TYPES.includes(propertyType);
+  const isUC   = UC_TYPES.includes(propertyType);
+  const hasLandComponent = isLand || isLB;
+  const hasBuilding = !isLand;
+  const showLandRate = hasLandComponent;       // VAL_005 mandatory; optional for others
+  const showCompositeRate = !isLand && !isLB;  // VAL_006 Flat/Shop/Office/UC
+  const showExtDev = isLB;                     // VAL_011 L&B only
+  const showDepreciation = hasBuilding && !isUC; // VAL_008
+  const showInsurance = !isLand;               // VAL_016
+  const showRental = true;                     // VAL_017 all types
+  const showBookValue = isLB;                  // VAL_018 L&B only
+  return { isLand, isLB, isUC, hasLandComponent, hasBuilding, showLandRate, showCompositeRate, showExtDev, showDepreciation, showInsurance, showRental, showBookValue };
+}
+
+// ─── Valuation Tab ─────────────────────────────────────────
+function ValuationTab({
+  assignmentId, propertyType, canEdit, inspectionComplete, assignmentStatus,
+}: {
+  assignmentId: string;
+  propertyType: string;
+  canEdit: boolean;
+  inspectionComplete: boolean;
+  assignmentStatus: string;
+}) {
+  const { toast } = useToast();
+  const { data: runs, isLoading } = useValuationRuns(assignmentId);
+  const { mutate: createRun, isPending: creating } = useCreateValuationRun();
+  const { mutate: updateCost, isPending: savingCost } = useUpdateCost();
+  const { mutate: updateIncome, isPending: savingIncome } = useUpdateIncome();
+  const { mutate: finalize, isPending: finalizing } = useFinalizeValuation();
+  const { mutate: requestAI, isPending: aiLoading } = useRequestAIValuation();
+  const { mutate: deleteRun, isPending: deletingRun } = useDeleteValuationRun();
+  const { data: propertyData } = usePropertyData(assignmentId);
+
+  const flags = assetFlags(propertyType);
+  const run = runs?.[0];
+
+  const [cost, setCost] = useState({
+    landArea: '', landRatePerSqM: '', landRateSource: 'market',
+    buildingPlinthArea: '', buildingRatePerSqM: '',
+    ageYears: '', totalLifeYears: '60',
+    depreciationMethod: 'STRAIGHT_LINE',
+    servicesCostPercent: '5',
+    externalDevelopmentValue: '',
+    rrRatePerSqM: '', rrRateYear: '',
+  });
+
+  const [income, setIncome] = useState({
+    grossRent: '', vacancyRate: '5', operatingExpenses: '', capitalizationRate: '8',
+  });
+
+  const [weights, setWeights] = useState({ market: '33', cost: '33', income: '34' });
+  const [notes, setNotes] = useState('');
+
+  // Bank-specific manual outputs (VAL_016/017/018/006)
+  const [outputs, setOutputs] = useState({
+    insuranceValue: '', rentalValueMonthly: '', bookValue: '', compositeRatePerSqFt: '',
+  });
+
+  useEffect(() => {
+    if (!run) return;
+    if (run.landRateUsed) setCost((p) => ({ ...p, landRatePerSqM: String(run.landRateUsed ?? '') }));
+    if (run.buildingPlinthArea) setCost((p) => ({ ...p, buildingPlinthArea: String(run.buildingPlinthArea ?? '') }));
+    if (run.buildingRatePerSqM) setCost((p) => ({ ...p, buildingRatePerSqM: String(run.buildingRatePerSqM ?? '') }));
+    if (run.rrRatePerSqM) setCost((p) => ({ ...p, rrRatePerSqM: String(run.rrRatePerSqM ?? '') }));
+    if (run.rrRateYear) setCost((p) => ({ ...p, rrRateYear: run.rrRateYear ?? '' }));
+    if (run.externalDevelopmentValue) setCost((p) => ({ ...p, externalDevelopmentValue: String(run.externalDevelopmentValue ?? '') }));
+    if (run.grossRent) setIncome((p) => ({ ...p, grossRent: String(run.grossRent ?? '') }));
+    if (run.capitalizationRate) setIncome((p) => ({ ...p, capitalizationRate: String((run.capitalizationRate ?? 0) * 100) }));
+    if (run.reconciliationNotes) setNotes(run.reconciliationNotes);
+    if (run.marketApproachWeight) setWeights({ market: String((run.marketApproachWeight ?? 0) * 100), cost: String((run.costApproachWeight ?? 0) * 100), income: String((run.incomeApproachWeight ?? 0) * 100) });
+    setOutputs({
+      insuranceValue: run.insuranceValue != null ? String(run.insuranceValue) : '',
+      rentalValueMonthly: run.rentalValueMonthly != null ? String(run.rentalValueMonthly) : '',
+      bookValue: run.bookValue != null ? String(run.bookValue) : '',
+      compositeRatePerSqFt: run.compositeRatePerSqFt != null ? String(run.compositeRatePerSqFt) : '',
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run?.id]);
@@ -554,25 +805,6 @@ function ValuationTab({
     });
   }
 
-  function handleSaveMarket() {
-    if (!run || comparables.length === 0) return;
-    const dateFixed = comparables.map((c) => ({
-      ...c,
-      transactionDate: c.transactionDate.includes('T') ? c.transactionDate : `${c.transactionDate}T00:00:00.000Z`,
-    }));
-    updateMarket({ id: run.id, assignmentId, data: {
-      comparables: dateFixed,
-      correlatedValue: num(correlatedValue) || undefined,
-      marketabilityRating: marketAnalysis.marketabilityRating || undefined,
-      positiveFactors: marketAnalysis.positiveFactors || undefined,
-      negativeFactors: marketAnalysis.negativeFactors || undefined,
-      marketAnalysisNarrative: marketAnalysis.marketAnalysisNarrative || undefined,
-    } }, {
-      onSuccess: () => toast({ title: 'Market data saved' }),
-      onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed', variant: 'destructive' }),
-    });
-  }
-
   function handleSaveCost() {
     if (!run) return;
     updateCost({ id: run.id, assignmentId, data: {
@@ -585,6 +817,9 @@ function ValuationTab({
       totalLifeYears: num(cost.totalLifeYears) || undefined,
       depreciationMethod: cost.depreciationMethod,
       servicesCostPercent: num(cost.servicesCostPercent) || undefined,
+      rrRatePerSqM: num(cost.rrRatePerSqM) || undefined,
+      rrRateYear: cost.rrRateYear || undefined,
+      externalDevelopmentValue: num(cost.externalDevelopmentValue) || undefined,
     }}, {
       onSuccess: () => toast({ title: 'Cost data saved & computed' }),
       onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed', variant: 'destructive' }),
@@ -618,6 +853,10 @@ function ValuationTab({
       costApproachWeight: cw || undefined,
       incomeApproachWeight: iw || undefined,
       reconciliationNotes: notes || undefined,
+      insuranceValue: num(outputs.insuranceValue) || undefined,
+      rentalValueMonthly: num(outputs.rentalValueMonthly) || undefined,
+      bookValue: num(outputs.bookValue) || undefined,
+      compositeRatePerSqFt: num(outputs.compositeRatePerSqFt) || undefined,
     }}, {
       onSuccess: () => toast({ title: 'Valuation finalized!' }),
       onError: (e: unknown) => toast({ title: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Finalization failed', variant: 'destructive' }),
@@ -664,6 +903,7 @@ function ValuationTab({
   const isMarket = approach === 'MARKET_COMPARISON' || approach === 'COMBINED';
   const isCost   = approach === 'COST_APPROACH'   || approach === 'COMBINED';
   const isIncome = approach === 'INCOME_APPROACH'  || approach === 'COMBINED';
+  const disabled = run.isFinalized || !canEdit;
 
   return (
     <div className="space-y-4">
@@ -676,7 +916,7 @@ function ValuationTab({
         </Alert>
       )}
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
           <span className="font-semibold">{approach.replace(/_/g, ' ')}</span>
@@ -695,145 +935,94 @@ function ValuationTab({
             </Button>
           )}
           {canEdit && !run.isFinalized && (
-            <Button
-              size="sm"
-              variant="destructive"
-              disabled={deletingRun}
-              onClick={() => {
-                if (confirm('Delete this valuation run and start over with a different approach?')) {
-                  deleteRun({ id: run.id, assignmentId }, {
-                    onSuccess: () => toast({ title: 'Valuation run deleted' }),
-                    onError: () => toast({ title: 'Delete failed', variant: 'destructive' }),
-                  });
-                }
-              }}
-            >
+            <Button size="sm" variant="destructive" disabled={deletingRun}
+              onClick={() => { if (confirm('Delete this valuation run and start over with a different approach?')) {
+                deleteRun({ id: run.id, assignmentId }, {
+                  onSuccess: () => toast({ title: 'Valuation run deleted' }),
+                  onError: () => toast({ title: 'Delete failed', variant: 'destructive' }),
+                });
+              }}}>
               {deletingRun ? 'Deleting…' : 'Change Approach'}
             </Button>
           )}
         </div>
       </div>
 
-      {/* ── Market Comparison ── */}
+      {/* ── VAL_002/003/004: Government Rate (all asset types) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Government Ready Reckoner / Jantri Rate</CardTitle>
+          <CardDescription className="text-xs">VAL_002–004 · Auto-fetched from state portal or enter manually</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs">RR/Jantri Rate (₹/sq.m.) <span className="text-destructive">*</span></Label>
+              <Input type="number" disabled={disabled} value={cost.rrRatePerSqM}
+                onChange={(e) => setCost((p) => ({ ...p, rrRatePerSqM: e.target.value }))} placeholder="10000" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Rate (₹/sq.ft.) — auto</Label>
+              <Input type="number" disabled readOnly
+                value={cost.rrRatePerSqM ? (num(cost.rrRatePerSqM) / 10.764).toFixed(2) : ''}
+                placeholder="929" className="bg-muted/40" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Reference Year <span className="text-destructive">*</span></Label>
+              <Input disabled={disabled} value={cost.rrRateYear}
+                onChange={(e) => setCost((p) => ({ ...p, rrRateYear: e.target.value }))} placeholder="2025-26" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Screenshot / Source</Label>
+              {run.rrScreenshotUrl
+                ? <a href={run.rrScreenshotUrl} target="_blank" rel="noreferrer" className="text-xs text-primary underline block pt-2">View screenshot</a>
+                : <p className="text-xs text-muted-foreground pt-2">Auto-fetched with scraper</p>}
+            </div>
+          </div>
+          {run.rrRatePerSqM != null && run.govtGuidelineValue != null && (
+            <div className="mt-3 flex items-center gap-3 text-sm">
+              <span className="text-muted-foreground">Govt Guideline Value (VAL_015):</span>
+              <span className="font-semibold text-primary">{fmt(run.govtGuidelineValue)}</span>
+              <span className="text-xs text-muted-foreground">= ₹{Number(run.rrRatePerSqM).toLocaleString('en-IN')}/sq.m. × area</span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Market Comparison — read-only summary (data entered on Marketability tab) ── */}
       {isMarket && (
         <Card>
           <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-4 w-4" />Market Comparison</CardTitle>
-              {canEdit && !run.isFinalized && (
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setShowCompDialog(true)}>
-                    <Plus className="h-3 w-3 mr-1" /> Add Comparable
-                  </Button>
-                  <Button size="sm" disabled={comparables.length === 0 || savingMarket} onClick={handleSaveMarket}>
-                    <Save className="h-3 w-3 mr-1" />{savingMarket ? 'Saving…' : 'Save'}
-                  </Button>
-                </div>
-              )}
-            </div>
+            <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-4 w-4" />Market Comparison</CardTitle>
+            <CardDescription className="text-xs">Comparable transactions are entered on the <strong>Marketability</strong> tab</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {comparables.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No comparables added yet. Click "Add Comparable" to begin.</p>
+            {run.comparables && (run.comparables as unknown[]).length > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {(run.comparables as unknown[]).length} comparable(s) recorded — see Marketability tab for details.
+              </p>
             ) : (
-              <div className="border rounded text-sm overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Address / Locality</TableHead>
-                      <TableHead className="text-right">Area (sq.ft.)</TableHead>
-                      <TableHead className="text-right">Sale Price</TableHead>
-                      <TableHead className="text-right">Rate/sq.ft.</TableHead>
-                      <TableHead>Date</TableHead>
-                      {!run.isFinalized && <TableHead />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {comparables.map((c, i) => (
-                      <TableRow key={i}>
-                        <TableCell>
-                          <div className="font-medium text-xs">{c.address}</div>
-                          <div className="text-muted-foreground text-xs">{c.locality}</div>
-                        </TableCell>
-                        <TableCell className="text-right">{c.totalArea.toLocaleString('en-IN')}</TableCell>
-                        <TableCell className="text-right">{fmt(c.salePrice)}</TableCell>
-                        <TableCell className="text-right text-primary font-semibold">
-                          {c.totalArea > 0 ? `₹${Math.round(c.salePrice / c.totalArea).toLocaleString('en-IN')}` : '—'}
-                        </TableCell>
-                        <TableCell className="text-xs">{c.transactionDate ? new Date(c.transactionDate).toLocaleDateString('en-IN') : '—'}</TableCell>
-                        {!run.isFinalized && (
-                          <TableCell>
-                            <button onClick={() => setComparables((p) => p.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive">
-                              <XCircle className="h-4 w-4" />
-                            </button>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <p className="text-sm text-muted-foreground">No comparables entered yet. Go to the <strong>Marketability</strong> tab to add them.</p>
             )}
             {run.correlatedValue && (
               <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Correlated Value:</span>
+                <span className="text-muted-foreground">Market Correlated Value:</span>
                 <span className="font-bold text-primary">{fmt(run.correlatedValue)}</span>
               </div>
             )}
-            {canEdit && !run.isFinalized && comparables.length > 0 && (
-              <div className="flex items-center gap-3">
-                <Label className="text-sm whitespace-nowrap">Adopted Value (₹)</Label>
-                <Input type="number" className="max-w-[200px]" value={correlatedValue} onChange={(e) => setCorrelatedValue(e.target.value)} placeholder="Override correlated value" />
+            {/* VAL_006: Composite Rate for flat/shop/office/UC */}
+            {flags.showCompositeRate && (
+              <div className="space-y-1 pt-1">
+                <Label className="text-xs">Adopted Composite Rate (₹/sq.ft.) — VAL_006</Label>
+                <div className="flex items-center gap-2">
+                  <Input type="number" disabled={disabled} className="max-w-[180px]"
+                    value={outputs.compositeRatePerSqFt}
+                    onChange={(e) => setOutputs((p) => ({ ...p, compositeRatePerSqFt: e.target.value }))}
+                    placeholder="e.g. 8500" />
+                  <span className="text-xs text-muted-foreground">Unit-level rate for report</span>
+                </div>
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Market Analysis ── */}
-      {isMarket && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-4 w-4" />Market Analysis</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs">Marketability Rating</Label>
-                <Select disabled={run.isFinalized || !canEdit}
-                  value={marketAnalysis.marketabilityRating}
-                  onValueChange={(v) => setMarketAnalysis((p) => ({ ...p, marketabilityRating: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Good">Good</SelectItem>
-                    <SelectItem value="Average">Average</SelectItem>
-                    <SelectItem value="Poor">Poor</SelectItem>
-                    <SelectItem value="Low">Low</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Favourable Factors</Label>
-              <Textarea disabled={run.isFinalized || !canEdit} rows={2}
-                value={marketAnalysis.positiveFactors}
-                onChange={(e) => setMarketAnalysis((p) => ({ ...p, positiveFactors: e.target.value }))}
-                placeholder="e.g. Good connectivity, near railway station, high demand area…" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Negative Factors</Label>
-              <Textarea disabled={run.isFinalized || !canEdit} rows={2}
-                value={marketAnalysis.negativeFactors}
-                onChange={(e) => setMarketAnalysis((p) => ({ ...p, negativeFactors: e.target.value }))}
-                placeholder="e.g. Narrow approach road, flood-prone zone, no RERA registration…" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Market Analysis Narrative</Label>
-              <Textarea disabled={run.isFinalized || !canEdit} rows={3}
-                value={marketAnalysis.marketAnalysisNarrative}
-                onChange={(e) => setMarketAnalysis((p) => ({ ...p, marketAnalysisNarrative: e.target.value }))}
-                placeholder="Overall market conditions, demand-supply situation, price trends…" />
-            </div>
           </CardContent>
         </Card>
       )}
@@ -843,7 +1032,10 @@ function ValuationTab({
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2"><Building2 className="h-4 w-4" />Cost Approach</CardTitle>
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2"><Building2 className="h-4 w-4" />Cost Approach</CardTitle>
+                <CardDescription className="text-xs">VAL_007–011</CardDescription>
+              </div>
               {canEdit && !run.isFinalized && (
                 <Button size="sm" disabled={savingCost} onClick={handleSaveCost}>
                   <Save className="h-3 w-3 mr-1" />{savingCost ? 'Computing…' : 'Save & Compute'}
@@ -851,56 +1043,136 @@ function ValuationTab({
               )}
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="space-y-1"><Label className="text-xs">Land Area (sq.m.)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.landArea} onChange={(e) => setCost((p) => ({ ...p, landArea: e.target.value }))} placeholder="500" />
+          <CardContent className="space-y-4">
+            {/* Land sub-section */}
+            {flags.hasLandComponent && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Land (VAL_005 / VAL_009)</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="space-y-1"><Label className="text-xs">Land Area (sq.m.) <span className="text-destructive">*</span></Label>
+                    <Input type="number" disabled={disabled} value={cost.landArea} onChange={(e) => setCost((p) => ({ ...p, landArea: e.target.value }))} placeholder="500" />
+                  </div>
+                  <div className="space-y-1"><Label className="text-xs">Adopted Land Rate (₹/sq.m.) <span className="text-destructive">*</span></Label>
+                    <Input type="number" disabled={disabled} value={cost.landRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, landRatePerSqM: e.target.value }))} placeholder="15000" />
+                  </div>
+                  <div className="space-y-1"><Label className="text-xs">Land Rate Source</Label>
+                    <Select disabled={disabled} value={cost.landRateSource} onValueChange={(v) => setCost((p) => ({ ...p, landRateSource: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="govt_rr">Govt. Ready Reckoner</SelectItem>
+                        <SelectItem value="market">Market Rate</SelectItem>
+                        <SelectItem value="manual">Manual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1"><Label className="text-xs">Land Rate (₹/sq.m.)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.landRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, landRatePerSqM: e.target.value }))} placeholder="15000" />
+            )}
+            {/* Land (optional) for flat/shop/office */}
+            {!flags.hasLandComponent && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Land (optional)</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="space-y-1"><Label className="text-xs">Land Area (sq.m.)</Label>
+                    <Input type="number" disabled={disabled} value={cost.landArea} onChange={(e) => setCost((p) => ({ ...p, landArea: e.target.value }))} placeholder="—" />
+                  </div>
+                  <div className="space-y-1"><Label className="text-xs">Land Rate (₹/sq.m.)</Label>
+                    <Input type="number" disabled={disabled} value={cost.landRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, landRatePerSqM: e.target.value }))} placeholder="—" />
+                  </div>
+                  <div className="space-y-1"><Label className="text-xs">Land Rate Source</Label>
+                    <Select disabled={disabled} value={cost.landRateSource} onValueChange={(v) => setCost((p) => ({ ...p, landRateSource: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="govt_rr">Govt. Ready Reckoner</SelectItem>
+                        <SelectItem value="market">Market Rate</SelectItem>
+                        <SelectItem value="manual">Manual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1"><Label className="text-xs">Land Rate Source</Label>
-                <Select disabled={run.isFinalized || !canEdit} value={cost.landRateSource} onValueChange={(v) => setCost((p) => ({ ...p, landRateSource: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="govt_rr">Govt. Ready Reckoner</SelectItem>
-                    <SelectItem value="market">Market Rate</SelectItem>
-                    <SelectItem value="manual">Manual</SelectItem>
-                  </SelectContent>
-                </Select>
+            )}
+            {/* Building sub-section — not for pure land types */}
+            {flags.hasBuilding && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Building (VAL_007 / VAL_008 / VAL_010)</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="space-y-1"><Label className="text-xs">Building Plinth Area (sq.m.) {flags.isLB && <span className="text-destructive">*</span>}</Label>
+                    <Input type="number" disabled={disabled} value={cost.buildingPlinthArea} onChange={(e) => setCost((p) => ({ ...p, buildingPlinthArea: e.target.value }))} placeholder="200" />
+                  </div>
+                  <div className="space-y-1"><Label className="text-xs">Construction Rate (₹/sq.m.) {flags.isLB && <span className="text-destructive">*</span>}</Label>
+                    <Input type="number" disabled={disabled} value={cost.buildingRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, buildingRatePerSqM: e.target.value }))} placeholder="25000" />
+                  </div>
+                  {flags.showDepreciation && (
+                    <>
+                      <div className="space-y-1"><Label className="text-xs">Depreciation Method</Label>
+                        <Select disabled={disabled} value={cost.depreciationMethod} onValueChange={(v) => setCost((p) => ({ ...p, depreciationMethod: v }))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="STRAIGHT_LINE">Straight Line</SelectItem>
+                            <SelectItem value="WDV">Written Down Value</SelectItem>
+                            <SelectItem value="OBSERVED_CONDITION">Observed Condition</SelectItem>
+                            <SelectItem value="CPWD_SCHEDULE">CPWD Schedule</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1"><Label className="text-xs">Age of Building (years)</Label>
+                        <Input type="number" disabled={disabled} value={cost.ageYears} onChange={(e) => setCost((p) => ({ ...p, ageYears: e.target.value }))} placeholder="15" />
+                      </div>
+                      <div className="space-y-1"><Label className="text-xs">Total Life (years)</Label>
+                        <Input type="number" disabled={disabled} value={cost.totalLifeYears} onChange={(e) => setCost((p) => ({ ...p, totalLifeYears: e.target.value }))} placeholder="60" />
+                      </div>
+                    </>
+                  )}
+                  <div className="space-y-1"><Label className="text-xs">Services Cost (%)</Label>
+                    <Input type="number" disabled={disabled} value={cost.servicesCostPercent} onChange={(e) => setCost((p) => ({ ...p, servicesCostPercent: e.target.value }))} placeholder="5" />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1"><Label className="text-xs">Building Plinth Area (sq.m.)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.buildingPlinthArea} onChange={(e) => setCost((p) => ({ ...p, buildingPlinthArea: e.target.value }))} placeholder="200" />
+            )}
+            {/* VAL_011: External Development — L&B only */}
+            {flags.showExtDev && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">External Development (VAL_011)</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="space-y-1 md:col-span-2">
+                    <Label className="text-xs">External Development Value (₹) — compound wall, paving, gate, etc.</Label>
+                    <Input type="number" disabled={disabled} value={cost.externalDevelopmentValue}
+                      onChange={(e) => setCost((p) => ({ ...p, externalDevelopmentValue: e.target.value }))} placeholder="0" />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1"><Label className="text-xs">Construction Rate (₹/sq.m.)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.buildingRatePerSqM} onChange={(e) => setCost((p) => ({ ...p, buildingRatePerSqM: e.target.value }))} placeholder="25000" />
-              </div>
-              <div className="space-y-1"><Label className="text-xs">Depreciation Method</Label>
-                <Select disabled={run.isFinalized || !canEdit} value={cost.depreciationMethod} onValueChange={(v) => setCost((p) => ({ ...p, depreciationMethod: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="STRAIGHT_LINE">Straight Line</SelectItem>
-                    <SelectItem value="WDV">Written Down Value</SelectItem>
-                    <SelectItem value="OBSERVED_CONDITION">Observed Condition</SelectItem>
-                    <SelectItem value="CPWD_SCHEDULE">CPWD Schedule</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1"><Label className="text-xs">Age of Building (years)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.ageYears} onChange={(e) => setCost((p) => ({ ...p, ageYears: e.target.value }))} placeholder="15" />
-              </div>
-              <div className="space-y-1"><Label className="text-xs">Total Life (years)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.totalLifeYears} onChange={(e) => setCost((p) => ({ ...p, totalLifeYears: e.target.value }))} placeholder="60" />
-              </div>
-              <div className="space-y-1"><Label className="text-xs">Services Cost (%)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={cost.servicesCostPercent} onChange={(e) => setCost((p) => ({ ...p, servicesCostPercent: e.target.value }))} placeholder="5" />
-              </div>
-            </div>
-            {(run.landValue || run.costApproachValue) && (
-              <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
-                {run.landValue != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Land Value</p><p className="font-semibold">{fmt(run.landValue)}</p></div>}
-                {run.depreciatedValue != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Depr. Building Value</p><p className="font-semibold">{fmt(run.depreciatedValue)}</p></div>}
-                {run.costApproachValue != null && <div className="bg-primary/10 border border-primary/20 rounded p-3"><p className="text-xs text-muted-foreground">Cost Approach Value</p><p className="font-bold text-primary">{fmt(run.costApproachValue)}</p></div>}
+            )}
+            {/* Computed outputs */}
+            {(run.landValue != null || run.costApproachValue != null) && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                {run.landValue != null && (
+                  <div className="bg-muted/50 rounded p-3">
+                    <p className="text-xs text-muted-foreground">Land Value (VAL_009)</p>
+                    <p className="font-semibold">{fmt(run.landValue)}</p>
+                  </div>
+                )}
+                {run.depreciatedValue != null && (
+                  <div className="bg-muted/50 rounded p-3">
+                    <p className="text-xs text-muted-foreground">Depr. Building Value (VAL_010)</p>
+                    <p className="font-semibold">{fmt(run.depreciatedValue)}</p>
+                    {run.depreciationRate != null && (
+                      <p className="text-xs text-muted-foreground mt-0.5">Dep. {(Number(run.depreciationRate) * 100).toFixed(1)}% (VAL_008)</p>
+                    )}
+                  </div>
+                )}
+                {run.externalDevelopmentValue != null && (
+                  <div className="bg-muted/50 rounded p-3">
+                    <p className="text-xs text-muted-foreground">External Dev. (VAL_011)</p>
+                    <p className="font-semibold">{fmt(run.externalDevelopmentValue)}</p>
+                  </div>
+                )}
+                {run.costApproachValue != null && (
+                  <div className="bg-primary/10 border border-primary/20 rounded p-3">
+                    <p className="text-xs text-muted-foreground">Cost Approach Value</p>
+                    <p className="font-bold text-primary">{fmt(run.costApproachValue)}</p>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -912,7 +1184,10 @@ function ValuationTab({
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2"><DollarSign className="h-4 w-4" />Income Approach</CardTitle>
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2"><DollarSign className="h-4 w-4" />Income Approach</CardTitle>
+                <CardDescription className="text-xs">VAL_017 · Rental income capitalisation</CardDescription>
+              </div>
               {canEdit && !run.isFinalized && (
                 <Button size="sm" disabled={savingIncome} onClick={handleSaveIncome}>
                   <Save className="h-3 w-3 mr-1" />{savingIncome ? 'Computing…' : 'Save & Compute'}
@@ -922,26 +1197,68 @@ function ValuationTab({
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="space-y-1"><Label className="text-xs">Monthly Gross Rent (₹)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.grossRent} onChange={(e) => setIncome((p) => ({ ...p, grossRent: e.target.value }))} placeholder="50000" />
+              <div className="space-y-1"><Label className="text-xs">Monthly Gross Rent (₹) <span className="text-destructive">*</span></Label>
+                <Input type="number" disabled={disabled} value={income.grossRent} onChange={(e) => setIncome((p) => ({ ...p, grossRent: e.target.value }))} placeholder="50000" />
               </div>
               <div className="space-y-1"><Label className="text-xs">Vacancy Rate (%)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.vacancyRate} onChange={(e) => setIncome((p) => ({ ...p, vacancyRate: e.target.value }))} placeholder="5" />
+                <Input type="number" disabled={disabled} value={income.vacancyRate} onChange={(e) => setIncome((p) => ({ ...p, vacancyRate: e.target.value }))} placeholder="5" />
               </div>
               <div className="space-y-1"><Label className="text-xs">Annual Operating Expenses (₹)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.operatingExpenses} onChange={(e) => setIncome((p) => ({ ...p, operatingExpenses: e.target.value }))} placeholder="30000" />
+                <Input type="number" disabled={disabled} value={income.operatingExpenses} onChange={(e) => setIncome((p) => ({ ...p, operatingExpenses: e.target.value }))} placeholder="30000" />
               </div>
               <div className="space-y-1"><Label className="text-xs">Cap Rate (%)</Label>
-                <Input type="number" disabled={run.isFinalized || !canEdit} value={income.capitalizationRate} onChange={(e) => setIncome((p) => ({ ...p, capitalizationRate: e.target.value }))} placeholder="8" />
+                <Input type="number" disabled={disabled} value={income.capitalizationRate} onChange={(e) => setIncome((p) => ({ ...p, capitalizationRate: e.target.value }))} placeholder="8" />
               </div>
             </div>
             {run.incomeApproachValue != null && (
               <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
                 {run.netOperatingIncome != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Net Operating Income (Annual)</p><p className="font-semibold">{fmt(run.netOperatingIncome)}</p></div>}
-                {run.capitalizationRate != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Cap Rate</p><p className="font-semibold">{((run.capitalizationRate) * 100).toFixed(2)}%</p></div>}
+                {run.capitalizationRate != null && <div className="bg-muted/50 rounded p-3"><p className="text-xs text-muted-foreground">Cap Rate</p><p className="font-semibold">{(Number(run.capitalizationRate) * 100).toFixed(2)}%</p></div>}
                 <div className="bg-primary/10 border border-primary/20 rounded p-3"><p className="text-xs text-muted-foreground">Income Approach Value</p><p className="font-bold text-primary">{fmt(run.incomeApproachValue)}</p></div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Additional Outputs (VAL_016/017/018) ── */}
+      {canEdit && !run.isFinalized && (flags.showInsurance || flags.showRental || flags.showBookValue || flags.showCompositeRate) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Additional Value Outputs</CardTitle>
+            <CardDescription className="text-xs">VAL_016–018 · Bank-specific fields (enter before finalizing)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {flags.showInsurance && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Insurance / Reinstatement Value (₹) <span className="text-muted-foreground text-xs">(VAL_016)</span></Label>
+                  <Input type="number" disabled={disabled} value={outputs.insuranceValue}
+                    onChange={(e) => setOutputs((p) => ({ ...p, insuranceValue: e.target.value }))} placeholder="Replacement cost of structure" />
+                </div>
+              )}
+              {flags.showRental && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Rental Value/Month (₹) <span className="text-muted-foreground text-xs">(VAL_017)</span></Label>
+                  <Input type="number" disabled={disabled} value={outputs.rentalValueMonthly}
+                    onChange={(e) => setOutputs((p) => ({ ...p, rentalValueMonthly: e.target.value }))} placeholder="Monthly rental estimate" />
+                </div>
+              )}
+              {flags.showBookValue && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Book Value (₹) <span className="text-muted-foreground text-xs">(VAL_018)</span></Label>
+                  <Input type="number" disabled={disabled} value={outputs.bookValue}
+                    onChange={(e) => setOutputs((p) => ({ ...p, bookValue: e.target.value }))} placeholder="As per accounts / depreciation schedule" />
+                </div>
+              )}
+              {flags.showCompositeRate && !isMarket && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Composite Rate (₹/sq.ft.) <span className="text-muted-foreground text-xs">(VAL_006)</span></Label>
+                  <Input type="number" disabled={disabled} value={outputs.compositeRatePerSqFt}
+                    onChange={(e) => setOutputs((p) => ({ ...p, compositeRatePerSqFt: e.target.value }))} placeholder="e.g. 8500" />
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -969,15 +1286,58 @@ function ValuationTab({
         </Card>
       )}
 
-      {/* ── Final Value ── */}
+      {/* ── Final Value Summary (VAL_012–015) ── */}
       {run.roundedValue != null && (
         <Card className="border-primary">
-          <CardContent className="pt-4 flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Final Adopted Value</p>
-              <p className="text-3xl font-bold text-primary">{fmt(run.roundedValue)}</p>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm">Valuation Summary</CardTitle>
+              {run.isFinalized && <Lock className="h-4 w-4 text-muted-foreground" />}
             </div>
-            {run.isFinalized && <Lock className="h-6 w-6 text-muted-foreground" />}
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+              <div className="bg-primary/10 border border-primary/20 rounded p-3 md:col-span-1">
+                <p className="text-xs text-muted-foreground">Fair Market Value (VAL_012)</p>
+                <p className="text-2xl font-bold text-primary">{fmt(run.roundedValue)}</p>
+              </div>
+              {run.realizableValue != null && (
+                <div className="bg-muted/50 rounded p-3">
+                  <p className="text-xs text-muted-foreground">Realizable Value — 90% (VAL_013)</p>
+                  <p className="font-semibold">{fmt(run.realizableValue)}</p>
+                </div>
+              )}
+              {run.distressValue != null && (
+                <div className="bg-muted/50 rounded p-3">
+                  <p className="text-xs text-muted-foreground">Distress / FSV — 80% (VAL_014)</p>
+                  <p className="font-semibold">{fmt(run.distressValue)}</p>
+                </div>
+              )}
+              {run.govtGuidelineValue != null && (
+                <div className="bg-muted/50 rounded p-3">
+                  <p className="text-xs text-muted-foreground">Govt Guideline Value (VAL_015)</p>
+                  <p className="font-semibold">{fmt(run.govtGuidelineValue)}</p>
+                </div>
+              )}
+              {run.insuranceValue != null && (
+                <div className="bg-muted/50 rounded p-3">
+                  <p className="text-xs text-muted-foreground">Insurance / Reinstatement (VAL_016)</p>
+                  <p className="font-semibold">{fmt(run.insuranceValue)}</p>
+                </div>
+              )}
+              {run.rentalValueMonthly != null && (
+                <div className="bg-muted/50 rounded p-3">
+                  <p className="text-xs text-muted-foreground">Rental Value / Month (VAL_017)</p>
+                  <p className="font-semibold">{fmt(run.rentalValueMonthly)}</p>
+                </div>
+              )}
+              {run.bookValue != null && (
+                <div className="bg-muted/50 rounded p-3">
+                  <p className="text-xs text-muted-foreground">Book Value (VAL_018)</p>
+                  <p className="font-semibold">{fmt(run.bookValue)}</p>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -990,7 +1350,6 @@ function ValuationTab({
             <CardDescription>Advisory only — does not override your decision</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {/* Suggested land rates */}
             {(run.aiValuationResult.suggestedLandRateMarket || run.aiValuationResult.suggestedLandRateGovt) && (
               <div className="rounded-md border bg-muted/30 p-3 space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Suggested Land Rates (₹/sq.m.)</p>
@@ -1013,8 +1372,10 @@ function ValuationTab({
                       <span className="font-semibold">₹{run.aiValuationResult.suggestedLandRateGovt.toLocaleString('en-IN')}</span>
                       {canEdit && !run.isFinalized && (
                         <Button size="sm" variant="outline" className="h-6 text-xs px-2"
-                          onClick={() => setCost((p) => ({ ...p, landRatePerSqM: String(run.aiValuationResult!.suggestedLandRateGovt), landRateSource: 'govt_rr' }))}>
-                          Apply
+                          onClick={() => {
+                            setCost((p) => ({ ...p, landRatePerSqM: String(run.aiValuationResult!.suggestedLandRateGovt), landRateSource: 'govt_rr', rrRatePerSqM: String(run.aiValuationResult!.suggestedLandRateGovt) }));
+                          }}>
+                          Apply as RR Rate
                         </Button>
                       )}
                     </div>
@@ -1022,7 +1383,6 @@ function ValuationTab({
                 </div>
               </div>
             )}
-            {/* Overall value range — only show if parsed successfully */}
             {run.aiValuationResult.suggestedValueMid > 0 && (
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div><p className="text-xs text-muted-foreground">Low</p><p className="font-semibold">{fmt(run.aiValuationResult.suggestedValueLow)}</p></div>
@@ -1031,13 +1391,11 @@ function ValuationTab({
               </div>
             )}
             <Separator />
-            {/* Reasoning — strip any leftover JSON/code blocks before display */}
             {run.aiValuationResult.reasoning && (
               <p className="text-sm whitespace-pre-wrap">
                 {run.aiValuationResult.reasoning.replace(/```[\s\S]*?```/g, '').replace(/\{[\s\S]{0,20}"suggestedValue[\s\S]*?\}/g, '').trim()}
               </p>
             )}
-            {/* Key factors */}
             {(run.aiValuationResult as unknown as { keyFactors?: string[] }).keyFactors?.length ? (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Key Factors</p>
@@ -1046,7 +1404,6 @@ function ValuationTab({
                 </ul>
               </div>
             ) : null}
-            {/* Caveats */}
             {(run.aiValuationResult as unknown as { caveats?: string[] }).caveats?.length ? (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Caveats</p>
@@ -1059,8 +1416,6 @@ function ValuationTab({
           </CardContent>
         </Card>
       )}
-
-      <ComparableDialog open={showCompDialog} onClose={() => setShowCompDialog(false)} onSave={(c) => setComparables((p) => [...p, c])} />
     </div>
   );
 }
@@ -1349,13 +1704,20 @@ export default function AssignmentDetailPage() {
       case 'site-visit':
         return <SiteVisitSection assignmentId={assignmentId!} propertyType={String(assignment!.propertyType)} bankName={clientName ?? null} loanType={assignment!.loanType ?? null} canEdit={canEdit} />;
       case 'valuation':
-      case 'marketability':
         return (
           <ValuationTab
             assignmentId={assignmentId!}
+            propertyType={String(assignment!.propertyType)}
             canEdit={canEdit}
             inspectionComplete={!!inspection?.isComplete}
             assignmentStatus={String(status)}
+          />
+        );
+      case 'marketability':
+        return (
+          <MarketabilityTab
+            assignmentId={assignmentId!}
+            canEdit={canEdit}
           />
         );
       case 'report':

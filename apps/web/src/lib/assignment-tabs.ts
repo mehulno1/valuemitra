@@ -50,71 +50,71 @@ export const PROPERTY_TYPE_TABS: Record<string, SectionTabId[]> = {
   RESIDENTIAL_FLAT: [
     'general', 'documents', 'owner',
     'location', 'area', 'building', 'unit',
-    'site-visit', 'valuation', 'marketability', 'report',
+    'site-visit', 'marketability', 'valuation', 'report',
   ],
   COMMERCIAL_SHOP: [
     'general', 'documents', 'owner',
     'location', 'area', 'building', 'unit',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   COMMERCIAL_OFFICE: [
     'general', 'documents', 'owner',
     'location', 'area', 'building', 'unit',
-    'site-visit', 'valuation', 'marketability', 'report',
+    'site-visit', 'marketability', 'valuation', 'report',
   ],
   COMMERCIAL_SHOWROOM: [
     'general', 'documents', 'owner',
     'location', 'area', 'building', 'unit',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   OPEN_LAND: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   AGRICULTURAL_LAND: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   LAND_AND_BUILDING: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
     'building', 'unit', 'external-dev',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   UC_FLAT: [
     'general', 'documents', 'owner',
     'location', 'area', 'building', 'unit',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   // Legacy/fallback types default to residential flat layout
   RESIDENTIAL_BUNGALOW: [
     'general', 'documents', 'owner',
     'location', 'area', 'building', 'unit',
-    'site-visit', 'valuation', 'marketability', 'report',
+    'site-visit', 'marketability', 'valuation', 'report',
   ],
   RESIDENTIAL_PLOT: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
-    'site-visit', 'valuation', 'marketability', 'report',
+    'site-visit', 'marketability', 'valuation', 'report',
   ],
   INDUSTRIAL_FACTORY: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
     'building', 'unit', 'external-dev',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   INDUSTRIAL_PLOT: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
   MIXED_USE: [
     'general', 'documents', 'owner',
     'location', 'area', 'physical', 'land', 'boundary',
     'building', 'unit', 'external-dev',
-    'site-visit', 'valuation', 'marketability', 'report', 'annexures',
+    'site-visit', 'marketability', 'valuation', 'report', 'annexures',
   ],
 };
 
