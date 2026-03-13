@@ -19,7 +19,10 @@ cd "$APP_DIR"
 
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
-echo "→ Installing dependencies (clean install)..."
+echo "→ Cleaning node_modules before install..."
+rm -rf "$APP_DIR/node_modules"
+
+echo "→ Installing dependencies..."
 npm ci --include=dev
 
 # Ensure root node_modules/.bin is on PATH so workspace scripts can find tsc/vite
