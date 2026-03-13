@@ -35,7 +35,7 @@ npm run build -w apps/api
 
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
-npx tsc
+node "$APP_DIR/node_modules/typescript/bin/tsc"
 node "$APP_DIR/node_modules/vite/bin/vite.js" build
 cd "$APP_DIR"
 
