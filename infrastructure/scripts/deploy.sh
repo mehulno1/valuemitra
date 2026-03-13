@@ -32,23 +32,36 @@ npm ci --include=dev
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
 # npm ci uses parallel workers that can still be writing package files when the
-# main npm process exits. A short wait ensures all tar extractions are complete.
+# main npm process exits. Wait for critical binaries and type definition files
+# to be fully written before proceeding with builds.
 echo "→ Waiting for npm writes to complete..."
-sleep 10
 
-# Also wait until esbuild native binary is actually executable (postinstall
-# downloads it; can still be in transit even after the sleep).
+# 1) esbuild native binary (postinstall downloads and writes it asynchronously)
 ESBUILD_BIN="$APP_DIR/node_modules/esbuild/bin/esbuild"
 ATTEMPTS=0
 until "$ESBUILD_BIN" --version >/dev/null 2>&1; do
   ATTEMPTS=$((ATTEMPTS + 1))
-  if [ $ATTEMPTS -gt 30 ]; then
-    echo "  ❌ esbuild not ready after additional 30s"
+  if [ $ATTEMPTS -gt 60 ]; then
+    echo "  ❌ esbuild not ready after 60s"
     exit 1
   fi
   sleep 1
 done
-echo "  Ready (${ATTEMPTS}s extra wait for esbuild)"
+echo "  esbuild ready (${ATTEMPTS}s)"
+
+# 2) TypeScript lib files — tsc picks these up implicitly; if lib.es2022.d.ts
+#    is missing tsc fails even though the binary exists.
+TSC_LIB="$APP_DIR/node_modules/typescript/lib/lib.es2022.d.ts"
+ATTEMPTS=0
+until [ -f "$TSC_LIB" ]; do
+  ATTEMPTS=$((ATTEMPTS + 1))
+  if [ $ATTEMPTS -gt 60 ]; then
+    echo "  ❌ TypeScript lib files not ready after 60s"
+    exit 1
+  fi
+  sleep 1
+done
+echo "  TypeScript libs ready (${ATTEMPTS}s)"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
