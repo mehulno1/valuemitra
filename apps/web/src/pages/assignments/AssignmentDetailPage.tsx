@@ -952,8 +952,18 @@ function ValuationTab({
       {/* ── VAL_002/003/004: Government Rate (all asset types) ── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Government Ready Reckoner / Jantri Rate</CardTitle>
-          <CardDescription className="text-xs">VAL_002–004 · Auto-fetched from state portal or enter manually</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm">Government Ready Reckoner / Jantri Rate</CardTitle>
+              <CardDescription className="text-xs">VAL_002–004 · Auto-fetched from state portal or enter manually</CardDescription>
+            </div>
+            {/* For MARKET_COMPARISON the cost card is hidden, so save RR Rate here */}
+            {canEdit && !run.isFinalized && approach === 'MARKET_COMPARISON' && (
+              <Button size="sm" disabled={savingCost} onClick={handleSaveCost}>
+                <Save className="h-3 w-3 mr-1" />{savingCost ? 'Computing…' : 'Save & Compute'}
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
