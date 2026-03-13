@@ -84,8 +84,11 @@ echo ""
 echo "→ Generating Prisma client..."
 cd "$APP_DIR/apps/api"
 # Use the project-installed prisma (^5.x).
-# .bin/prisma is a shell script — execute directly, NOT via `node`.
-"$APP_DIR/node_modules/.bin/prisma" generate
+# prisma is a direct dep of apps/api, so npm may not create root .bin symlink.
+# Prefer root .bin; fall back to workspace-local .bin.
+PRISMA_BIN="$APP_DIR/node_modules/.bin/prisma"
+[ ! -x "$PRISMA_BIN" ] && PRISMA_BIN="$APP_DIR/apps/api/node_modules/.bin/prisma"
+"$PRISMA_BIN" generate
 
 # ── 4. Apply DB schema changes ─────────────────────────────
 # FIRST DEPLOY: uses db push (no migration history in dev)
@@ -94,10 +97,10 @@ echo ""
 echo "→ Applying database schema changes..."
 if [ -d "$APP_DIR/apps/api/prisma/migrations" ] && [ "$(ls -A $APP_DIR/apps/api/prisma/migrations)" ]; then
     echo "  Using prisma migrate deploy..."
-    "$APP_DIR/node_modules/.bin/prisma" migrate deploy
+    "$PRISMA_BIN" migrate deploy
 else
     echo "  No migration history found — using prisma db push..."
-    "$APP_DIR/node_modules/.bin/prisma" db push --accept-data-loss
+    "$PRISMA_BIN" db push --accept-data-loss
 fi
 
 cd "$APP_DIR"
