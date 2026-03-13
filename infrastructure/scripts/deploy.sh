@@ -48,6 +48,9 @@ npm run build -w apps/api
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
 node "$APP_DIR/node_modules/typescript/bin/tsc"
+
+# Debug: verify vite.js is present immediately before running it
+echo "  [debug] vite.js present: $(ls $APP_DIR/node_modules/vite/bin/vite.js 2>/dev/null && echo YES || echo NO)"
 node "$APP_DIR/node_modules/vite/bin/vite.js" build
 cd "$APP_DIR"
 
