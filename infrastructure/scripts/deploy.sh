@@ -19,11 +19,15 @@ cd "$APP_DIR"
 
 # ── 1. Install dependencies ────────────────────────────────
 echo ""
-echo "→ Cleaning root node_modules before install..."
-# Only clean root node_modules. Workspace-level node_modules (apps/web, apps/api)
-# may contain workspace-specific packages that npm does NOT hoist to root.
-# Deleting them causes "Cannot resolve @radix-ui/..." errors during vite build.
+echo "→ Cleaning all node_modules before install..."
+# Delete ALL node_modules (root + all workspaces) so that npm ci performs a
+# fully consistent install with correct hoisting and .bin symlink creation.
+# Keeping workspace node_modules while deleting root causes npm to skip
+# creating root .bin symlinks (tsc, prisma, etc.) for hoisted packages.
 rm -rf "$APP_DIR/node_modules"
+rm -rf "$APP_DIR/apps/api/node_modules"
+rm -rf "$APP_DIR/apps/web/node_modules"
+rm -rf "$APP_DIR/packages/shared/node_modules"
 
 echo "→ Installing dependencies..."
 npm ci --include=dev
