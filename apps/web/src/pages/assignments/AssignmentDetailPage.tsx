@@ -508,9 +508,10 @@ function MarketabilityTab({
       toast({ title: 'Add at least one comparable before saving', variant: 'destructive' });
       return;
     }
-    const dateFixed = comparables.map((c) => ({
+    const dateFixed = comparables.map(({ sourceUrl, ...c }) => ({
       ...c,
       transactionDate: c.transactionDate.includes('T') ? c.transactionDate : `${c.transactionDate}T00:00:00.000Z`,
+      ...(sourceUrl ? { sourceUrl } : {}),
     }));
     updateMarket({ id: run.id, assignmentId, data: {
       comparables: dateFixed,
