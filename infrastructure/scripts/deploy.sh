@@ -28,22 +28,22 @@ npm ci --include=dev
 # Ensure root node_modules/.bin is on PATH so workspace scripts can find tsc/vite
 export PATH="$APP_DIR/node_modules/.bin:$PATH"
 
-# Wait for esbuild native binary to be fully written (npm ci child processes write
-# native binaries asynchronously and can still be in progress when npm ci exits).
-# Vite spawns esbuild to bundle vite.config.ts; if esbuild is still being written,
-# we get ETXTBSY (text file busy) error.
-echo "→ Waiting for esbuild to be ready..."
+# Wait for native build tool binaries to be fully written.
+# npm ci child processes (esbuild postinstall) write native binaries
+# asynchronously and can still be in progress when npm ci exits.
+echo "→ Waiting for build tools to be ready..."
 ESBUILD_BIN="$APP_DIR/node_modules/esbuild/bin/esbuild"
+VITE_BIN="$APP_DIR/node_modules/vite/bin/vite.js"
 ATTEMPTS=0
-until "$ESBUILD_BIN" --version >/dev/null 2>&1; do
+until "$ESBUILD_BIN" --version >/dev/null 2>&1 && [ -s "$VITE_BIN" ]; do
   ATTEMPTS=$((ATTEMPTS + 1))
-  if [ $ATTEMPTS -gt 30 ]; then
-    echo "  ❌ esbuild not ready after 30s"
+  if [ $ATTEMPTS -gt 60 ]; then
+    echo "  ❌ Build tools not ready after 60s"
     exit 1
   fi
   sleep 1
 done
-echo "  esbuild ready after ${ATTEMPTS}s"
+echo "  Build tools ready after ${ATTEMPTS}s"
 
 # ── 2. Build all workspaces ────────────────────────────────
 echo ""
@@ -55,7 +55,9 @@ npm run build -w apps/api
 
 echo "→ Building web frontend..."
 cd "$APP_DIR/apps/web"
-node "$APP_DIR/node_modules/typescript/bin/tsc"
+# vite uses esbuild internally for TypeScript compilation; standalone tsc here is
+# only for type-checking and can fail if TS files still have write latency.
+# Type errors are caught by CI (tsc --noEmit) before deploy reaches this point.
 node "$APP_DIR/node_modules/vite/bin/vite.js" build
 cd "$APP_DIR"
 
