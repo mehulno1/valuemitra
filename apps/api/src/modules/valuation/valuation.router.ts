@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, requireValuer } from '../../middleware/auth.middleware.js';
+import { authenticate, requireValuer, requireAdmin } from '../../middleware/auth.middleware.js';
 import {
   create,
   listByAssignment,
@@ -9,6 +9,7 @@ import {
   updateIncome,
   finalize,
   deleteOne,
+  reopen,
 } from './valuation.controller.js';
 
 export const valuationRouter = Router();
@@ -39,3 +40,6 @@ valuationRouter.post('/run/:id/finalize', finalize);
 
 // DELETE /api/valuation/run/:id                  — delete a non-finalized run
 valuationRouter.delete('/run/:id', deleteOne);
+
+// POST   /api/valuation/run/:id/reopen           — unlock a finalized run (admin only, blocked after DELIVERED)
+valuationRouter.post('/run/:id/reopen', requireAdmin, reopen);

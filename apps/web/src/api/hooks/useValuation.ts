@@ -177,3 +177,15 @@ export function useAIResult(runId: string) {
     enabled: !!runId,
   });
 }
+
+export function useReopenValuationRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string; assignmentId: string }) =>
+      api.post(`/valuation/run/${id}/reopen`).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: [VALUATION_KEY, vars.assignmentId] });
+      void qc.invalidateQueries({ queryKey: ['assignments', vars.assignmentId] });
+    },
+  });
+}

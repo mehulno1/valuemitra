@@ -3,14 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, FileDown, Upload, Trash2, Bot, Lock, Send,
   CheckCircle2, XCircle, Plus, Save, TrendingUp, Building2, DollarSign,
-  AlertTriangle,
+  AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import { useAssignment } from '../../api/hooks/useAssignments.js';
 import { useDocuments, useUploadDocument, useDeleteDocument } from '../../api/hooks/useDocuments.js';
 import {
   useValuationRuns, useCreateValuationRun, useUpdateMarket, useUpdateCost,
   useUpdateIncome, useFinalizeValuation, useRequestAIValuation, useDeleteValuationRun,
-  type ComparableSale,
+  useReopenValuationRun, type ComparableSale,
 } from '../../api/hooks/useValuation.js';
 import { useReports, useGenerateReport, useReportTemplates } from '../../api/hooks/useReports.js';
 import { useSubmitForReview, useAdvanceReview, useRejectReview, useDeliverFinalReport } from '../../api/hooks/useReview.js';
@@ -504,10 +504,7 @@ function MarketabilityTab({
   }, [run?.id]);
 
   function handleSave() {
-    if (!run || comparables.length === 0) {
-      toast({ title: 'Add at least one comparable before saving', variant: 'destructive' });
-      return;
-    }
+    if (!run) return;
     const dateFixed = comparables.map(({ sourceUrl, ...c }) => ({
       ...c,
       transactionDate: c.transactionDate.includes('T') ? c.transactionDate : `${c.transactionDate}T00:00:00.000Z`,
@@ -717,13 +714,14 @@ function assetFlags(propertyType: string) {
 
 // ─── Valuation Tab ─────────────────────────────────────────
 function ValuationTab({
-  assignmentId, propertyType, canEdit, inspectionComplete, assignmentStatus,
+  assignmentId, propertyType, canEdit, inspectionComplete, assignmentStatus, isAdmin,
 }: {
   assignmentId: string;
   propertyType: string;
   canEdit: boolean;
   inspectionComplete: boolean;
   assignmentStatus: string;
+  isAdmin: boolean;
 }) {
   const { toast } = useToast();
   const { data: runs, isLoading } = useValuationRuns(assignmentId);
@@ -733,6 +731,7 @@ function ValuationTab({
   const { mutate: finalize, isPending: finalizing } = useFinalizeValuation();
   const { mutate: requestAI, isPending: aiLoading } = useRequestAIValuation();
   const { mutate: deleteRun, isPending: deletingRun } = useDeleteValuationRun();
+  const { mutate: reopenRun, isPending: reopening } = useReopenValuationRun();
   const { data: propertyData } = usePropertyData(assignmentId);
 
   const flags = assetFlags(propertyType);
@@ -944,6 +943,17 @@ function ValuationTab({
                 });
               }}}>
               {deletingRun ? 'Deleting…' : 'Change Approach'}
+            </Button>
+          )}
+          {isAdmin && run.isFinalized && assignmentStatus !== 'DELIVERED' && (
+            <Button size="sm" variant="outline" disabled={reopening}
+              onClick={() => { if (confirm('Reopen this finalized valuation run for editing? This will unlock all valuation fields.')) {
+                reopenRun({ id: run.id, assignmentId }, {
+                  onSuccess: () => toast({ title: 'Valuation run reopened for editing' }),
+                  onError: () => toast({ title: 'Reopen failed', variant: 'destructive' }),
+                });
+              }}}>
+              <RotateCcw className="h-4 w-4 mr-1" />{reopening ? 'Reopening…' : 'Reopen Valuation'}
             </Button>
           )}
         </div>
@@ -1667,7 +1677,7 @@ function ReviewTab({ assignmentId, status, reports }: { assignmentId: string; st
 export default function AssignmentDetailPage() {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
-  const { canEdit, isInspector } = usePermissions();
+  const { canEdit, isInspector, isAdmin } = usePermissions();
   const { data: assignment, isLoading, isError } = useAssignment(assignmentId!);
   const { data: reportsData } = useReports(assignmentId!);
   const { data: inspection } = useInspection(assignmentId!);
@@ -1722,6 +1732,7 @@ export default function AssignmentDetailPage() {
             canEdit={canEdit}
             inspectionComplete={!!inspection?.isComplete}
             assignmentStatus={String(status)}
+            isAdmin={isAdmin}
           />
         );
       case 'marketability':

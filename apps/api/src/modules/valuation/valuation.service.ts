@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database.js';
-import { NotFoundError, AppError } from '../../middleware/error.middleware.js';
+import { NotFoundError, AppError, ForbiddenError } from '../../middleware/error.middleware.js';
 import { computeCostApproach } from './engines/cost-approach.engine.js';
 import { computeMarketComparison } from './engines/market-comparison.engine.js';
 import { computeIncomeApproach } from './engines/income-approach.engine.js';
@@ -119,21 +119,27 @@ export async function updateMarketComparison(
     : Number(assignment?.property?.builtUpAreaActualSqM ?? assignment?.property?.builtUpAreaSqM ?? 0);
   const subjectAreaSqFt = areaSqM * 10.764;
 
-  const result = computeMarketComparison(input.comparables, subjectAreaSqFt, input.correlatedValue);
+  // Only run market computation when comparables are provided
+  const hasComparables = input.comparables.length > 0;
+  const result = hasComparables
+    ? computeMarketComparison(input.comparables, subjectAreaSqFt, input.correlatedValue)
+    : null;
 
   return prisma.valuationRun.update({
     where: { id },
     data: {
-      comparables: result.comparables as unknown as object,
-      adjustedValues: { min: result.minAdjustedRate, max: result.maxAdjustedRate, avg: result.simpleAvgRate } as unknown as object,
-      correlatedValue: String(result.correlatedValue),
-      // Market analysis fields (MKT_009-012)
+      ...(result && {
+        comparables: result.comparables as unknown as object,
+        adjustedValues: { min: result.minAdjustedRate, max: result.maxAdjustedRate, avg: result.simpleAvgRate } as unknown as object,
+        correlatedValue: String(result.correlatedValue),
+        inputSnapshot: { marketComparison: { input, result } } as unknown as object,
+        computedAt: new Date(),
+      }),
+      // Market analysis fields (MKT_009-012) — always saved
       marketabilityRating: input.marketabilityRating ?? null,
       positiveFactors: input.positiveFactors || null,
       negativeFactors: input.negativeFactors || null,
       marketAnalysisNarrative: input.marketAnalysisNarrative || null,
-      inputSnapshot: { marketComparison: { input, result } } as unknown as object,
-      computedAt: new Date(),
     },
   });
 }
@@ -299,4 +305,25 @@ export async function finalizeValuationRun(
   ]);
 
   return updated;
+}
+
+
+// ─────────────────────────────────────────────
+// Reopen a finalized run (admin only, blocked after DELIVERED)
+// ─────────────────────────────────────────────
+
+export async function reopenValuationRun(id: string, tenantId: string) {
+  const run = await prisma.valuationRun.findFirst({
+    where: { id, assignment: { tenantId } },
+    include: { assignment: { select: { status: true } } },
+  });
+  if (!run) throw new NotFoundError('Valuation run');
+  if (!run.isFinalized) throw new AppError(400, 'Valuation run is not finalized');
+  if (run.assignment.status === 'DELIVERED') {
+    throw new ForbiddenError('Cannot reopen valuation after assignment has been delivered');
+  }
+  return prisma.valuationRun.update({
+    where: { id },
+    data: { isFinalized: false },
+  });
 }

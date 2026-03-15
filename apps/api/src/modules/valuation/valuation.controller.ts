@@ -8,6 +8,7 @@ import {
   updateCostApproach,
   updateIncomeApproach,
   finalizeValuationRun,
+  reopenValuationRun,
   deleteValuationRun,
 } from './valuation.service.js';
 import {
@@ -69,4 +70,10 @@ export const finalize = asyncHandler(async (req: Request, res: Response) => {
 export const deleteOne = asyncHandler(async (req: Request, res: Response) => {
   await deleteValuationRun(req.params['id']!, req.user!.tenantId);
   res.json({ success: true });
+});
+
+// POST /api/valuation/run/:id/reopen  (admin only)
+export const reopen = asyncHandler(async (req: Request, res: Response) => {
+  const run = await reopenValuationRun(req.params['id']!, req.user!.tenantId);
+  res.json({ success: true, data: run });
 });
