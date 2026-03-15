@@ -674,7 +674,7 @@ function MarketabilityTab({
               placeholder="Describe overall market conditions, demand-supply, recent price trends, micro-market outlook…" />
           </div>
           {canEdit && !locked && (
-            <Button disabled={saving || comparables.length === 0} onClick={handleSave}>
+            <Button disabled={saving} onClick={handleSave}>
               <Save className="h-4 w-4 mr-2" />{saving ? 'Saving…' : 'Save Marketability Data'}
             </Button>
           )}
