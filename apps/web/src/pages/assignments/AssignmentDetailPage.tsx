@@ -394,7 +394,7 @@ function ComparableDialog({
     setForm((prev) => ({ ...prev, [field]: e.target.type === 'number' ? num(e.target.value) : e.target.value }));
 
   function handleSave() {
-    if (!form.address || !form.locality || !form.totalArea || !form.salePrice) return;
+    if (!form.address || form.address.length < 3 || !form.locality || !form.totalArea || !form.salePrice) return;
     const dateISO = form.transactionDate.includes('T') ? form.transactionDate : `${form.transactionDate}T00:00:00.000Z`;
     onSave({ ...form, transactionDate: dateISO });
     setForm({ ...EMPTY_COMP, transactionDate: new Date().toISOString().slice(0, 10) });

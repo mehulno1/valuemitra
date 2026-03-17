@@ -7,7 +7,7 @@ import { ValuationApproach, DepreciationMethod } from '../types/enums.js';
 
 export const ComparableSaleSchema = z.object({
   id: z.string().optional(),
-  address: z.string().min(5).max(500),
+  address: z.string().min(3).max(500),
   locality: z.string().min(2).max(200),
   transactionDate: z.string().datetime(),
   totalArea: z.number().positive(),         // sq.ft.
