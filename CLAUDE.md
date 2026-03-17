@@ -291,15 +291,13 @@ cp "Report Templates/PNB Flat Format - Under Construction.docx" scripts/template
 
 **Total token count:** ~758 tokens across 21 templates (40 text + 7 image tokens per template on average).
 
-### EC2: Uploading Tokenized Templates After Deploy
+### Template Tokenization in deploy.sh (Automated)
 
-**Critical**: `deploy.sh` re-seeds original (un-tokenized) templates from `Report Templates/` on every deploy. After every EC2 deploy, re-upload tokenized versions:
+`deploy.sh` runs `python3 scripts/tokenize_templates.py` automatically after seeding (step 5b). **No manual SCP of templates is needed after a deploy.** The tokenizer is idempotent and runs on every deploy.
 
+For this to work, `python3` and `python-docx` must be installed on EC2 (handled by `setup.sh`). If the tokenizer ever fails on EC2:
 ```bash
-# Run tokenizer locally first, then SCP the tokenized templates:
-scp -i /Users/mehul/Documents/awskey/complymitra.pem -r \
-  apps/api/uploads/templates/ \
-  ubuntu@13.200.199.101:/var/www/valuemitra/apps/api/uploads/templates/
+ssh ubuntu@13.200.199.101 "cd /var/www/valuemitra && python3 scripts/tokenize_templates.py"
 ```
 
 ### Template Mapping
@@ -387,6 +385,39 @@ Both `apps/api/.env` and root `.env` must be kept in sync (copy manually).
 - Frontend "Save Market Analysis" button: removed `comparables.length === 0` from disabled condition
 - Fields: `marketabilityRating` (Good/Average/Poor/Low), `positiveFactors`, `negativeFactors`, `marketAnalysisNarrative`
 
+### Valuation — Market Comparison: Comparable Storage Fix
+**Root cause**: `computeMarketComparison()` returns `AdjustedComparable[]` which only contains computed fields — input fields like `sourceType`, `sourceUrl`, `address` are stripped. Storing the engine result directly caused 400 errors on re-save (Zod validation failed on missing `sourceType`) and data loss.
+**Fix** (`valuation.service.ts`): store merged input+computed objects:
+```typescript
+comparables: input.comparables.map((c, i) => ({
+  ...c,                                      // preserve all input fields
+  ratePerSqFt: result.comparables[i]?.ratePerSqFt,
+  totalAdjustmentPct: result.comparables[i]?.totalAdjustmentPct,
+  adjustedRate: result.comparables[i]?.adjustedRate,
+}))
+```
+**Schema changes** (`valuation.schema.ts`):
+- `sourceType`: made optional with `.default('MANUAL')` — saves without crashing when field is absent
+- `sourceUrl`: `.or(z.literal(''))` added — allows empty string
+- `address`: min length lowered from 5 → 3
+
+### Report Templates — PDF Conversion Debug
+`pdf-converter.ts` saves the failing DOCX to `/tmp/failed-report-{timestamp}.docx` on LibreOffice conversion failure. This lets you inspect a malformed DOCX manually:
+```bash
+# On EC2 after a failed generation:
+ls /tmp/failed-report-*.docx
+scp -i /Users/mehul/Documents/awskey/complymitra.pem \
+  ubuntu@13.200.199.101:/tmp/failed-report-*.docx .
+```
+
+### Vite Build — react-remove-scroll ESM Resolution (Rollup 4)
+`react-remove-scroll@2.7.x` uses extensionless relative imports in its ESM entry (`import './medium'`). Rollup 4 (bundled with Vite 5) cannot resolve these without explicit `.js` extensions.
+**Fix** (`apps/web/vite.config.ts`): alias the package to its ES5/CJS entry:
+```typescript
+'react-remove-scroll': path.resolve(__dirname, '../../node_modules/react-remove-scroll/dist/es5/index.js'),
+```
+**Why not `overrides`**: `@radix-ui` packages declare `peerDependencies: { "react-remove-scroll": "^2.6.3" }`. npm cannot apply an override to 2.1.4 (which is below the minimum 2.6.3), so the override is silently ignored and 2.7.2 remains installed.
+
 ---
 
 ## EC2 Storage Path Architecture
@@ -418,13 +449,13 @@ If photos stop serving (HTTP errors on `/uploads/uploads/...`):
 - **Frontend + API**: `https://vmapps.techsahyogi.com`
 - **EC2**: `13.200.199.101` (Ubuntu 24.04), user `ubuntu`
 - **App dir**: `/var/www/valuemitra`
-- **PM2 process**: `valuemitra-api` (id: 2)
+- **PM2 process**: `valuemitra-api` (id: 0)
 - **API port**: `3006` (internal; Nginx proxies `/api/`)
 
 ### Infrastructure Files
 - `infrastructure/pm2/ecosystem.config.cjs` — PM2 fork mode, 500MB limit, logs to `/var/log/valuemitra/`
 - `infrastructure/nginx/valuemitra.conf` — SPA + `/api/` reverse proxy
-- `infrastructure/scripts/setup.sh` — one-time EC2 setup (Node 20, PM2, Nginx, LibreOffice, Playwright deps)
+- `infrastructure/scripts/setup.sh` — one-time EC2 setup (Node 20, PM2, Nginx, LibreOffice, Playwright deps, python-docx)
 - `infrastructure/scripts/deploy.sh` — full build + Prisma + PM2 reload + health check
 - `.github/workflows/deploy.yml` — GitHub Actions: type-check → SSH → deploy.sh
 
@@ -444,6 +475,7 @@ GitHub Actions runs non-interactively; HTTPS git remotes fail. EC2 uses SSH remo
 ### Known Fixes Applied
 - `apps/api/tsconfig.json`: `"noImplicitAny": false` — Prisma callback inference fails strict mode
 - `apps/web/vite.config.ts`: alias `@valuemitra/shared` → `../../packages/shared/src/index.ts` — Vite/Rollup can't analyze CJS named exports; alias points to TS source directly
+- `apps/web/vite.config.ts`: alias `react-remove-scroll` → `dist/es5/index.js` — v2.7.x ESM entry uses extensionless imports (`./medium`) that Rollup 4 cannot resolve; ES5/CJS entry uses `require()` and works fine. The `overrides` approach cannot pin to 2.1.4 because `@radix-ui` packages require `^2.6.3`.
 - `apps/web/src/pages/auth/RegisterPage.tsx`: field names corrected (`fullName` not `firstName`/`lastName`; `ibbiFirmRegNo` not `ibbiRegNo`)
 - OCR key file `valuemitra-ocr-keys.json` excluded from git (added to `.gitignore`); must be copied to EC2 manually via `scp`
 
@@ -456,19 +488,10 @@ scp -i ~/.ssh/demo.pem valuemitra-ocr-keys.json ubuntu@13.200.199.101:/var/www/v
 
 ### Post-Deploy Checklist (After Every Deploy)
 
-`deploy.sh` re-seeds templates from `Report Templates/` (un-tokenized originals). After each deploy:
+Template tokenization is automated in `deploy.sh` — no manual steps required for templates.
 
 ```bash
-# 1. Run tokenizer locally
-cd /Applications/AMPPS/www/valuemitra
-python3 scripts/tokenize_templates.py
-
-# 2. Upload tokenized templates to EC2
-scp -i /Users/mehul/Documents/awskey/complymitra.pem -r \
-  apps/api/uploads/templates/ \
-  ubuntu@13.200.199.101:/var/www/valuemitra/apps/api/uploads/templates/
-
-# 3. Verify symlink for user uploads
+# Verify symlink for user uploads (check if photos are serving correctly)
 ssh -i /Users/mehul/Documents/awskey/complymitra.pem ubuntu@13.200.199.101 \
   "ls -la /var/www/valuemitra/apps/api/uploads/uploads"
 ```
