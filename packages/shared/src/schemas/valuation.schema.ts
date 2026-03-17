@@ -12,8 +12,8 @@ export const ComparableSaleSchema = z.object({
   transactionDate: z.string().datetime(),
   totalArea: z.number().positive(),         // sq.ft.
   salePrice: z.number().positive(),          // INR
-  sourceType: z.enum(['IGRS', 'LISTING', 'MANUAL']),
-  sourceUrl: z.string().url().optional(),
+  sourceType: z.enum(['IGRS', 'LISTING', 'MANUAL']).optional().default('MANUAL'),
+  sourceUrl: z.string().url().optional().or(z.literal('')),
   // Adjustments (%) — can be negative
   adjustmentTime: z.number().min(-50).max(50).optional(),
   adjustmentLocation: z.number().min(-50).max(50).optional(),

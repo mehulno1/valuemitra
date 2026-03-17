@@ -142,7 +142,14 @@ export async function updateMarketComparison(
     where: { id },
     data: {
       ...(result && {
-        comparables: result.comparables as unknown as object,
+        // Merge input fields (sourceType, sourceUrl, individual adjustments) with computed
+        // fields (ratePerSqFt, adjustedRate, totalAdjustmentPct) so nothing is lost on reload.
+        comparables: input.comparables.map((c, i) => ({
+          ...c,
+          ratePerSqFt: result.comparables[i]?.ratePerSqFt,
+          totalAdjustmentPct: result.comparables[i]?.totalAdjustmentPct,
+          adjustedRate: result.comparables[i]?.adjustedRate,
+        })) as unknown as object,
         adjustedValues: { min: result.minAdjustedRate, max: result.maxAdjustedRate, avg: result.simpleAvgRate } as unknown as object,
         correlatedValue: String(result.correlatedValue),
         inputSnapshot: { marketComparison: { input, result } } as unknown as object,
