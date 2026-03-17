@@ -62,6 +62,10 @@ export async function convertDocxToPdf(docxBuffer: Buffer): Promise<Buffer> {
   } catch (err: unknown) {
     if (err instanceof AppError) throw err;
     const message = err instanceof Error ? err.message : String(err);
+    // Save a debug copy of the failing DOCX so it can be inspected manually
+    const debugPath = `/tmp/failed-report-${Date.now()}.docx`;
+    await fs.promises.copyFile(docxPath, debugPath).catch(() => {});
+    console.error(`[pdf-converter] DOCX saved for inspection: ${debugPath}`);
     if (message.includes('ENOENT') || message.includes('not found')) {
       throw new AppError(500, `LibreOffice not found at ${env.LIBREOFFICE_PATH}. Install LibreOffice or set LIBREOFFICE_PATH in .env`);
     }
