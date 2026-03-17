@@ -64,6 +64,12 @@ echo "→ Installing LibreOffice headless..."
 apt-get install -y libreoffice-writer
 echo "  LibreOffice version: $(soffice --version 2>/dev/null || echo 'installed')"
 
+# ── 7b. Install python-docx (for report template tokenizer) ──
+echo ""
+echo "→ Installing python-docx (template tokenizer)..."
+pip3 install python-docx --break-system-packages
+echo "  python-docx installed"
+
 # ── 8. Create application directories ────────────────────
 echo ""
 echo "→ Creating application directories..."

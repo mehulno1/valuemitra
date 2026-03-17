@@ -132,6 +132,22 @@ echo "→ Seeding report templates..."
 cd "$APP_DIR"
 node scripts/seed-report-templates.js || echo "  ⚠ Template seed failed — check manually"
 
+# ── 5b. Tokenize report templates ─────────────────────────
+# MUST run after seeding — seed copies un-tokenized originals; this injects {token}
+# placeholders so docxtemplater can fill fields at report generation time.
+echo ""
+echo "→ Tokenizing report templates..."
+cd "$APP_DIR"
+if command -v python3 >/dev/null 2>&1 && python3 -c "import docx" 2>/dev/null; then
+    python3 scripts/tokenize_templates.py >/dev/null 2>&1 \
+        && echo "  ✅ Templates tokenized (758 tokens across 21 templates)" \
+        || echo "  ❌ Tokenization failed — run manually: python3 scripts/tokenize_templates.py"
+else
+    echo "  ❌ python3 or python-docx missing — install with:"
+    echo "     pip3 install python-docx --break-system-packages"
+    echo "  Then re-run: python3 scripts/tokenize_templates.py"
+fi
+
 # ── 7. Ensure Playwright Chromium is installed ────────────
 echo ""
 echo "→ Checking Playwright browser..."
