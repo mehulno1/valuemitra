@@ -260,14 +260,51 @@ npx eslint apps/api/src --ext .ts
 
 21 `.docx` templates across 8 banks — stored in `Report Templates/` in the project root.
 
-Templates are **filled sample reports**, not blank files. Before going live, each template must be processed (developer one-time task):
-1. Open in Word
-2. Replace sample data in table cells with `{token}` syntax (e.g. `{ownerName}`, `{finalValue}`)
-3. Mark image positions with `{%propertyPhoto1}` etc. (docxtemplater-image-module syntax)
-4. Save processed templates to `apps/api/src/modules/reports/templates/processed/`
-5. Upload to S3 under `templates/` prefix
+### Template Tokenization (Automated)
 
-Template mapping: `report_templates` DB table with `fieldMappings` JSON column.
+Templates are tokenized using `scripts/tokenize_templates.py` — a Python script that injects `{token}` (text) and `{%token}` (image) placeholders directly into `.docx` XML.
+
+```bash
+# One-time setup
+pip install python-docx
+
+# Run tokenizer (idempotent — restores from backup before each run)
+cd /Applications/AMPPS/www/valuemitra
+python3 scripts/tokenize_templates.py
+# Output goes to: apps/api/uploads/templates/
+# Backup of originals: scripts/templates_backup/
+```
+
+**Key implementation details:**
+- `.docx` files are zip archives; the script opens and rewrites `word/document.xml` in-place
+- Value cell selection: uses the **last empty cell** (rightmost/widest column) — NOT the first empty cell after the label
+- 5-column BOB table layout: `[548, 672, 3908, 270, 4595]` twips — last column (4595) is always the value column
+- Image placeholders (`{%propertyPhoto1}` etc.) are injected at paragraph level where existing drawing/image elements appear; table-cell image injection is intentionally skipped
+- Position-based reverse-order replacement used to avoid index corruption when modifying multiple paragraphs
+- Backup system in `scripts/templates_backup/` — copy originals there before running if fresh
+
+**If PNB_Flat backups are corrupted** (only 21K vs 400K+), restore from originals:
+```bash
+cp "Report Templates/PNB Flat Format.docx" scripts/templates_backup/PNB_Flat.docx
+cp "Report Templates/PNB Flat Format - Under Construction.docx" scripts/templates_backup/PNB_Flat_UC.docx
+```
+
+**Total token count:** ~758 tokens across 21 templates (40 text + 7 image tokens per template on average).
+
+### EC2: Uploading Tokenized Templates After Deploy
+
+**Critical**: `deploy.sh` re-seeds original (un-tokenized) templates from `Report Templates/` on every deploy. After every EC2 deploy, re-upload tokenized versions:
+
+```bash
+# Run tokenizer locally first, then SCP the tokenized templates:
+scp -i /Users/mehul/Documents/awskey/complymitra.pem -r \
+  apps/api/uploads/templates/ \
+  ubuntu@13.200.199.101:/var/www/valuemitra/apps/api/uploads/templates/
+```
+
+### Template Mapping
+
+`report_templates` DB table with `fieldMappings` JSON column maps each template to its token→field configuration.
 
 ---
 
@@ -279,7 +316,7 @@ Both `apps/api/.env` and root `.env` must be kept in sync (copy manually).
 - `JWT_SECRET` — 64-char random string, never commit the actual value
 - `PORT` — `3006`
 - `STORAGE_PROVIDER` — `"local"` (dev) or `"s3"` (prod)
-- `LOCAL_UPLOAD_PATH` — `"./uploads"` (dev)
+- `LOCAL_UPLOAD_PATH` — `"./uploads"` (dev); `"/var/www/valuemitra/apps/api/uploads"` (EC2 prod)
 - `ANTHROPIC_API_KEY` — for AI valuation (Stage 6)
 - `GOOGLE_APPLICATION_CREDENTIALS` — absolute path to GCP service account JSON (Stage 4 OCR)
 - `AZURE_FORM_RECOGNIZER_ENDPOINT` + `AZURE_FORM_RECOGNIZER_KEY` — OCR fallback (optional)
@@ -331,6 +368,41 @@ Both `apps/api/.env` and root `.env` must be kept in sync (copy manually).
 - Frontend: "Change Approach" button (destructive, with confirm dialog) shown when run is not finalized
 - Deleting resets the tab back to the approach selection screen
 
+### Valuation — Reopen Finalized Run (admin only)
+- `POST /api/valuation/run/:id/reopen` — sets `isFinalized = false`; blocked if `Assignment.status === 'DELIVERED'`
+- Route uses `requireAdmin` middleware
+- Frontend: "Reopen Valuation" button visible to admins only, hidden after DELIVERED status
+- Hook: `useReopenValuationRun` in `apps/web/src/api/hooks/useValuation.ts`
+
+### Valuation — Marketability Fields (Market Comparison)
+- `UpdateMarketComparisonSchema`: `comparables` changed from `.min(1)` to `.min(0)` — allows saving marketability fields without entering comparables
+- `updateMarketComparison()` service: skips `computeMarketComparison()` when `comparables.length === 0`; always saves `marketabilityRating`, `positiveFactors`, `negativeFactors`, `marketAnalysisNarrative`
+- Frontend "Save Market Analysis" button: removed `comparables.length === 0` from disabled condition
+- Fields: `marketabilityRating` (Good/Average/Poor/Low), `positiveFactors`, `negativeFactors`, `marketAnalysisNarrative`
+
+---
+
+## EC2 Storage Path Architecture
+
+Two separate directories exist on EC2:
+- `apps/api/uploads/` — templates (`templates/`) and generated reports (`reports/`)
+- `/var/www/valuemitra/uploads/uploads/{tenantId}/{assignmentId}/` — user-uploaded files (photos, documents)
+
+Both are served via a single `LOCAL_UPLOAD_PATH` env var. A symlink bridges the gap:
+
+```bash
+# On EC2 — already set up, do NOT recreate unless rebuilding server
+ls -la /var/www/valuemitra/apps/api/uploads/uploads
+# → symlink → /var/www/valuemitra/uploads/uploads
+```
+
+**`LOCAL_UPLOAD_PATH` on EC2**: `/var/www/valuemitra/apps/api/uploads` (NOT `/var/www/valuemitra/uploads`)
+
+If photos stop serving (HTTP errors on `/uploads/uploads/...`):
+1. Check symlink exists: `ls -la /var/www/valuemitra/apps/api/uploads/uploads`
+2. If broken: `ln -sf /var/www/valuemitra/uploads/uploads /var/www/valuemitra/apps/api/uploads/uploads`
+3. Verify: `curl -I http://localhost:3006/uploads/uploads/<tenantId>/<assignmentId>/<filename>`
+
 ---
 
 ## Deployment (Stage 9)
@@ -373,6 +445,25 @@ GitHub Actions runs non-interactively; HTTPS git remotes fail. EC2 uses SSH remo
 # Copy secret files (not in git)
 scp -i ~/.ssh/demo.pem valuemitra-ocr-keys.json ubuntu@13.200.199.101:/var/www/valuemitra/
 # Set GOOGLE_APPLICATION_CREDENTIALS in .env to absolute path
+```
+
+### Post-Deploy Checklist (After Every Deploy)
+
+`deploy.sh` re-seeds templates from `Report Templates/` (un-tokenized originals). After each deploy:
+
+```bash
+# 1. Run tokenizer locally
+cd /Applications/AMPPS/www/valuemitra
+python3 scripts/tokenize_templates.py
+
+# 2. Upload tokenized templates to EC2
+scp -i /Users/mehul/Documents/awskey/complymitra.pem -r \
+  apps/api/uploads/templates/ \
+  ubuntu@13.200.199.101:/var/www/valuemitra/apps/api/uploads/templates/
+
+# 3. Verify symlink for user uploads
+ssh -i /Users/mehul/Documents/awskey/complymitra.pem ubuntu@13.200.199.101 \
+  "ls -la /var/www/valuemitra/apps/api/uploads/uploads"
 ```
 
 ---

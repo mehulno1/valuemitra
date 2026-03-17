@@ -46,3 +46,6 @@ coverage/
 playwright-report/
 test-results/
 valuemitra-ocr-keys.json
+e2e/.auth-state.json
+e2e/.auth-storage.json
+e2e/.assignment-url.json
