@@ -374,6 +374,13 @@ Both `apps/api/.env` and root `.env` must be kept in sync (copy manually).
 - Frontend: "Reopen Valuation" button visible to admins only, hidden after DELIVERED status
 - Hook: `useReopenValuationRun` in `apps/web/src/api/hooks/useValuation.ts`
 
+### Report Generation — IBBI Gate: "No finalized valuation run" error
+**Root cause**: `buildReportData` auto-picks the latest `isFinalized = true` run. If the run was reopened (reopen sets `isFinalized = false`), auto-pick returns nothing → IBBI gate fails with this message.
+**Prevention** (both layers implemented):
+- **Backend** (`report-data.builder.ts`): when auto-pick finds no finalized run, checks for a non-finalized run and throws a clearer error: "Valuation run vN was reopened — go to Valuation tab, complete edits, then Finalize".
+- **Frontend** (`ReportsTab` in `AssignmentDetailPage.tsx`): calls `useValuationRuns`, computes `hasFinalized`, disables the Generate button and shows a yellow warning banner when `hasRuns && !hasFinalized`.
+**Rule**: NEVER remove the `hasFinalized` guard from the Reports tab Generate button. The IBBI compliance gate in `buildReportData` requires at least one `isFinalized = true` run to exist for the assignment.
+
 ### Valuation — Marketability Fields (Market Comparison)
 - `UpdateMarketComparisonSchema`: `comparables` changed from `.min(1)` to `.min(0)` — allows saving marketability fields without entering comparables
 - `updateMarketComparison()` service: skips `computeMarketComparison()` when `comparables.length === 0`; always saves `marketabilityRating`, `positiveFactors`, `negativeFactors`, `marketAnalysisNarrative`

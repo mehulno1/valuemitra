@@ -18,6 +18,17 @@ import {
 } from '@valuemitra/shared';
 import type { ReportData } from '@valuemitra/shared';
 
+// Returns true if the financial year string (e.g. "2023-24") is more than 1 FY old
+function isRrRateYearStale(rrRateYear: string): boolean {
+  const match = rrRateYear.match(/^(\d{4})-\d{2}$/);
+  if (!match) return false;
+  const rateStartYear = parseInt(match[1]!);
+  const now = new Date();
+  // FY starts April 1; current FY starts in current year if month >= April, else previous year
+  const currentFYStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  return currentFYStart - rateStartYear > 1;
+}
+
 function fmt(value: unknown, fallback = ''): string {
   if (value === null || value === undefined) return fallback;
   return String(value);
@@ -186,6 +197,20 @@ export async function buildReportData(
     if (run) {
       valuationRun = run as unknown as Record<string, unknown>;
       resolvedRunId = run.id;
+    } else {
+      // No finalized run found — check if there's a reopened (non-finalized) run so we can
+      // give an actionable error message instead of the generic IBBI gate message.
+      const reopenedRun = await prisma.valuationRun.findFirst({
+        where: { assignmentId, isFinalized: false },
+        select: { id: true, version: true },
+      });
+      if (reopenedRun) {
+        throw new AppError(
+          422,
+          'IBBI compliance check failed:\n• Valuation run v' + reopenedRun.version +
+          ' was reopened and has unsaved changes — go to the Valuation tab, complete your edits, then click Finalize before generating the report',
+        );
+      }
     }
   }
 
@@ -196,6 +221,12 @@ export async function buildReportData(
     property: assignment.property as unknown as Record<string, unknown> | null,
     valuationRunId: resolvedRunId,
   });
+
+  // RR rate age check: warn if the government rate used is more than 1 FY old
+  const runRrRateYear = valuationRun?.['rrRateYear'] as string | null;
+  if (runRrRateYear && isRrRateYearStale(runRrRateYear)) {
+    throw new AppError(422, `Government RR/Jantri rate year "${runRrRateYear}" is more than one financial year old. Update the ready reckoner rate to the current financial year before generating the report.`);
+  }
 
   const property = assignment.property;
   const client = assignment.client;
@@ -254,7 +285,7 @@ export async function buildReportData(
   // Market value variants — realizableValuePct from template (BOI/UBI: 95%, others: 90%)
   const fairMarketValue = finalValueNum;
   const realizableValueNum = Math.round(finalValueNum * realizableValuePct);
-  const distressSaleValue = Math.round(finalValueNum * 0.75); // 75% fixed
+  const distressSaleValue = Math.round(finalValueNum * 0.80); // 80% of FMV (corrected from 75%)
 
   // Govt rate lookup (best match for property state/district)
   let govtRateYear = '', govtRatePerSqFt = '', govtRatePerSqM = '', govtRateSource = '';
@@ -302,9 +333,13 @@ export async function buildReportData(
   })();
 
   // Present stage value (for UC dual-stage valuation: BOI/UBI)
+  // Applies optional stageDiscountPct (additional discount beyond completion %)
+  const stageDiscountPct = valuationRun?.['stageDiscountPct'] ? Number(valuationRun['stageDiscountPct']) : 0;
   const presentStageValueNum = (() => {
     if (assignment.isUnderConstruction && assignment.percentageCompletion && finalValueNum > 0) {
-      return Math.round(finalValueNum * Number(assignment.percentageCompletion) / 100 / 1000) * 1000;
+      const completionFraction = Number(assignment.percentageCompletion) / 100;
+      const discountMultiplier = 1 - stageDiscountPct / 100;
+      return Math.round(finalValueNum * completionFraction * discountMultiplier / 1000) * 1000;
     }
     return null;
   })();
@@ -352,12 +387,19 @@ export async function buildReportData(
     propertyTypeLabel: fmt(assignment.propertyType).replace(/_/g, ' '),
     freshOrRevaluation: fmt(assignment.freshOrRevaluation),
 
+    // ── Previous valuation report (DOC_020 — Revaluation cases) ──
+    prevReportRefNo: fmt(assignment.prevReportRefNo),
+    prevValuerName: fmt(assignment.prevValuerName),
+    prevReportDate: assignment.prevReportDate ? fmtDate(assignment.prevReportDate) : '',
+
     // ── Property identification ────────────────────────────
     ownerName,
     ownershipNature: fmt(property?.ownershipNature),
     ownerShareDetails: fmt(property?.ownerShareDetails),
     developerName: fmt(property?.developerName),
     reraNo: fmt(property?.reraNo),
+    proposedPurchaserName: fmt(property?.proposedPurchaserName),
+    proposedPurchaserAddress: fmt(property?.proposedPurchaserAddress),
     propertyAddress,
     surveyNo: fmt(property?.surveyNo),
     hissaNo: fmt(property?.hissaNo),
@@ -375,6 +417,10 @@ export async function buildReportData(
     municipalCorporation: fmt(property?.municipalCorporation),
     pincode: fmt(property?.pincode),
 
+    // GPS coordinates
+    latitude: property?.latitude ? fmt(property.latitude) : undefined,
+    longitude: property?.longitude ? fmt(property.longitude) : undefined,
+
     // ── Area classification (from JSON blob) ───────────────
     areaType: fmt(ac['type']),
     areaClassificationGrade: fmt(ac['highMiddlePoor']),
@@ -384,6 +430,7 @@ export async function buildReportData(
 
     // ── Physical / site description (from JSON blob) ───────
     landNature: fmt(ph['landNature']),
+    landLayout: fmt(ph['landLayout']),       // PHY_002: Flat/Sloped/Undulating
     plotShape: fmt(ph['plotShape']),
     directAccess: fmt(ph['directAccess']),
     boundaryNature: fmt(ph['boundaryNature']),
@@ -412,6 +459,36 @@ export async function buildReportData(
     permissibleUse: fmt(property?.permissibleUse),
     naOrderDetails: fmt(property?.naOrderDetails),
     miDcPlotNo: fmt(property?.miDcPlotNo),
+
+    // ── Adopted land area (MIN rule for open land) ─────────
+    adoptedLandAreaSqM: property?.adoptedLandAreaSqM ? fmtDecimal(property.adoptedLandAreaSqM) : '',
+    adoptedLandAreaSqFt: property?.adoptedLandAreaSqFt ? fmtDecimal(property.adoptedLandAreaSqFt) : '',
+
+    // ── Open land planning flags ───────────────────────────
+    agriculturalConversionContemplated: fmtBool(property?.agriculturalConversionContemplated),
+    tpApprovedLayout: fmtBool(property?.tpApprovedLayout),
+
+    // ── Leasehold tenure (LND_009) ─────────────────────────
+    leaseLessorName: fmt(property?.leaseLessorName),
+    leasePeriodYears: property?.leasePeriodYears ? fmt(property.leasePeriodYears) : '',
+    leaseStartDate: property?.leaseStartDate ? fmtDate(property.leaseStartDate) : '',
+    remainingLeasePeriodYears: (() => {
+      if (!property?.leaseStartDate || !property?.leasePeriodYears) return '';
+      const endYear = new Date(property.leaseStartDate as Date).getFullYear() + property.leasePeriodYears;
+      const remaining = endYear - new Date().getFullYear();
+      return remaining > 0 ? `${remaining} Years` : 'Expired';
+    })(),
+
+    // ── Site infrastructure (PHY_013–016) ─────────────────
+    plotPosition: fmt(property?.plotPosition),
+    waterPotentiality: fmt(property?.waterPotentiality),
+    undergroundSewerage: fmt(property?.undergroundSewerage),
+    powerSupply: fmt(property?.powerSupply),
+
+    // ── Foundation & CRZ ──────────────────────────────────
+    foundationType: fmt(property?.foundationType),
+    czrApplicable: fmtBool(property?.czrApplicable),
+    distanceFromSeaM: property?.distanceFromSeaM ? fmtDecimal(property.distanceFromSeaM, 0) : '',
 
     // ── Building ───────────────────────────────────────────
     builtUpAreaSqFt: property?.builtUpAreaSqFt ? fmtDecimal(property.builtUpAreaSqFt) : '',
@@ -477,6 +554,13 @@ export async function buildReportData(
     govtRatePerSqFt,
     govtRatePerSqM,
     govtRateSource,
+    // L&B: building component RR rate (from ValuationRun)
+    rrBuildingRatePerSqM: valuationRun?.['rrBuildingRatePerSqM']
+      ? fmtDecimal(valuationRun['rrBuildingRatePerSqM'])
+      : undefined,
+    rrBuildingRatePerSqFt: valuationRun?.['rrBuildingRatePerSqFt']
+      ? fmtDecimal(valuationRun['rrBuildingRatePerSqFt'])
+      : undefined,
 
     // ── Valuation results ──────────────────────────────────
     landValue: landValueNum > 0 ? fmtCurrency(landValueNum) : '',
@@ -536,7 +620,9 @@ export async function buildReportData(
     comparablesNarrative,
 
     // ── IBBI legal text ────────────────────────────────────
-    ibbiCertificateText: IBBI_CERTIFICATE_TEXT,
+    ibbiCertificateText: assignment.isUnderConstruction
+      ? IBBI_CERTIFICATE_TEXT + `\n\nNote: This valuation pertains to an under-construction property at ${assignment.percentageCompletion ?? 0}% stage of construction as observed during the site inspection. The value stated herein represents the Fair Market Value at 100% completion. The value at current stage of construction is separately indicated.`
+      : IBBI_CERTIFICATE_TEXT,
     independenceDeclaration: IBBI_INDEPENDENCE_DECLARATION,
     limitingConditions: IBBI_LIMITING_CONDITIONS,
   };

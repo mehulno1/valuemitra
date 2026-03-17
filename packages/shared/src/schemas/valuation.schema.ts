@@ -61,6 +61,9 @@ export const UpdateCostApproachSchema = z.object({
   // Government RR / Jantri rate (VAL_002, VAL_004)
   rrRatePerSqM: z.number().positive().optional(),
   rrRateYear: z.string().max(10).optional(),
+  // L&B: separate building RR rate (govt has distinct land + construction rates)
+  rrBuildingRatePerSqM: z.number().positive().optional(),
+  rrBuildingRatePerSqFt: z.number().positive().optional(),
 });
 
 export const UpdateIncomeApproachSchema = z.object({
@@ -80,6 +83,7 @@ export const FinalizeValuationSchema = z.object({
   rentalValueMonthly: z.number().min(0).optional(),    // VAL_017
   bookValue: z.number().min(0).optional(),             // VAL_018
   compositeRatePerSqFt: z.number().min(0).optional(),  // VAL_006
+  stageDiscountPct: z.number().min(0).max(50).optional(), // VAL_019: UC additional stage discount %
 }).refine((data) => {
   const total =
     (data.marketApproachWeight ?? 0) +

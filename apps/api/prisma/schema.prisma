@@ -186,6 +186,11 @@ model Assignment {
   // Fresh / Revaluation
   freshOrRevaluation  String?   @db.VarChar(20)    // "Fresh" | "Revaluation" | "Review"
 
+  // DOC_020: Previous valuation report details (populated when freshOrRevaluation = "Revaluation")
+  prevReportRefNo     String?   @db.VarChar(100)   // DOC_020a: Previous report reference number
+  prevValuerName      String?   @db.VarChar(200)   // DOC_020b: Previous valuer's name
+  prevReportDate      DateTime?                     // DOC_020c: Previous report date
+
   // Under-construction
   isUnderConstruction Boolean   @default(false)
   percentageCompletion Int?
@@ -284,6 +289,19 @@ model Property {
   leaseExpiryDate       DateTime?
   zoningClassification  String?   @db.VarChar(100)
 
+  // LND_009: Leasehold tenure details for land (expands leaseExpiryDate)
+  leaseLessorName       String?   @db.VarChar(200)   // LND_009a: Name of lessor/authority
+  leasePeriodYears      Int?                          // LND_009b: Original lease period (years)
+  leaseStartDate        DateTime?                     // LND_009c: Lease commencement date
+
+  // LND_010–011: Open land planning flags
+  agriculturalConversionContemplated Boolean?         // LND_010: Ag conversion contemplated Y/N
+  tpApprovedLayout      Boolean?                      // LND_011: Town planning approved layout Y/N
+
+  // Adopted land area (MIN rule: MIN(doc,actual) — stored for IBBI audit trail)
+  adoptedLandAreaSqM    Decimal?  @db.Decimal(12, 4) // Computed: MIN(landAreaSqM, landAreaActualSqM)
+  adoptedLandAreaSqFt   Decimal?  @db.Decimal(12, 4)
+
   // LOC_008: Street / Road name
   streetName            String?   @db.VarChar(200)
 
@@ -297,6 +315,10 @@ model Property {
   borrowerName          String?   @db.VarChar(200)    // OWN_007: Applicant/Borrower (may differ from owner)
   developerName         String?   @db.VarChar(200)    // OWN_008: Builder/Developer (UC/L&B)
   reraNo                String?   @db.VarChar(100)    // DOC_008: RERA registration
+
+  // Proposed purchaser (UC flat — required by several banks)
+  proposedPurchaserName    String?   @db.VarChar(200) // UC-specific: name of proposed buyer
+  proposedPurchaserAddress String?   @db.Text         // UC-specific: address of proposed buyer
 
   // BLDG_006: Building completion status (dropdown)
   buildingCompletionStatus String? @db.VarChar(30)  // FULLY_COMPLETED/PARTIALLY_COMPLETED/UNDER_CONSTRUCTION
@@ -347,6 +369,19 @@ model Property {
   // Building floors breakdown (L&B only)
   // Array: [{floorLabel, useType, builtUpAreaSqM, builtUpAreaSqFt, remarks}]
   buildingFloors        Json?
+
+  // PHY_013–016: Site infrastructure (Open Land / L&B specific)
+  plotPosition          String?   @db.VarChar(30)    // PHY_013: Corner/Intermittent/Through/End
+  waterPotentiality     String?   @db.VarChar(50)    // PHY_014: Municipal/Borewell/Nil/Unknown
+  undergroundSewerage   String?   @db.VarChar(50)    // PHY_015: UGD/Septic/None
+  powerSupply           String?   @db.VarChar(100)   // PHY_016: MSEDCL/DGVCL/DG Set/None
+
+  // BLDG_017: Foundation type
+  foundationType        String?   @db.VarChar(50)    // Strip/Raft/Pile/Isolated/N/A
+
+  // AREA_006: CRZ / coastal applicability
+  czrApplicable         Boolean?                      // AREA_006: CRZ zone applicable Y/N
+  distanceFromSeaM      Decimal?  @db.Decimal(10, 2) // AREA_006: Distance from sea/CRZ boundary (metres)
 
   // Structure/condition
   structureType         String?   @db.VarChar(100)
@@ -574,10 +609,13 @@ model ValuationRun {
   marketAnalysisNarrative String? @db.Text           // MKT_012: AI-drafted + RV edits
 
   // Government RR / Jantri rate inputs (VAL_002, VAL_004)
-  rrRatePerSqM          Decimal?  @db.Decimal(12, 2) // VAL_002: Govt RR/Jantri rate per sq.m.
-  rrRatePerSqFt         Decimal?  @db.Decimal(12, 2) // VAL_002: Govt RR/Jantri rate per sq.ft.
+  rrRatePerSqM          Decimal?  @db.Decimal(12, 2) // VAL_002: Govt RR/Jantri rate per sq.m. (land)
+  rrRatePerSqFt         Decimal?  @db.Decimal(12, 2) // VAL_002: Govt RR/Jantri rate per sq.ft. (land)
   rrRateYear            String?   @db.VarChar(10)    // VAL_004: e.g. "2025-26"
   rrScreenshotUrl       String?   @db.VarChar(500)   // VAL_003: time-stamped RR screenshot
+  // L&B only: separate RR rate for building component (RR has distinct land + construction rates)
+  rrBuildingRatePerSqM  Decimal?  @db.Decimal(12, 2) // L&B building RR rate per sq.m.
+  rrBuildingRatePerSqFt Decimal?  @db.Decimal(12, 2) // L&B building RR rate per sq.ft.
 
   // Derived value outputs (stored explicitly for display + report)
   externalDevelopmentValue Decimal? @db.Decimal(15, 2) // VAL_011: compound wall, paving, gate
@@ -590,6 +628,7 @@ model ValuationRun {
   insuranceValue        Decimal?  @db.Decimal(15, 2) // VAL_016: SBI/BOM
   rentalValueMonthly    Decimal?  @db.Decimal(12, 2) // VAL_017: Canara/SBI
   bookValue             Decimal?  @db.Decimal(15, 2) // VAL_018: BOM UC / SBI L&B
+  stageDiscountPct      Decimal?  @db.Decimal(5, 2)  // VAL_019: UC additional stage discount % (beyond completion %)
 
   // IBBI audit snapshot — immutable record of all inputs at computation time
   inputSnapshot         Json?

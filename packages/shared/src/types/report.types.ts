@@ -126,6 +126,10 @@ export interface ReportData {
   ownerShareDetails: string;       // e.g. "50% each"
   developerName: string;           // Builder/Developer (UC/L&B)
   propertyAddress: string;
+
+  // Proposed purchaser (UC flat — required by several banks)
+  proposedPurchaserName?: string;
+  proposedPurchaserAddress?: string;
   surveyNo: string;
   hissaNo: string;                 // Hissa/sub-division number
   ctsSurveyNo: string;
@@ -142,6 +146,10 @@ export interface ReportData {
   landmark: string;
   municipalCorporation: string;    // MCGM/Panchayat etc.
   pincode: string;
+
+  // GPS coordinates (for location map auto-generation)
+  latitude?: string;
+  longitude?: string;
 
   // Area classification
   areaType: string;                // Residential/Commercial/Industrial
@@ -180,6 +188,43 @@ export interface ReportData {
   permissibleUse: string;           // Permissible use as per DP
   naOrderDetails: string;           // Non-agricultural order
   miDcPlotNo: string;               // MIDC plot number
+
+  // Adopted land area (MIN rule for open land: min of doc vs actual)
+  adoptedLandAreaSqM?: string;      // Computed: MIN(landAreaSqM, landAreaActualSqM)
+  adoptedLandAreaSqFt?: string;
+
+  // Open land planning flags
+  agriculturalConversionContemplated?: string;  // LND_010: "Yes"/"No"
+  tpApprovedLayout?: string;        // LND_011: "Yes"/"No"
+
+  // Leasehold tenure details (LND_009)
+  leaseLessorName?: string;         // LND_009a: lessor name
+  leasePeriodYears?: string;        // LND_009b: original lease period
+  leaseStartDate?: string;          // LND_009c: lease commencement date
+  remainingLeasePeriodYears?: string; // Computed: remaining years
+
+  // Site infrastructure (Open Land / L&B)
+  landLayout?: string;              // PHY_002: Flat/Sloped/Undulating (from physicalDetails JSON)
+  plotPosition?: string;            // PHY_013: Corner/Intermittent/Through/End
+  waterPotentiality?: string;       // PHY_014: Municipal/Borewell/Nil/Unknown
+  undergroundSewerage?: string;     // PHY_015: UGD/Septic/None
+  powerSupply?: string;             // PHY_016: MSEDCL/DGVCL/DG Set/None
+
+  // Building
+  foundationType?: string;          // BLDG_017: Strip/Raft/Pile/Isolated/N/A
+
+  // CRZ / Coastal (AREA_006)
+  czrApplicable?: string;           // "Yes"/"No"
+  distanceFromSeaM?: string;        // Metres from sea/CRZ boundary
+
+  // Previous valuation report (DOC_020 — for Revaluation cases)
+  prevReportRefNo?: string;
+  prevValuerName?: string;
+  prevReportDate?: string;
+
+  // L&B: separate govt guideline rate for building component
+  rrBuildingRatePerSqM?: string;
+  rrBuildingRatePerSqFt?: string;
 
   // Building
   builtUpAreaSqFt: string;

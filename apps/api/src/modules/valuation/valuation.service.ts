@@ -13,6 +13,19 @@ import type {
 } from '@valuemitra/shared';
 
 // ─────────────────────────────────────────────
+// Rounding
+// ─────────────────────────────────────────────
+
+/** Standard Indian valuation rounding: ≤₹1 Cr → nearest ₹50,000; >₹1 Cr → nearest ₹1,00,000 */
+function roundFMV(value: number): number {
+  const ONE_CRORE = 10_000_000;
+  if (value <= ONE_CRORE) {
+    return Math.round(value / 50_000) * 50_000;
+  }
+  return Math.round(value / 100_000) * 100_000;
+}
+
+// ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 
@@ -151,18 +164,73 @@ export async function updateMarketComparison(
 export async function updateCostApproach(
   id: string,
   tenantId: string,
-  input: UpdateCostApproachInput,
+  rawInput: UpdateCostApproachInput,
 ) {
-  await getRunOrThrow(id, tenantId);
+  const run = await getRunOrThrow(id, tenantId);
+
+  // For flat property types: if landArea not explicitly provided, use UDS area from property
+  const FLAT_TYPES = ['RESIDENTIAL_FLAT', 'UC_FLAT', 'COMMERCIAL_SHOP', 'COMMERCIAL_OFFICE', 'COMMERCIAL_SHOWROOM'];
+  // For land-type properties: adoptedLandArea = MIN(doc area, actual area) per BOB/standard rules
+  const LAND_TYPES = ['OPEN_LAND', 'AGRICULTURAL_LAND', 'RESIDENTIAL_PLOT', 'INDUSTRIAL_PLOT'];
+  let input = rawInput;
+
+  if (!input.landArea) {
+    if (FLAT_TYPES.includes(run.assignment.propertyType)) {
+      // Use UDS area as land component for flat valuations
+      const property = await prisma.property.findUnique({
+        where: { assignmentId: run.assignmentId },
+        select: { udsArea: true, udsUnit: true },
+      });
+      if (property?.udsArea) {
+        const udsAreaNum = Number(property.udsArea);
+        const udsUnit = property.udsUnit ?? 'Sq.M';
+        const udsAreaSqM = (udsUnit === 'Sq.Ft' || udsUnit === 'SqFt') ? udsAreaNum / 10.764 : udsAreaNum;
+        input = { ...input, landArea: Math.round(udsAreaSqM * 1000) / 1000 };
+      }
+    } else if (LAND_TYPES.includes(run.assignment.propertyType)) {
+      // Use MIN(doc area, actual area) for open land types — store result on Property for audit
+      const property = await prisma.property.findUnique({
+        where: { assignmentId: run.assignmentId },
+        select: { landAreaSqM: true, landAreaActualSqM: true },
+      });
+      if (property) {
+        const docSqM = property.landAreaSqM ? Number(property.landAreaSqM) : null;
+        const actualSqM = property.landAreaActualSqM ? Number(property.landAreaActualSqM) : null;
+        const adoptedSqM = docSqM !== null && actualSqM !== null
+          ? Math.min(docSqM, actualSqM)
+          : (actualSqM ?? docSqM ?? null);
+        if (adoptedSqM !== null) {
+          const adoptedSqFt = Math.round(adoptedSqM * 10.764 * 100) / 100;
+          await prisma.property.update({
+            where: { assignmentId: run.assignmentId },
+            data: {
+              adoptedLandAreaSqM: String(adoptedSqM),
+              adoptedLandAreaSqFt: String(adoptedSqFt),
+            },
+          });
+          input = { ...input, landArea: adoptedSqM };
+        }
+      }
+    }
+  }
+
   const result = computeCostApproach(input);
 
   // Compute govt guideline value = RR rate × land area (if both provided)
+  // L&B: govtGuidelineValue = (landArea × rrLandRate) + (buildingArea × rrBuildingRate)
   const rrRatePerSqM = input.rrRatePerSqM;
   const rrRatePerSqFt = rrRatePerSqM != null ? rrRatePerSqM / 10.764 : undefined;
+  const rrBuildingRatePerSqM = input.rrBuildingRatePerSqM;
+  const rrBuildingRatePerSqFt = rrBuildingRatePerSqM != null
+    ? (input.rrBuildingRatePerSqFt ?? rrBuildingRatePerSqM / 10.764)
+    : undefined;
   const landAreaForGovt = input.landArea;
+  const isLandAndBuilding = run.assignment.propertyType === 'LAND_AND_BUILDING';
   const govtGuidelineValue =
     rrRatePerSqM != null && landAreaForGovt != null
-      ? rrRatePerSqM * landAreaForGovt
+      ? isLandAndBuilding && rrBuildingRatePerSqM != null && result.buildingPlinthArea > 0
+        ? (rrRatePerSqM * landAreaForGovt) + (rrBuildingRatePerSqM * result.buildingPlinthArea)
+        : rrRatePerSqM * landAreaForGovt
       : undefined;
 
   // Total cost approach value includes external development value if provided
@@ -189,6 +257,8 @@ export async function updateCostApproach(
       rrRatePerSqM: rrRatePerSqM != null ? String(rrRatePerSqM) : undefined,
       rrRatePerSqFt: rrRatePerSqFt != null ? String(rrRatePerSqFt) : undefined,
       rrRateYear: input.rrRateYear ?? undefined,
+      rrBuildingRatePerSqM: rrBuildingRatePerSqM != null ? String(rrBuildingRatePerSqM) : undefined,
+      rrBuildingRatePerSqFt: rrBuildingRatePerSqFt != null ? String(rrBuildingRatePerSqFt) : undefined,
       govtGuidelineValue: govtGuidelineValue != null ? String(govtGuidelineValue) : undefined,
       // External development
       externalDevelopmentValue: extDev > 0 ? String(extDev) : undefined,
@@ -248,6 +318,16 @@ export async function finalizeValuationRun(
   const iw = input.incomeApproachWeight ?? 0;
   const totalWeight = mw + cw + iw;
 
+  // Validate: market approach requires at least 3 comparable transactions
+  const willUseMarketValue = mw > 0 || (totalWeight === 0 && marketVal !== null);
+  if (willUseMarketValue) {
+    const comparables = run.comparables as Array<unknown> | null;
+    const comparableCount = Array.isArray(comparables) ? comparables.length : 0;
+    if (comparableCount < 3) {
+      throw new AppError(422, `Market comparison approach requires at least 3 comparable transactions. Only ${comparableCount} entered. Add more comparables before finalizing.`);
+    }
+  }
+
   if (totalWeight > 0) {
     // Weighted average — only count weights for approaches that have a computed value
     const effectiveNumerator =
@@ -259,19 +339,19 @@ export async function finalizeValuationRun(
       (costVal   !== null ? cw : 0) +
       (incomeVal !== null ? iw : 0);
     if (effectiveDenominator === 0) throw new AppError(422, 'No approach values computed yet — update at least one approach before finalizing');
-    weightedValue = Math.round(effectiveNumerator / effectiveDenominator / 1000) * 1000;
+    weightedValue = roundFMV(effectiveNumerator / effectiveDenominator);
   } else {
     // Auto: use the single available value, or average of all computed
     const available = [marketVal, costVal, incomeVal].filter((v): v is number => v !== null);
     if (available.length === 0) throw new AppError(422, 'No approach values computed yet — update at least one approach before finalizing');
-    weightedValue = Math.round(available.reduce((s, v) => s + v, 0) / available.length / 1000) * 1000;
+    weightedValue = roundFMV(available.reduce((s, v) => s + v, 0) / available.length);
   }
 
-  const roundedValue = weightedValue; // already rounded to 1000
+  const roundedValue = weightedValue;
 
   // Derived value outputs
-  const realizableValue = Math.round(roundedValue * 0.90 / 1000) * 1000;
-  const distressValue   = Math.round(roundedValue * 0.80 / 1000) * 1000;
+  const realizableValue = roundFMV(roundedValue * 0.90);
+  const distressValue   = roundFMV(roundedValue * 0.80);
 
   // Update run + assignment final value atomically
   const [updated] = await prisma.$transaction([
@@ -292,6 +372,7 @@ export async function finalizeValuationRun(
         rentalValueMonthly: input.rentalValueMonthly != null ? String(input.rentalValueMonthly) : undefined,
         bookValue: input.bookValue != null ? String(input.bookValue) : undefined,
         compositeRatePerSqFt: input.compositeRatePerSqFt != null ? String(input.compositeRatePerSqFt) : undefined,
+        stageDiscountPct: input.stageDiscountPct != null ? String(input.stageDiscountPct) : undefined,
         computedAt: new Date(),
       },
     }),

@@ -97,6 +97,9 @@ export interface ValuationRun {
   insuranceValue?: number;              // VAL_016: reinstatement value
   rentalValueMonthly?: number;          // VAL_017: monthly rental
   bookValue?: number;                   // VAL_018: L&B book value
+  stageDiscountPct?: number;            // VAL_019: UC additional stage discount %
+  rrBuildingRatePerSqM?: number;        // L&B: building component RR rate per sq.m.
+  rrBuildingRatePerSqFt?: number;       // L&B: building component RR rate per sq.ft.
 
   // Immutable audit snapshot
   inputSnapshot?: Record<string, unknown>;

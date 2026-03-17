@@ -1446,8 +1446,15 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
   const { toast } = useToast();
   const { data: reports, isLoading } = useReports(assignmentId);
   const { data: templates } = useReportTemplates();
+  const { data: runs } = useValuationRuns(assignmentId);
   const { mutate: generate, isPending: generating } = useGenerateReport();
   const [selectedTemplate, setSelectedTemplate] = useState('');
+
+  // Guard: a finalized valuation run must exist before generating a report.
+  // When a run is reopened (isFinalized = false), the auto-pick in buildReportData finds nothing
+  // and the IBBI gate fires. Show a warning here so the user knows to re-finalize first.
+  const hasRuns = (runs ?? []).length > 0;
+  const hasFinalized = (runs ?? []).some((r) => r.isFinalized);
 
   function handleGenerate() {
     if (!selectedTemplate) return;
@@ -1468,6 +1475,12 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
       {canEdit && (
         <Card>
           <CardContent className="pt-4">
+            {hasRuns && !hasFinalized && (
+              <div className="mb-3 rounded-md border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                <strong>Valuation run is not finalized.</strong> The valuation run was reopened or is still in progress.
+                Go to the <strong>Valuation</strong> tab, complete your edits, and click <strong>Finalize</strong> before generating a report.
+              </div>
+            )}
             <div className="flex items-end gap-3">
               <div className="space-y-1 flex-1">
                 <Label>Select Report Template</Label>
@@ -1482,7 +1495,7 @@ function ReportsTab({ assignmentId, canEdit }: { assignmentId: string; canEdit: 
                   </SelectContent>
                 </Select>
               </div>
-              <Button disabled={!selectedTemplate || generating} onClick={handleGenerate}>
+              <Button disabled={!selectedTemplate || generating || !hasFinalized} onClick={handleGenerate}>
                 {generating ? 'Generating…' : 'Generate Report'}
               </Button>
             </div>
