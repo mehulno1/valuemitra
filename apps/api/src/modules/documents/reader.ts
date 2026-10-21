@@ -231,14 +231,16 @@ export async function readDocument(documentId: number) {
  * Fail-closed: the stored file is flagged KYC before anything that can fail.
  */
 export async function applyKyc(documentId: number, firmId: number) {
-  // fail-closed steps first, outside any lock (idempotent; over-hiding is the safe direction)
-  await hideKycPages(db, documentId, firmId);
+  // fail-closed first: the stored file counts as KYC until a clean copy replaces it
+  const doc = await db.selectFrom('documents').select('file_id').where('id', '=', documentId).executeTakeFirstOrThrow();
+  await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', doc.file_id).execute();
   // then one redaction per document at a time; all locked work runs on the connection holding the lock
   await db.connection().execute(async (conn) => {
     const lock = `vm_kyc_${documentId}`;
     const got = await sql<{ l: number }>`SELECT GET_LOCK(${lock}, 30) AS l`.execute(conn);
     if (got.rows[0]?.l !== 1) {
-      await enqueue('document.kyc', { documentId, firmId }, { firmId, delayMs: 60_000, dedupeKey: `kyc:${documentId}` });
+      // busy: try again shortly; a fresh key per attempt so a running job never swallows the retry
+      await enqueue('document.kyc', { documentId, firmId }, { firmId, delayMs: 60_000, dedupeKey: `kyc:${documentId}:${Date.now()}` });
       return;
     }
     try {
