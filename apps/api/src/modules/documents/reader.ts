@@ -231,9 +231,9 @@ export async function readDocument(documentId: number) {
  * Fail-closed: the stored file is flagged KYC before anything that can fail.
  */
 export async function applyKyc(documentId: number, firmId: number) {
-  // fail-closed first: the stored file counts as KYC until a clean copy replaces it
-  const doc = await db.selectFrom('documents').select('file_id').where('id', '=', documentId).executeTakeFirstOrThrow();
-  await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', doc.file_id).execute();
+  // fail-closed first, before any lock: hide (flag + clear text) but never delete here. If page numbers
+  // shift concurrently the worst case is hiding an extra page; deletion happens only under the lock.
+  await hideKycPages(db, documentId, firmId, { purge: false });
   // then one redaction per document at a time; all locked work runs on the connection holding the lock
   await db.connection().execute(async (conn) => {
     const lock = `vm_kyc_${documentId}`;
@@ -252,17 +252,18 @@ export async function applyKyc(documentId: number, firmId: number) {
 }
 
 /** Flag the stored file and KYC page images, clear their text, and delete them under "never stored". */
-async function hideKycPages(tx: Tx, documentId: number, firmId: number) {
+async function hideKycPages(tx: Tx, documentId: number, firmId: number, opts: { purge: boolean } = { purge: true }) {
   const d = await tx.selectFrom('documents').select(['file_id', 'page_count']).where('id', '=', documentId).executeTakeFirstOrThrow();
   const parts = await tx.selectFrom('document_parts').select('pages_json').where('document_id', '=', documentId).where('is_kyc', '=', 1).execute();
   const kyc = [...new Set(parts.flatMap((x) => json<number[]>(x.pages_json, [])))].filter((p) => p >= 1 && p <= d.page_count);
-  if (!kyc.length) return [];
+  // the stored file counts as KYC until a clean copy replaces it
   await tx.updateTable('files').set({ is_kyc: 1 }).where('id', '=', d.file_id).execute();
+  if (!kyc.length) return [];
   const pg = await tx.selectFrom('document_pages').select(['image_file_id', 'thumb_file_id']).where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
   const imgIds = pg.flatMap((x) => [x.image_file_id, x.thumb_file_id]).filter(Boolean) as number[];
   if (imgIds.length) await tx.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', imgIds).execute();
   await tx.updateTable('document_pages').set({ ocr_text: null, ocr_json: null }).where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
-  if ((await getSettings(firmId, tx)).kyc_policy === 'never') for (const id of imgIds) await purgeFile(id, tx);
+  if (opts.purge && (await getSettings(firmId, tx)).kyc_policy === 'never') for (const id of imgIds) await purgeFile(id, tx);
   return kyc;
 }
 
