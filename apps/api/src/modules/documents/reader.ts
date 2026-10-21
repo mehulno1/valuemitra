@@ -24,19 +24,13 @@ export async function docTypes(firmId: number): Promise<DocType[]> {
 const MAX_PAGE_CHARS = 3500;
 
 /**
- * The file a document is read from: the original upload while it still exists, else the stored
- * (redacted) copy. Page numbers from reading always refer to this same file, so redaction does too.
+ * Split the stored file into page images and OCR text; stores document_pages. Always reads the stored
+ * copy (already redacted if KYC was found before), never the original upload, so page numbers refer
+ * to exactly the file that redaction later works on.
  */
-async function sourceFileId(d: { file_id: number; original_file_id: number | null }) {
-  if (!d.original_file_id) return d.file_id;
-  const o = await db.selectFrom('files').select('purged_at').where('id', '=', d.original_file_id).executeTakeFirst();
-  return o && !o.purged_at ? d.original_file_id : d.file_id;
-}
-
-/** Split the file into page images and OCR text; stores document_pages. */
-export async function preparePages(documentId: number) {
+export async function preparePages(documentId: number): Promise<number> {
   const d = await db.selectFrom('documents').selectAll().where('id', '=', documentId).executeTakeFirstOrThrow();
-  const { file, buffer } = await readFile(await sourceFileId(d), d.firm_id);
+  const { file, buffer } = await readFile(d.file_id, d.firm_id);
   let images: Buffer[];
   if (file.mime === 'application/pdf') {
     const n = await pdfPageCount(buffer);
@@ -228,27 +222,34 @@ export async function readDocument(documentId: number) {
 }
 
 /**
- * KYC never stays in the stored upload: a bundle is replaced by a copy without the KYC pages and
- * the original is flagged KYC (deleted at once under "never stored", else on the firm's schedule).
+ * KYC never stays in the stored file. The pages were read from documents.file_id; that same file is
+ * replaced by a copy without the KYC pages. The first stored file (the original upload) is kept, flagged
+ * KYC, only until the firm's deletion date; any later intermediate copy is deleted at once. A file that
+ * is entirely KYC is flagged and deleted under the same policy.
  */
-async function redactKyc(documentId: number, firmId: number, kycPages: number[], pageCount: number) {
+export async function redactKyc(documentId: number, firmId: number, kycPages: number[], pageCount: number) {
   const d = await db.selectFrom('documents').select(['file_id', 'original_file_id', 'assignment_id']).where('id', '=', documentId).executeTakeFirstOrThrow();
-  // the same file the pages were read from, so page numbers line up
-  const readFrom = await sourceFileId(d);
-  const originalId = d.original_file_id ?? d.file_id;
-  const { file, buffer } = await readFile(readFrom, firmId);
+  const { file, buffer } = await readFile(d.file_id, firmId);
+  const policyNever = (await getSettings(firmId)).kyc_policy === 'never';
   const keep = Array.from({ length: pageCount }, (_, i) => i + 1).filter((p) => !kycPages.includes(p));
-  await db.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', [...new Set([originalId, readFrom])]).execute();
   if (file.mime === 'application/pdf' && keep.length) {
+    if ((await pdfPageCount(buffer)) !== pageCount) throw new Error('Page count changed while reading; KYC redaction stopped');
     const redacted = await extractPages(buffer, keep);
-    const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
-    await db.updateTable('documents').set({ file_id: f.id, original_file_id: originalId }).where('id', '=', documentId).execute();
-    // an earlier redacted copy that still held KYC pages is no longer needed
-    if (readFrom !== originalId) await purgeFile(readFrom);
+    const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/( \(KYC removed\))?\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
+    await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', d.file_id).execute();
+    if (d.original_file_id) {
+      // the file just read was an earlier redacted copy: it is not needed
+      await purgeFile(d.file_id);
+      await db.updateTable('documents').set({ file_id: f.id }).where('id', '=', documentId).execute();
+    } else {
+      await db.updateTable('documents').set({ file_id: f.id, original_file_id: d.file_id }).where('id', '=', documentId).execute();
+      if (policyNever) await purgeFile(d.file_id);
+    }
   } else {
-    await db.updateTable('documents').set({ original_file_id: originalId }).where('id', '=', documentId).execute();
+    // nothing left to keep (e.g. a photo of an Aadhaar card): the stored file itself is KYC
+    await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', d.file_id).execute();
+    if (policyNever) await purgeFile(d.file_id);
   }
-  if ((await getSettings(firmId)).kyc_policy === 'never') await purgeFile(originalId);
 }
 
 /** Checklist items follow the documents found, unless a person overrode them. */

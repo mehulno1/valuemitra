@@ -27,7 +27,9 @@ export async function kycFileIds(assignmentId: number, tx: Tx = db) {
     .execute();
   // original uploads that contained KYC pages
   const originals = await tx.selectFrom('documents as d').innerJoin('files as f', 'f.id', 'd.original_file_id').select('f.id').where('d.assignment_id', '=', assignmentId).where('f.is_kyc', '=', 1).execute();
-  return [...rows, ...originals].map((r) => r.id);
+  // stored files that are entirely KYC
+  const stored = await tx.selectFrom('documents as d').innerJoin('files as f', 'f.id', 'd.file_id').select('f.id').where('d.assignment_id', '=', assignmentId).where('f.is_kyc', '=', 1).execute();
+  return [...new Set([...rows, ...originals, ...stored].map((r) => r.id))];
 }
 
 /** Daily: delete files whose purge date has passed. */
