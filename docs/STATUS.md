@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 21 Oct 2026. Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 21 Oct 2026 (AI reading live). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -15,7 +15,7 @@ Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQ
 | Pilot test files | `~/Claude-projects/Valuemitra-old/Flat/SBI` (Nilesh Bapu flat: 26-page bundle, O.C., site sheet, 22 photos) — test input only |
 | Backups | Local v1 DB: `~/Claude-projects/valuemitra-v1-db-backup/`. EC2: `~/backups/valuemitra-v1-*.sql.gz` and the v1 nginx config |
 | Old v1 on EC2 | `/var/www/valuemitra`, PM2 `valuemitra-api` — stopped, not deleted |
-| Secrets | `.env` at repo root (local) and `/var/www/valuemitra-v2/.env` (EC2), never committed. Google Vision key: `secrets/google-vision.json` (local), `/var/www/valuemitra/valuemitra-ocr-keys.json` (EC2) |
+| Secrets | `.env` at repo root (local) and `/var/www/valuemitra-v2/.env` (EC2), never committed. Google Vision key: `secrets/google-vision.json` (local), `/var/www/valuemitra/valuemitra-ocr-keys.json` (EC2). Anthropic key: `ANTHROPIC_API_KEY` in both `.env` files — copy local → EC2 over ssh stdin (never on a command line), then `pm2 restart valuemitra-v2 --update-env` |
 
 Logins (demo firm DVA): valuer@ / coordinator@ / accounts@ / admin@demo.valuemitra.in. Local password `ValueMitra@2026`;
 live password = `SEED_PASSWORD` in the EC2 `.env` (random, not in git).
@@ -45,6 +45,8 @@ live password = `SEED_PASSWORD` in the EC2 `.env` (random, not in git).
 - **Web:** every Gate A screen plus Bank formats, Firm settings, Master data, Data import & export, engineer page.
 - **Ops:** PM2 + Nginx config, `infrastructure/scripts/{setup,deploy}.sh`, CI (typecheck, tests, web build), firm onboarding script (`npm run firm:create -w apps/api`).
 
+AI reading verified (21 Oct 2026) with `claude-opus-5-5`: the real 26-page pilot bundle was sorted into 10 documents (Index II in Marathi, agreement, NOC, receipts, previous Index II, O.C., approved plan, site photo) with the KYC page removed; built-up area 465, agreement value 59,60,000, guideline value 53,74,030, Index II no./date and village read correctly with page and snippet; customer name conflict flagged between agreement and Index II; the handwritten O.C. date read at 50–60% confidence and caught by the low-confidence check. Also tested on the live site with the O.C. photo.
+
 Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 proposal, FMV 69,75,000 at Rs. 15,000; expression language). End-to-end run on the pilot files (OCR, KYC, photos, evidence, conflict, valuation, checks, sign-off, 16-page signed report). Browser screenshots of every screen. Production smoke test (login, case, draft PDF).
 
 ## 4. Left — by work package
@@ -54,7 +56,7 @@ Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 p
 | 1 Platform | S3 storage adapter; DB audit triggers (`infrastructure/mysql/audit_triggers.sql`, needs MySQL root on EC2); 2FA back on |
 | 2 Master data | Shop/office profiles tuned; open land and bungalow profiles |
 | 3 Assignments | Forward-to-case email address; WhatsApp intake |
-| 4 Extraction | **Valid Anthropic key** (current one returns 401 locally and on EC2); live accuracy check on the pilot bundle, O.C. and site sheet |
+| 4 Extraction | Accuracy measured across more pilot cases (tested on one bundle + O.C.); handwritten entries; site sheet reading checked on a real sheet |
 | 5 Template engine | Compare a rendered version with the bank's filled sample |
 | 6 Site visit | Handwritten sheets (later) |
 | 7 Evidence | Distance filter (needs geocoding / Google Maps key); land and bungalow methods in the screens |
@@ -65,21 +67,21 @@ Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 p
 | 13 Bank formats | SBI long, BoB, Union Bank, BoI, BoM, NKGSB, Federal, ValueMitra standard (need templates from Premal) |
 | 14 Land & bungalow | Everything, tuned with sample cases |
 
-Gates: A built (pilot case pending the AI key) → B all property types → C all banks + months 0–3 learning targets → D second firm by configuration only.
+Gates: A built (AI reading live; first real pilot case next) → B all property types → C all banks + months 0–3 learning targets → D second firm by configuration only.
 
 ## 5. Next actions
 
-1. Put a valid `ANTHROPIC_API_KEY` in both `.env` files; `pm2 restart valuemitra-v2 --update-env`; "Read again" on uploads; check extraction on the pilot bundle.
-2. Internal testing with the team brief; triage feedback (config change vs code change).
-3. First real pilot case (Gate A).
-4. Billing & payouts (WP 11) — cases cannot reach Billed/Paid without it.
-5. Collect bank templates and land/bungalow samples from Premal → Gates B and C.
+1. Internal testing with the team brief; triage feedback (config change vs code change).
+2. First real pilot case (Gate A); measure how many auto-filled fields are accepted without edit (target 85%).
+3. Billing & payouts (WP 11) — cases cannot reach Billed/Paid without it.
+4. Collect bank templates and land/bungalow samples from Premal → Gates B and C.
+5. Turn 2FA back on (`REQUIRE_2FA=true`) before real firms use the live site.
 
 ## 6. Runbook
 
 - Deploy: `ssh … "cd /var/www/valuemitra-v2 && bash infrastructure/scripts/deploy.sh"` (pull, build, migrate, platform seed, PM2 reload, health check) — or `/valuemitra-ec2 deploy`.
 - Schema change: new `apps/api/migrations/000N_*.sql` → `npm run db:migrate -w apps/api` → `sh apps/api/scripts/db-types.sh`.
-- Platform dictionary/config change: edit `apps/api/src/seed/{fields,config}.ts`; the seed adds new fields and versions changed ones (config versions are seeded once; publish changes through Master data).
+- Platform dictionary/config change: edit `apps/api/src/seed/{fields,config}.ts`; the seed (also run by deploy.sh) adds new fields, versions changed fields, and publishes a changed configuration as a new version. Cases keep the versions they pinned. Firm-specific changes go through Master data / Firm settings.
 - New firm: `npm run firm:create -w apps/api -- --code ABC --name "…" --admin-name … --admin-email … --admin-password …`.
 - Local reset (wipes data): `npm run db:reset -w apps/api`.
 - Dev helpers live in `apps/api/scripts/dev/` (gitignored, local only): `e2e-pilot.mts` (pilot case end to end without AI; run with `RUN_JOBS=false`), `t-kyc.mts`, `ui-shots.mts` (Playwright screenshots via installed Chrome), `smoke.sh`.
@@ -87,7 +89,7 @@ Gates: A built (pilot case pending the AI key) → B all property types → C al
 
 ## 7. Known issues and notes
 
-- The Anthropic key copied from v1 is invalid → uploads end "Could not read"; photo captions blank.
+- AI reading: handwritten entries come with low confidence (check `low_confidence` lists them); a 26-page bundle takes 1–3 minutes. A document left mid-read by a restart is requeued automatically.
 - HEIC photos refused (sharp cannot decode); WhatsApp-forwarded photos lose GPS so the map page is skipped.
 - The audit log is append-only in code; DB triggers not applied on EC2 (no root via `sudo mysql`).
 - Every commit gets an automated security review; findings so far were fixed (tenant isolation, upload sniffing, platform templates, KYC redaction and locking, TOTP input).
