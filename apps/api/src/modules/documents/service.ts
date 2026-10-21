@@ -6,10 +6,9 @@ import { audit, type Actor } from '../../platform/audit.js';
 import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
 import { saveFile } from '../../platform/storage.js';
+import { DOCS, requireKind } from '../../lib/sniff.js';
 import { retractPartCandidates, writeCandidates } from '../casedata/values.js';
 import { docTypes, extractFields, langLabel, readDocument, syncChecklist } from './reader.js';
-
-const ALLOWED = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic']);
 
 export async function assertCase(firmId: number, assignmentId: number, tx: Tx = db) {
   const a = await tx.selectFrom('assignments').select(['id', 'firm_id', 'signed_at', 'property_type', 'case_no']).where('id', '=', assignmentId).where('firm_id', '=', firmId).executeTakeFirst();
@@ -29,8 +28,8 @@ export async function uploadDocuments(
   const batch = Number(max?.b ?? 0) + 1;
   const ids: number[] = [];
   for (const f of files) {
-    if (!ALLOWED.has(f.mime)) throw badRequest(`${f.name}: upload PDF or photos (JPEG/PNG)`);
-    const stored = await saveFile({ firmId: a.firm_id, purpose: 'upload', folder: `a${a.id}/uploads`, buffer: f.buffer, name: f.name, mime: f.mime === 'image/heic' ? 'image/jpeg' : f.mime, userId: actor.id });
+    const mime = requireKind(f.buffer, DOCS, f.name);
+    const stored = await saveFile({ firmId: a.firm_id, purpose: 'upload', folder: `a${a.id}/uploads`, buffer: f.buffer, name: f.name, mime, userId: actor.id });
     const r = await db.insertInto('documents').values({
       firm_id: a.firm_id, assignment_id: a.id, file_id: stored.id, batch_no: batch, channel: opts.channel ?? null, received_from: opts.from ?? null,
       role: opts.role ?? 'bank_docs', uploaded_by: actor.id ?? null,
@@ -157,6 +156,7 @@ export async function addChecklistItem(actor: Actor, assignmentId: number, label
 
 /** Earlier cases with the same survey no., building or society (internal guidance, never cited as evidence). */
 export async function seenBefore(firmId: number, assignmentId: number) {
+  await assertCase(firmId, assignmentId);
   const mine = await db.selectFrom('document_parts').select('key_facts_json').where('assignment_id', '=', assignmentId).execute();
   const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const facts = { survey: new Set<string>(), building: new Set<string>(), society: new Set<string>(), unit: new Set<string>() };

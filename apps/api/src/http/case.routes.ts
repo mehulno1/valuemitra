@@ -71,8 +71,9 @@ export async function caseRoutes(app: FastifyInstance) {
   app.get('/api/assignments/:id/seen-before', async (req) => docs.seenBefore(req.auth!.firmId, idParam(req)));
 
   // ---- messages (copy-ready drafts) ----
-  app.post('/api/assignments/:id/messages/:purpose', async (req) => {
+  app.post('/api/assignments/:id/messages/:purpose', { preHandler: can('edit') }, async (req) => {
     const id = idParam(req);
+    await docs.assertCase(req.auth!.firmId, id);
     const purpose = (req.params as any).purpose as string;
     const data = await caseData(id, req.auth!.firmId);
     if (purpose === 'engineer_link') return site.createVisitLink(actorOf(req), id);
@@ -166,6 +167,8 @@ export async function caseRoutes(app: FastifyInstance) {
   });
   app.patch('/api/assignments/:id/captures/:cid', { preHandler: can('edit') }, async (req) => {
     const b = body(req, z.object({ inReport: z.boolean() }));
+    const a = await docs.assertCase(req.auth!.firmId, idParam(req));
+    if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
     await db.updateTable('evidence_captures').set({ in_report: b.inReport ? 1 : 0 }).where('id', '=', idParam(req, 'cid')).where('assignment_id', '=', idParam(req)).execute();
     return { ok: true };
   });
@@ -179,7 +182,11 @@ export async function caseRoutes(app: FastifyInstance) {
   });
 
   // ---- checks ----
-  app.get('/api/assignments/:id/checks', async (req) => summary(idParam(req)).then(async (s) => (s.items.length ? s : runChecks(idParam(req), req.auth!.firmId))));
+  app.get('/api/assignments/:id/checks', async (req) => {
+    await docs.assertCase(req.auth!.firmId, idParam(req));
+    const s = await summary(idParam(req));
+    return s.items.length ? s : runChecks(idParam(req), req.auth!.firmId);
+  });
   app.post('/api/assignments/:id/checks/run', async (req) => runChecks(idParam(req), req.auth!.firmId));
   app.post('/api/assignments/:id/checks/:cid/accept', { preHandler: can('edit') }, async (req) => {
     const b = body(req, z.object({ reason: z.string() }));
@@ -223,8 +230,9 @@ export async function caseRoutes(app: FastifyInstance) {
     const { file, buffer } = await readFile(idParam(req), req.auth!.firmId);
     const kyc = await db.selectFrom('files').select('is_kyc').where('id', '=', file.id).executeTakeFirst();
     if (kyc?.is_kyc) throw badRequest('KYC pages are not shown');
-    reply.header('Content-Type', file.mime).header('Cache-Control', 'private, max-age=3600');
-    if ((req.query as any).download) reply.header('Content-Disposition', `attachment; filename="${encodeURIComponent(file.original_name ?? `file-${file.id}`)}"`);
+    const inline = /^image\/(jpeg|png|webp)$/.test(file.mime) || file.mime === 'application/pdf';
+    reply.header('Content-Type', file.mime).header('Cache-Control', 'private, max-age=3600').header('X-Content-Type-Options', 'nosniff');
+    if (!inline || (req.query as any).download) reply.header('Content-Disposition', `attachment; filename="${encodeURIComponent(file.original_name ?? `file-${file.id}`)}"`);
     return reply.send(buffer);
   });
 }

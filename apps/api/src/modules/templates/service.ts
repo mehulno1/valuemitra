@@ -65,8 +65,19 @@ export async function uploadTemplate(
     }).executeTakeFirstOrThrow();
     templateId = Number(r.insertId);
   }
-  const tpl = await tx.selectFrom('report_templates').selectAll().where('id', '=', templateId).executeTakeFirst();
+  let tpl = await tx.selectFrom('report_templates').selectAll().where('id', '=', templateId).executeTakeFirst();
   if (!tpl || (tpl.firm_id !== null && tpl.firm_id !== actor.firmId)) throw notFound('Template');
+  if (tpl.firm_id === null && firmId !== null) {
+    // a firm revising a platform format gets its own copy; the platform version is never changed by a firm
+    const copyCode = `${tpl.code}_F${firmId}`.slice(0, 60);
+    const own = await tx.selectFrom('report_templates').selectAll().where('firm_id', '=', firmId).where('code', '=', copyCode).executeTakeFirst();
+    if (own) tpl = own;
+    else {
+      const r = await tx.insertInto('report_templates').values({ firm_id: firmId, bank_id: tpl.bank_id, code: copyCode, name: tpl.name, property_types: toJson(json(tpl.property_types, [])), branch_scope: toJson(json(tpl.branch_scope, ['*'])), created_by: actor.id ?? null }).executeTakeFirstOrThrow();
+      tpl = (await tx.selectFrom('report_templates').selectAll().where('id', '=', Number(r.insertId)).executeTakeFirstOrThrow());
+    }
+    templateId = tpl.id;
+  }
   const draft = await tx.selectFrom('template_versions').select('id').where('template_id', '=', templateId).where('status', '=', 'draft').executeTakeFirst();
   if (draft) throw conflict('This format already has a draft version. Publish or discard it first.');
 
@@ -148,7 +159,7 @@ async function assertDraft(firmId: number | null, versionId: number, tx: Tx) {
     .select(['v.id', 'v.status', 'v.template_id', 'v.version', 'v.source_file_id', 'v.layout_json', 'v.effective_from', 't.firm_id', 't.name'])
     .where('v.id', '=', versionId)
     .executeTakeFirst();
-  if (!v || (v.firm_id !== null && v.firm_id !== firmId)) throw notFound('Template version');
+  if (!v || v.firm_id !== firmId) throw notFound('Template version');
   if (v.status !== 'draft') throw conflict('A published version cannot be changed. Upload a revised template to create a new version.');
   return v;
 }

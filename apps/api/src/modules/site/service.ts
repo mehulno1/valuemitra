@@ -15,6 +15,7 @@ import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
 import { getSettings } from '../../platform/settings.js';
 import { readFile, saveFile } from '../../platform/storage.js';
+import { DOCS, IMAGES, requireKind } from '../../lib/sniff.js';
 import { caseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { extractFields, preparePages, syncChecklist } from '../documents/reader.js';
@@ -172,11 +173,12 @@ export async function engineerUpload(token: string, kind: 'sheet' | 'photos', fi
   if (!files.length) throw badRequest('Choose files to upload');
   if (visit.status === 'assigned') await db.updateTable('site_visits').set({ status: 'in_progress' }).where('id', '=', visit.id).execute();
   if (kind === 'photos') {
-    for (const f of files) if (!f.mime.startsWith('image/')) throw badRequest(`${f.name} is not a photo`);
+    for (const f of files) requireKind(f.buffer, IMAGES, f.name);
     const ids = await addPhotos(assignment.firm_id, assignment.id, visit.id, files, 'engineer');
     return { photos: ids.length };
   }
-  const stored = await saveFile({ firmId: assignment.firm_id, purpose: 'upload', folder: `a${assignment.id}/uploads`, buffer: files[0].buffer, name: files[0].name, mime: files[0].mime });
+  const mime = requireKind(files[0].buffer, DOCS, files[0].name);
+  const stored = await saveFile({ firmId: assignment.firm_id, purpose: 'upload', folder: `a${assignment.id}/uploads`, buffer: files[0].buffer, name: files[0].name, mime });
   await db.insertInto('documents').values({ firm_id: assignment.firm_id, assignment_id: assignment.id, file_id: stored.id, batch_no: 0, channel: 'Engineer link', received_from: assignment.engineer, role: 'site_sheet' }).execute();
   return { sheet: true };
 }
@@ -204,7 +206,8 @@ export async function officeUploadPhotos(actor: Actor, assignmentId: number, fil
   } else if (visit.status !== 'submitted') {
     await db.updateTable('site_visits').set({ status: 'submitted', submitted_at: new Date(), visit_date: new Date() }).where('id', '=', visit.id).execute();
   }
-  const ids = await addPhotos(actor.firmId!, assignmentId, visit.id, files.filter((f) => f.mime.startsWith('image/')), 'engineer');
+  for (const f of files) requireKind(f.buffer, IMAGES, f.name);
+  const ids = await addPhotos(actor.firmId!, assignmentId, visit.id, files, 'engineer');
   await audit(actor, { entityType: 'site_visit', entityId: visit.id, assignmentId, action: 'site.photos', summary: `${ids.length} site photo(s) uploaded from the office.` });
   await enqueue('site.analyse_photos', { assignmentId }, { firmId: actor.firmId, dedupeKey: `photos:${assignmentId}` });
   await publish({ type: 'site.submitted', firmId: actor.firmId, entityType: 'assignment', entityId: assignmentId, payload: {} });

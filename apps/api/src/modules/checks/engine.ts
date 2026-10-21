@@ -195,6 +195,9 @@ export async function summary(assignmentId: number, tx: Tx = db) {
 /** Accept a warning with a reason (feeds threshold tuning in the learning system). */
 export async function acceptCheck(actor: Actor, assignmentId: number, checkId: number, reason: string) {
   if (!reason?.trim()) throw badRequest('Give the reason for accepting this');
+  const a = await db.selectFrom('assignments').select(['id', 'signed_at']).where('id', '=', assignmentId).where('firm_id', '=', actor.firmId!).executeTakeFirst();
+  if (!a) throw notFound('Assignment');
+  if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
   const c = await db.selectFrom('check_results').selectAll().where('id', '=', checkId).where('assignment_id', '=', assignmentId).executeTakeFirst();
   if (!c) throw notFound('Check');
   if (c.severity === 'crit') throw badRequest('A critical item must be resolved, not accepted');

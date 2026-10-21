@@ -12,6 +12,7 @@ import { audit, systemActor, type Actor } from '../../platform/audit.js';
 import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
 import { readFile, saveFile } from '../../platform/storage.js';
+import { DOCS, requireKind } from '../../lib/sniff.js';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { assertCase } from '../documents/service.js';
@@ -50,8 +51,8 @@ export async function captureEvidence(actor: Actor, assignmentId: number, files:
   const a = await assertCase(actor.firmId!, assignmentId);
   const ids: number[] = [];
   for (const f of files) {
-    if (!(f.mime === 'application/pdf' || f.mime.startsWith('image/'))) throw badRequest(`${f.name}: capture pages as PDF or screenshots`);
-    const stored = await saveFile({ firmId: a.firm_id, purpose: 'evidence', folder: `a${a.id}/evidence`, buffer: f.buffer, name: f.name, mime: f.mime, userId: actor.id });
+    const mime = requireKind(f.buffer, DOCS, f.name);
+    const stored = await saveFile({ firmId: a.firm_id, purpose: 'evidence', folder: `a${a.id}/evidence`, buffer: f.buffer, name: f.name, mime, userId: actor.id });
     const r = await db.insertInto('evidence_captures').values({ assignment_id: a.id, file_id: stored.id, source_kind: kind, source_name: sourceName, url, captured_by: actor.id ?? null }).executeTakeFirstOrThrow();
     ids.push(Number(r.insertId));
     await enqueue('evidence.read', { captureId: Number(r.insertId) }, { firmId: a.firm_id });

@@ -10,6 +10,7 @@ import { financialYear } from '@vm/shared';
 import { peekNumber, setNext } from '../../platform/sequences.js';
 import { DEFAULT_SETTINGS, getSettings, setSettings, type FirmSettings } from '../../platform/settings.js';
 import { purgeFile, saveFile } from '../../platform/storage.js';
+import { IMAGES, requireKind } from '../../lib/sniff.js';
 
 export async function firmProfile(firmId: number) {
   const firm = await db.selectFrom('firms').selectAll().where('id', '=', firmId).executeTakeFirstOrThrow();
@@ -59,7 +60,7 @@ export async function uploadBranding(actor: Actor, kind: 'letterhead' | 'signatu
     await audit(actor, { entityType: 'firm', action: 'firm.branding', summary: `${kind} removed` });
     return null;
   }
-  if (!file.mime.startsWith('image/')) throw badRequest('Upload an image (PNG works best)');
+  requireKind(file.buffer, IMAGES, file.name);
   const buf = await sharp(file.buffer).rotate().resize({ width: kind === 'letterhead' ? 2400 : 900, withoutEnlargement: true }).png().toBuffer();
   const stored = await saveFile({ firmId: actor.firmId!, purpose: 'branding', buffer: buf, name: file.name, mime: 'image/png', userId: actor.id });
   await setSettings(actor.firmId!, { [key]: stored.id } as any, actor.id ?? null);

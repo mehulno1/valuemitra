@@ -13,6 +13,7 @@ import * as tpl from '../modules/templates/service.js';
 import { buildRenderData } from '../modules/reports/data.js';
 import { renderDocx } from '../modules/templates/render.js';
 import { body, idParam, multipartFiles } from './util.js';
+import { requireKind } from '../lib/sniff.js';
 
 const KINDS: ConfigKind[] = ['profile', 'rule_set', 'check_set', 'wording', 'doc_types'];
 
@@ -119,7 +120,11 @@ export async function adminRoutes(app: FastifyInstance) {
     if (!KINDS.includes(kind)) throw badRequest('Unknown configuration');
     return listConfig(kind, req.auth!.firmId, (req.query as any).key);
   });
-  app.get('/api/admin/config/version/:id', async (req) => configById(idParam(req)));
+  app.get('/api/admin/config/version/:id', async (req) => {
+    const v = await configById(idParam(req));
+    if (v.firm_id !== null && v.firm_id !== req.auth!.firmId) throw badRequest('Not found');
+    return v;
+  });
   app.put('/api/admin/config/:kind/:key', { preHandler: requirePerm('config') }, async (req) => {
     const kind = (req.params as any).kind as ConfigKind;
     if (!KINDS.includes(kind)) throw badRequest('Unknown configuration');
@@ -137,7 +142,8 @@ export async function adminRoutes(app: FastifyInstance) {
   app.post('/api/templates/upload', { preHandler: requirePerm('config') }, async (req) => {
     const { files, fields } = await multipartFiles(req);
     const f = files[0];
-    if (!f || !/\.docx$/i.test(f.name)) throw badRequest('Upload the bank template as a .docx Word file (save .doc files as .docx first)');
+    if (!f) throw badRequest('Choose the bank template file');
+    requireKind(f.buffer, ['docx'], f.name.replace(/\.doc$/i, '.doc (save it as .docx first)'));
     return db.transaction().execute((tx) => tpl.uploadTemplate(actorOf(req), {
       templateId: fields.templateId ? Number(fields.templateId) : undefined, bankCode: fields.bankCode || undefined, name: fields.name || undefined,
       propertyTypes: fields.propertyTypes ? fields.propertyTypes.split(',') : undefined, branchScope: fields.branchScope ? fields.branchScope.split(',') : undefined,
@@ -158,11 +164,12 @@ export async function adminRoutes(app: FastifyInstance) {
   });
   app.delete('/api/templates/versions/:id', { preHandler: requirePerm('config') }, async (req) => { await tpl.discardDraftVersion(actorOf(req), idParam(req)); return { ok: true }; });
   /** Preview: render a version (draft or published) against a past case of this firm. */
-  app.get('/api/templates/versions/:id/preview', async (req, reply) => {
+  app.get('/api/templates/versions/:id/preview', { preHandler: requirePerm('config') }, async (req, reply) => {
     const assignmentId = Number((req.query as any).assignmentId);
     const a = await db.selectFrom('assignments').select(['id']).where('id', '=', assignmentId).where('firm_id', '=', req.auth!.firmId).executeTakeFirst();
     if (!a) throw badRequest('Choose one of your cases to preview with');
-    const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirstOrThrow();
+    const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
+    if (!v || (v.firm_id !== null && v.firm_id !== req.auth!.firmId)) throw badRequest('Template version not found');
     const { compiled } = await tpl.compileVersion(v.firm_id, idParam(req));
     // render with this version's mapping: temporarily treat it as the case's template
     const built = await buildRenderData(assignmentId, req.auth!.firmId, 'preview', db);
