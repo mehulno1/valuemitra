@@ -553,6 +553,8 @@ function ExportTab() {
 
 // ---- setup --------------------------------------------------------------------------------------------------
 function SetupTab() {
+  const { can } = useAuth();
+  const payOk = can('set');
   const q = useSetup();
   const toast = useToast();
   const onErr = useErrorToast();
@@ -563,7 +565,10 @@ function SetupTab() {
   const [next, setNext] = useState('');
   useEffect(() => { if (q.data) { setF(q.data.settings); setPan(q.data.firm.pan ?? ''); setNext(String(q.data.next.invoice)); } }, [q.data]);
   const save = useMutation({
-    mutationFn: () => api.patch('/api/billing/setup', { settings: f, pan: pan || null, ...(Number(next) !== q.data?.next.invoice ? { nextInvoice: Number(next) } : {}) }),
+    mutationFn: () => {
+      const { bank_account, upi_id, ...rest } = f!;
+      return api.patch('/api/billing/setup', { settings: payOk ? f : rest, ...(payOk ? { pan: pan || null } : {}), ...(Number(next) !== q.data?.next.invoice ? { nextInvoice: Number(next) } : {}) });
+    },
     onSuccess: () => { toast('Billing setup saved'); inval(); },
     onError: onErr,
   });
@@ -578,7 +583,7 @@ function SetupTab() {
           <h3>Firm tax details</h3>
           <Field label="Firm GSTIN" hint={<>Change in <Link to="/settings/firm">Firm settings</Link></>}><input className="mono" value={d.firm.gstin ?? ''} disabled /></Field>
           <Field label="State (for CGST/SGST vs IGST)"><input value={d.firm.state_code ? `${gstStateName(d.firm.state_code)} (${d.firm.state_code})` : 'Not set'} disabled /></Field>
-          <Field label="PAN"><input className="mono" value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} maxLength={10} /></Field>
+          <Field label="PAN"><input className="mono" disabled={!payOk} value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} maxLength={10} /></Field>
           <Field label="SAC code" hint="Confirm with your CA"><input className="mono" value={f.sac} onChange={(e) => set('sac', e.target.value)} /></Field>
           <Field label="GST %"><input inputMode="decimal" value={f.gst_pct} onChange={(e) => set('gst_pct', e.target.value as any)} /></Field>
           <Field label="TDS by banks, % of taxable value" hint="Default on the payment form (section 194J)"><input inputMode="decimal" value={f.tds_pct} onChange={(e) => set('tds_pct', e.target.value as any)} /></Field>
@@ -589,12 +594,13 @@ function SetupTab() {
           <Field label="Proforma" hint={`Next: ${sample(f.proforma_pattern, d.next.proforma)}`}><input className="mono" value={f.proforma_pattern} onChange={(e) => set('proforma_pattern', e.target.value)} /></Field>
           <Field label="Credit note" hint={`Next: ${sample(f.credit_note_pattern, d.next.credit_note)}`}><input className="mono" value={f.credit_note_pattern} onChange={(e) => set('credit_note_pattern', e.target.value)} /></Field>
           <h3>Payment details printed on invoices</h3>
-          <Field label="Bank"><input value={f.bank_account.bank} onChange={(e) => set('bank_account', { ...f.bank_account, bank: e.target.value })} /></Field>
-          <Field label="Branch"><input value={f.bank_account.branch} onChange={(e) => set('bank_account', { ...f.bank_account, branch: e.target.value })} /></Field>
-          <Field label="Account name"><input value={f.bank_account.name} onChange={(e) => set('bank_account', { ...f.bank_account, name: e.target.value })} /></Field>
-          <Field label="Account no."><input className="mono" value={f.bank_account.number} onChange={(e) => set('bank_account', { ...f.bank_account, number: e.target.value })} /></Field>
-          <Field label="IFSC"><input className="mono" value={f.bank_account.ifsc} onChange={(e) => set('bank_account', { ...f.bank_account, ifsc: e.target.value.toUpperCase() })} /></Field>
-          <Field label="UPI ID for the QR" hint="Borrower invoices carry a QR for the balance"><input className="mono" value={f.upi_id} onChange={(e) => set('upi_id', e.target.value.trim())} placeholder="firm@okbank" /></Field>
+          {!payOk && <div className="full sub">Bank account, UPI ID and PAN can be changed by someone with the Settings permission, so payments cannot be redirected.</div>}
+          <Field label="Bank"><input value={f.bank_account.bank} disabled={!payOk} onChange={(e) => set('bank_account', { ...f.bank_account, bank: e.target.value })} /></Field>
+          <Field label="Branch"><input value={f.bank_account.branch} disabled={!payOk} onChange={(e) => set('bank_account', { ...f.bank_account, branch: e.target.value })} /></Field>
+          <Field label="Account name"><input value={f.bank_account.name} disabled={!payOk} onChange={(e) => set('bank_account', { ...f.bank_account, name: e.target.value })} /></Field>
+          <Field label="Account no."><input className="mono" value={f.bank_account.number} disabled={!payOk} onChange={(e) => set('bank_account', { ...f.bank_account, number: e.target.value })} /></Field>
+          <Field label="IFSC"><input className="mono" value={f.bank_account.ifsc} disabled={!payOk} onChange={(e) => set('bank_account', { ...f.bank_account, ifsc: e.target.value.toUpperCase() })} /></Field>
+          <Field label="UPI ID for the QR" hint="Borrower invoices carry a QR for the balance"><input className="mono" disabled={!payOk} value={f.upi_id} onChange={(e) => set('upi_id', e.target.value.trim())} placeholder="firm@okbank" /></Field>
           <Field label="Note under the totals" full><input value={f.invoice_note} onChange={(e) => set('invoice_note', e.target.value)} placeholder="e.g. Payment within 30 days. Subject to Thane jurisdiction." /></Field>
           <h3>Engineers and Tally</h3>
           <Field label="Default fee per site visit" hint="When the engineer has no fee of their own"><input inputMode="numeric" value={f.engineer_fee} onChange={(e) => set('engineer_fee', e.target.value as any)} /></Field>

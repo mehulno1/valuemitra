@@ -9,7 +9,9 @@ import { Loading, PageHead, Panel, fmtDate, useErrorToast, useToast } from '@/co
 const RR_COLS = ['year_label', 'state_code', 'district', 'taluka', 'village', 'village_alt', 'zone', 'category', 'rate_per_sqm'];
 
 const csvCell = (v: unknown) => {
-  const s = v === null || v === undefined ? '' : String(v);
+  const raw = v === null || v === undefined ? '' : String(v);
+  // a text cell starting with = + - @ would run as a formula in Excel; prefix it with '
+  const s = /^[=+\-@\t\r]/.test(raw) && !/^-?\d+(\.\d+)?$/.test(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 const toCsv = (head: string[], rows: unknown[][]) => [head, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');

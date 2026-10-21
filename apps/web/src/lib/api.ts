@@ -97,7 +97,9 @@ export async function downloadUrl(url: string, name: string) {
 
 /** Save text as a CSV file (BOM so Excel reads UTF-8). */
 export function saveCsv(name: string, head: string[], rows: unknown[][]) {
-  const cell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const cell = (v: unknown) => { const raw = v === null || v === undefined ? '' : String(v);
+  // a text cell starting with = + - @ would run as a formula in Excel; prefix it with '
+  const s = /^[=+\-@\t\r]/.test(raw) && !/^-?\d+(\.\d+)?$/.test(raw) ? `'${raw}` : raw; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const text = [head, ...rows].map((r) => r.map(cell).join(',')).join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' }));

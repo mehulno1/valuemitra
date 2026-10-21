@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { PAY_MODES, financialYear } from '@vm/shared';
 import { db } from '../db/index.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, forbidden } from '../lib/errors.js';
 import { audit } from '../platform/audit.js';
 import { actorOf, authenticate, requirePerm } from '../platform/auth.js';
 import { peekNumber, setNext } from '../platform/sequences.js';
@@ -36,6 +36,9 @@ export async function billingRoutes(app: FastifyInstance) {
   app.patch('/api/billing/setup', { preHandler: can('bill') }, async (req) => {
     const b = body(req, z.object({ settings: z.record(z.string(), z.any()).optional(), pan: z.string().nullish(), nextInvoice: z.number().int().positive().optional() }));
     const firmId = req.auth!.firmId;
+    // where customers pay (bank account, UPI) and the PAN on invoices need the Settings permission too
+    const paymentKeys = ['bank_account', 'upi_id'].filter((k) => b.settings?.[k] !== undefined);
+    if ((paymentKeys.length || b.pan !== undefined) && req.auth!.role !== 'admin' && !req.auth!.perms.has('set')) throw forbidden('Changing the bank account, UPI ID or PAN needs the Settings permission');
     const patch = Object.fromEntries(Object.entries(b.settings ?? {}).filter(([k]) => (BILLING_KEYS as readonly string[]).includes(k))) as Partial<FirmSettings>;
     for (const k of ['invoice_pattern', 'proforma_pattern', 'credit_note_pattern'] as const) if (patch[k] !== undefined && !String(patch[k]).includes('{N}')) throw badRequest('Each number pattern needs {N} for the serial');
     if (patch.sac !== undefined && !/^\d{4,8}$/.test(String(patch.sac))) throw badRequest('SAC: 4 to 8 digits');

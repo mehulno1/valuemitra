@@ -33,7 +33,12 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 const gstDate = (d: string) => `${d.slice(8, 10)}-${MON[Number(d.slice(5, 7)) - 1]}-${d.slice(2, 4)}`; // 21-Oct-26
 const pos = (code: string) => `${code}-${gstStateName(code)}`;
 const n2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
-const cell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+// a text cell starting with = + - @ would run as a formula in Excel; prefix it with ' (numbers stay numbers)
+const cell = (v: unknown) => {
+  const raw = v === null || v === undefined ? '' : String(v);
+  const s = /^[=+\-@\t\r]/.test(raw) && !/^-?\d+(\.\d+)?$/.test(raw) ? `'${raw}` : raw;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 const csv = (head: string[], rows: unknown[][]) => [head, ...rows].map((r) => r.map(cell).join(',')).join('\r\n');
 const xml = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
