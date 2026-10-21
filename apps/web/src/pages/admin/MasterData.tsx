@@ -13,6 +13,7 @@ interface DictField {
   id: number; code: string; version: number; label: string; group: string; description: string | null; type: string; unit: string | null; enum: string[] | null;
   applies: string[]; sources: string[]; derivation: string | null; hint: string | null; aliases: string[]; pending: string | null; sort: number; status: 'active' | 'deprecated'; firmOwned: boolean;
 }
+interface FormatUsage { templateId: number; name: string; bankCode: string | null; propertyTypes: string[]; version: number; status: 'published' | 'draft'; fields: Record<string, string[]> }
 interface ConfigVersion { id: number; firm_id: number | null; ckey: string; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; payload: any; change_note: string | null; created_at: string; published_at: string | null }
 type Kind = 'profile' | 'check_set' | 'wording' | 'doc_types';
 
@@ -59,7 +60,9 @@ function FieldsTab() {
   const toast = useToast();
   const onErr = useErrorToast();
   const fields = useQuery({ queryKey: ['fields'], queryFn: () => api.get<DictField[]>('/api/admin/fields') });
+  const usage = useQuery({ queryKey: ['field-usage'], queryFn: () => api.get<FormatUsage[]>('/api/admin/fields/usage') });
   const [group, setGroup] = useState('');
+  const [fmt, setFmt] = useState('');
   const [q, setQ] = useState('');
   const [showDep, setShowDep] = useState(false);
   const [sel, setSel] = useState<string | null>(null);
@@ -76,7 +79,10 @@ function FieldsTab() {
   const all = fields.data ?? [];
   const groups = useMemo(() => [...new Set(all.map((f) => f.group))].sort(), [all]);
   const s = q.trim().toLowerCase();
-  const rows = all.filter((f) => (!group || f.group === group) && (showDep || f.status !== 'deprecated') && (!s || f.code.toLowerCase().includes(s) || f.label.toLowerCase().includes(s) || f.aliases.some((a) => a.toLowerCase().includes(s))));
+  const formats = usage.data ?? [];
+  const fmtSel = formats.find((u) => String(u.templateId) === fmt);
+  const fmtName = (u: FormatUsage) => `${u.bankCode ?? 'Any bank'} · ${u.name} (v${u.version}${u.status === 'draft' ? ' draft' : ''})`;
+  const rows = all.filter((f) => (!fmtSel || f.code in fmtSel.fields) && (!group || f.group === group) && (showDep || f.status !== 'deprecated') && (!s || f.code.toLowerCase().includes(s) || f.label.toLowerCase().includes(s) || f.aliases.some((a) => a.toLowerCase().includes(s))));
   const cur = all.find((f) => f.code === sel);
 
   return (
@@ -84,6 +90,7 @@ function FieldsTab() {
       <section className="panel min-w-0">
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
           <select className="inp" style={{ width: 'auto' }} value={group} onChange={(e) => setGroup(e.target.value)} aria-label="Group"><option value="">All groups ({all.length})</option>{groups.map((g) => <option key={g} value={g}>{g} ({all.filter((f) => f.group === g).length})</option>)}</select>
+          <select className="inp" style={{ width: 'auto', maxWidth: 320 }} value={fmt} onChange={(e) => setFmt(e.target.value)} aria-label="Bank format"><option value="">All bank formats</option>{formats.map((u) => <option key={u.templateId} value={u.templateId}>{fmtName(u)} · {Object.keys(u.fields).length} fields</option>)}</select>
           <input className="inp" style={{ maxWidth: 240 }} type="search" placeholder="Search ID, label or alias" value={q} onChange={(e) => setQ(e.target.value)} />
           <label className="sub flex items-center gap-1.5"><input type="checkbox" checked={showDep} onChange={(e) => setShowDep(e.target.checked)} /> Show deprecated</label>
           {can('config') && <button className="btn sm pri ml-auto" onClick={() => setForm(toForm())}>+ Add field</button>}
@@ -91,18 +98,19 @@ function FieldsTab() {
         {fields.isLoading ? <Loading /> : (
           <div className="tablewrap" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
             <table className="list click">
-              <thead><tr><th>Field ID</th><th>Label</th><th>Type</th><th>Sources</th><th>v</th></tr></thead>
+              <thead><tr><th>Field ID</th><th>Label</th>{fmtSel && <th>Printed as</th>}<th>Type</th><th>Sources</th><th>v</th></tr></thead>
               <tbody>
                 {rows.map((f) => (
                   <tr key={f.code} onClick={() => setSel(f.code)} style={f.code === sel ? { background: 'var(--stamp-soft)' } : f.status === 'deprecated' ? { opacity: 0.55 } : undefined}>
                     <td className="mono text-[12.5px]">{f.code}</td>
                     <td>{f.label}{f.status === 'deprecated' && <span className="tag ml-1">deprecated</span>}{f.firmOwned && <span className="tag ml-1">your firm</span>}</td>
+                    {fmtSel && <td className="sub">{fmtSel.fields[f.code].join(' · ') || 'placeholder tag'}</td>}
                     <td className="sub">{f.type}{f.unit ? ` · ${f.unit}` : ''}</td>
                     <td className="sub">{f.derivation ? 'derived' : f.sources.slice(0, 3).join(', ')}{f.sources.length > 3 ? '…' : ''}</td>
                     <td className="mono sub">{f.version}</td>
                   </tr>
                 ))}
-                {!rows.length && <tr><td colSpan={5} className="muted">No fields match.</td></tr>}
+                {!rows.length && <tr><td colSpan={fmtSel ? 6 : 5} className="muted">No fields match.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -118,6 +126,17 @@ function FieldsTab() {
               ] as [string, ReactNode][]).filter(([, v]) => v).map(([k, v]) => <div key={k}><dt className="eyebrow">{k}</dt><dd className="m-0 break-words">{v}</dd></div>)}
             </dl>
             <div className="mt-4 border-t border-line pt-3">
+              <b className="text-[13px]">Printed in</b>
+              {(() => {
+                const used = formats.filter((u) => cur.code in u.fields);
+                return used.length ? (
+                  <ul className="m-0 mt-2 grid gap-1.5 pl-0" style={{ listStyle: 'none' }}>
+                    {used.map((u) => <li key={u.templateId} className="text-[12.5px]">{fmtName(u)}<div className="sub">{u.fields[cur.code].length ? `as “${u.fields[cur.code].join('”, “')}”` : 'as a placeholder tag'}</div></li>)}
+                  </ul>
+                ) : <p className="sub m-0 mt-1 text-[12.5px]">No bank format prints this field. It can still be read from documents and used in checks and valuation.</p>;
+              })()}
+            </div>
+            <div className="mt-4 border-t border-line pt-3">
               <b className="text-[13px]">History</b>
               {history.isLoading ? <Loading /> : (
                 <ol className="m-0 mt-2 grid gap-1.5 pl-0" style={{ listStyle: 'none' }}>
@@ -129,7 +148,7 @@ function FieldsTab() {
             </div>
           </Panel>
         ) : <Panel title="Field details"><p className="sub m-0">Choose a field to see its definition and history.</p></Panel>}
-        <Panel title="How fields work"><p className="sub m-0">Every fact in a report is one canonical field. Bank formats map their labels to these fields, so a value is captured once and printed everywhere. Changing a field creates a new version; deprecate instead of deleting.</p></Panel>
+        <Panel title="How fields work"><p className="sub m-0">Fields don't belong to a bank. Each fact (built-up area, O.C. date…) is one field shared by every bank format; each format maps its own labels to these fields, so a value is captured once and printed in whichever format the case uses. To see one format's fields, pick it in "All bank formats"; choose a field to see which formats print it and under what label. "Applies to" gives the property types. Changing a field creates a new version; deprecate instead of deleting.</p></Panel>
       </aside>
       {form && <FieldEditor form={form} setForm={setForm} groups={groups} saving={save.isPending} onSave={() => save.mutate(form)} />}
     </div>

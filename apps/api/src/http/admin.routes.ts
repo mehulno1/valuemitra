@@ -100,6 +100,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // ---- master data: canonical dictionary ----
   app.get('/api/admin/fields', async (req) => [...(await dictionary(req.auth!.firmId)).values()].sort((a, b) => a.group.localeCompare(b.group) || a.sort - b.sort));
+  app.get('/api/admin/fields/usage', async (req) => tpl.fieldUsage(req.auth!.firmId));
   app.get('/api/admin/fields/:code/history', async (req) => fieldHistory(req.auth!.firmId, (req.params as any).code));
   app.post('/api/admin/fields', { preHandler: requirePerm('config') }, async (req) => saveField(actorOf(req), req.body as any));
 

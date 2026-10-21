@@ -263,3 +263,26 @@ export async function pickTemplateVersion(firmId: number, bankId: number, branch
   });
   return fits[0] ?? null;
 }
+
+/** Which bank formats print each field: per format (its live version, else its newest draft), field code → the format's labels. */
+export async function fieldUsage(firmId: number) {
+  const formats = (await listTemplates(firmId)).filter((t) => t.status === 'active');
+  const pick = formats.map((t) => ({ t, v: t.versions.find((v) => v.status === 'published') ?? t.versions.find((v) => v.status === 'draft') })).filter((x) => x.v);
+  const maps = await db
+    .selectFrom('template_mappings')
+    .select(['template_version_id', 'field_code', 'label_text'])
+    .where('template_version_id', 'in', pick.length ? pick.map((x) => x.v!.id) : [0])
+    .where('field_code', 'is not', null)
+    .where('ignored', '=', 0)
+    .execute();
+  return pick.map(({ t, v }) => {
+    const fields: Record<string, string[]> = {};
+    for (const m of maps) {
+      if (m.template_version_id !== v!.id) continue;
+      const labels = (fields[m.field_code!] ??= []);
+      // a placeholder tag's "label" is the field code itself
+      if (m.label_text !== m.field_code && !labels.includes(m.label_text)) labels.push(m.label_text);
+    }
+    return { templateId: t.id, name: t.name, bankCode: t.bank_code, propertyTypes: t.property_types as string[], version: v!.version, status: v!.status, fields };
+  });
+}
