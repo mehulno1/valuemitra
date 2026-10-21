@@ -23,10 +23,20 @@ export async function docTypes(firmId: number): Promise<DocType[]> {
 
 const MAX_PAGE_CHARS = 3500;
 
+/**
+ * The file a document is read from: the original upload while it still exists, else the stored
+ * (redacted) copy. Page numbers from reading always refer to this same file, so redaction does too.
+ */
+async function sourceFileId(d: { file_id: number; original_file_id: number | null }) {
+  if (!d.original_file_id) return d.file_id;
+  const o = await db.selectFrom('files').select('purged_at').where('id', '=', d.original_file_id).executeTakeFirst();
+  return o && !o.purged_at ? d.original_file_id : d.file_id;
+}
+
 /** Split the file into page images and OCR text; stores document_pages. */
 export async function preparePages(documentId: number) {
   const d = await db.selectFrom('documents').selectAll().where('id', '=', documentId).executeTakeFirstOrThrow();
-  const { file, buffer } = await readFile(d.file_id, d.firm_id);
+  const { file, buffer } = await readFile(await sourceFileId(d), d.firm_id);
   let images: Buffer[];
   if (file.mime === 'application/pdf') {
     const n = await pdfPageCount(buffer);
@@ -223,14 +233,18 @@ export async function readDocument(documentId: number) {
  */
 async function redactKyc(documentId: number, firmId: number, kycPages: number[], pageCount: number) {
   const d = await db.selectFrom('documents').select(['file_id', 'original_file_id', 'assignment_id']).where('id', '=', documentId).executeTakeFirstOrThrow();
+  // the same file the pages were read from, so page numbers line up
+  const readFrom = await sourceFileId(d);
   const originalId = d.original_file_id ?? d.file_id;
-  const { file, buffer } = await readFile(originalId, firmId);
+  const { file, buffer } = await readFile(readFrom, firmId);
   const keep = Array.from({ length: pageCount }, (_, i) => i + 1).filter((p) => !kycPages.includes(p));
-  await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', originalId).execute();
+  await db.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', [...new Set([originalId, readFrom])]).execute();
   if (file.mime === 'application/pdf' && keep.length) {
     const redacted = await extractPages(buffer, keep);
     const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
     await db.updateTable('documents').set({ file_id: f.id, original_file_id: originalId }).where('id', '=', documentId).execute();
+    // an earlier redacted copy that still held KYC pages is no longer needed
+    if (readFrom !== originalId) await purgeFile(readFrom);
   } else {
     await db.updateTable('documents').set({ original_file_id: originalId }).where('id', '=', documentId).execute();
   }

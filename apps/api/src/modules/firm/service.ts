@@ -11,6 +11,7 @@ import { peekNumber, setNext } from '../../platform/sequences.js';
 import { DEFAULT_SETTINGS, getSettings, setSettings, type FirmSettings } from '../../platform/settings.js';
 import { purgeFile, saveFile } from '../../platform/storage.js';
 import { IMAGES, requireKind } from '../../lib/sniff.js';
+import { kycFileIds } from '../../platform/retention.js';
 
 export async function firmProfile(firmId: number) {
   const firm = await db.selectFrom('firms').selectAll().where('id', '=', firmId).executeTakeFirstOrThrow();
@@ -181,9 +182,9 @@ export async function deletePersonalData(actor: Actor, assignmentId: number, req
     await tx.updateTable('assignments').set({ borrower_name: null, bank_contact: null, personal_data_removed_at: new Date() }).where('id', '=', assignmentId).execute();
     const personal = ['CUST.NAME', 'DOC.AGREEMENT.SELLER', 'DOC.AGREEMENT.BUYER', 'DOC.NOC.ISSUED_TO', 'OCC.PERSON_MET'];
     await tx.updateTable('field_values').set({ value_text: '(removed)', snippet: null, value_json: null }).where('assignment_id', '=', assignmentId).where('field_code', 'in', personal).execute();
-    const kyc = await tx.selectFrom('files as f').innerJoin('document_pages as p', (j) => j.on((eb) => eb.or([eb('p.image_file_id', '=', eb.ref('f.id')), eb('p.thumb_file_id', '=', eb.ref('f.id'))])))
-      .innerJoin('documents as d', 'd.id', 'p.document_id').select('f.id').where('d.assignment_id', '=', assignmentId).where('f.is_kyc', '=', 1).execute();
-    for (const k of kyc) await purgeFile(k.id, tx);
+    // KYC page images and original uploads that contained KYC pages
+    for (const id of await kycFileIds(assignmentId, tx)) await purgeFile(id, tx);
+    await tx.updateTable('documents').set({ original_file_id: null }).where('assignment_id', '=', assignmentId).execute();
     await audit(actor, { entityType: 'privacy', entityId: assignmentId, assignmentId, action: 'privacy.delete', summary: `Personal data removed for ${a.case_no} on request of ${requestedBy}; property and rate data kept.`, reason: `Borrower data request: ${requestedBy}` }, tx);
   });
 }
