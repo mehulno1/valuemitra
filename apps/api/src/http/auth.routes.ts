@@ -47,8 +47,9 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/auth/mfa/verify', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const { mfaToken: t, code } = body(req, z.object({ mfaToken: z.string(), code: z.string().min(6) }));
+    const { mfaToken: t, code } = body(req, z.object({ mfaToken: z.string(), code: z.string() }));
     const userId = await readMfaToken(t);
+    if (!/^\s*\d{3}\s?\d{3}\s*$/.test(code)) throw unauthorized('Enter the 6-digit number shown in your authenticator app (not the setup key).');
     if (!(await checkTotp(userId, code))) throw unauthorized('That code is not right. Use the current 6-digit code from your authenticator app.');
     await db.updateTable('users').set({ totp_enabled: 1 }).where('id', '=', userId).execute();
     return finish(req, reply, userId);

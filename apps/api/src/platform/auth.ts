@@ -117,11 +117,17 @@ export async function startTotpEnrolment(userId: number) {
 }
 
 export async function checkTotp(userId: number, code: string): Promise<boolean> {
+  const token = code.replace(/\s/g, '');
+  if (!/^\d{6}$/.test(token)) return false; // the library throws on anything else
   const u = await db.selectFrom('users').select(['totp_secret_enc']).where('id', '=', userId).executeTakeFirst();
   if (!u?.totp_secret_enc) return false;
   const s = decrypt(Buffer.from(u.totp_secret_enc));
-  const r = await verifyTotp({ secret: s, token: code.replace(/\s/g, ''), epochTolerance: 30 } as any);
-  return !!r.valid;
+  try {
+    const r = await verifyTotp({ secret: s, token, epochTolerance: 30 } as any);
+    return !!r.valid;
+  } catch {
+    return false;
+  }
 }
 
 // ---- request guards -----------------------------------------------------------------------

@@ -12,6 +12,7 @@ module.exports = {
       out_file: '/var/log/valuemitra-v2/api-out.log',
       error_file: '/var/log/valuemitra-v2/api-error.log',
       time: true,
+      merge_logs: true,
     },
   ],
 };
