@@ -27,6 +27,7 @@ export interface Assignments {
   bank_contact: string | null;
   bank_id: number;
   bank_ref_no: string | null;
+  bill_payer: "bank" | "borrower" | null;
   borrower_name: string | null;
   branch_id: number;
   case_no: string;
@@ -240,6 +241,26 @@ export interface ConfigVersions {
   version: number;
 }
 
+export interface CreditNotes {
+  cgst: Generated<Decimal>;
+  created_at: Generated<Date>;
+  created_by: number | null;
+  firm_id: number;
+  fy: string | null;
+  id: Generated<number>;
+  igst: Generated<Decimal>;
+  invoice_id: number;
+  kind: "credit_note" | "write_off";
+  note_date: Date;
+  note_no: string | null;
+  reason: string;
+  released_cases: Generated<number>;
+  seq: number | null;
+  sgst: Generated<Decimal>;
+  taxable: Generated<Decimal>;
+  total: Decimal;
+}
+
 export interface Dispatches {
   assignment_id: number;
   awb: string | null;
@@ -311,6 +332,20 @@ export interface Documents {
   role: Generated<"bank_docs" | "evidence" | "other" | "site_sheet">;
   status: Generated<"failed" | "read" | "reading" | "uploaded">;
   uploaded_by: number | null;
+}
+
+export interface EngineerPayouts {
+  amount: Decimal;
+  created_at: Generated<Date>;
+  created_by: number | null;
+  engineer_id: number;
+  fee_per_visit: Decimal;
+  firm_id: number;
+  id: Generated<number>;
+  paid_on: Date;
+  period_month: string;
+  ref_no: string | null;
+  visits: number;
 }
 
 export interface Engineers {
@@ -442,6 +477,54 @@ export interface FirmSettings {
   value_json: Json;
 }
 
+export interface InvoiceLines {
+  amount: Decimal;
+  assignment_id: number | null;
+  description: string;
+  id: Generated<number>;
+  invoice_id: number;
+  line_no: number;
+  ref_text: string;
+  released_at: Date | null;
+}
+
+export interface Invoices {
+  bank_id: number | null;
+  bill_mode: "batch" | "case";
+  bill_to_address: string | null;
+  bill_to_email: string | null;
+  bill_to_gstin: string | null;
+  bill_to_name: string;
+  bill_to_phone: string | null;
+  branch_id: number | null;
+  cancelled_at: Date | null;
+  cgst: Generated<Decimal>;
+  converted_invoice_id: number | null;
+  created_at: Generated<Date>;
+  created_by: number | null;
+  firm_id: number;
+  fy: string;
+  gst_rate: Decimal;
+  id: Generated<number>;
+  igst: Generated<Decimal>;
+  invoice_date: Date;
+  invoice_no: string;
+  kind: "proforma" | "tax";
+  notes: string | null;
+  payer: "bank" | "borrower";
+  period_label: string | null;
+  pos_code: string;
+  proforma_id: number | null;
+  round_off: Generated<Decimal>;
+  sac: string;
+  seller_json: Json;
+  sent_at: Date | null;
+  seq: number;
+  sgst: Generated<Decimal>;
+  taxable: Decimal;
+  total: Decimal;
+}
+
 export interface Jobs {
   attempts: Generated<number>;
   created_at: Generated<Date>;
@@ -472,6 +555,20 @@ export interface Messages {
   status: Generated<"copied" | "draft" | "failed" | "sent">;
   subject: string | null;
   to_text: string | null;
+}
+
+export interface Payments {
+  amount: Decimal;
+  created_at: Generated<Date>;
+  created_by: number | null;
+  firm_id: number;
+  id: Generated<number>;
+  invoice_id: number;
+  note: string | null;
+  pay_mode: string;
+  received_on: Date;
+  ref_no: string | null;
+  tds: Generated<Decimal>;
 }
 
 export interface ProductFeedback {
@@ -710,10 +807,12 @@ export interface DB {
   checklist_items: ChecklistItems;
   comparables: Comparables;
   config_versions: ConfigVersions;
+  credit_notes: CreditNotes;
   dispatches: Dispatches;
   document_pages: DocumentPages;
   document_parts: DocumentParts;
   documents: Documents;
+  engineer_payouts: EngineerPayouts;
   engineers: Engineers;
   events: Events;
   evidence_captures: EvidenceCaptures;
@@ -723,8 +822,11 @@ export interface DB {
   files: Files;
   firm_settings: FirmSettings;
   firms: Firms;
+  invoice_lines: InvoiceLines;
+  invoices: Invoices;
   jobs: Jobs;
   messages: Messages;
+  payments: Payments;
   product_feedback: ProductFeedback;
   ready_reckoner_rates: ReadyReckonerRates;
   refresh_tokens: RefreshTokens;

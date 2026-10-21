@@ -1,8 +1,6 @@
 // Report & sign-off and Output: live preview, draft sharing (watermarked), valuer-only signing with
 // gap-free report numbers, reopen as /R1, final Word + PDF, email/WhatsApp drafts, dispatch, register.
-import nodemailer from 'nodemailer';
 import { fillPattern, financialYear, pad } from '@vm/shared';
-import { env } from '../../config/env.js';
 import { db, toJson, type Tx } from '../../db/index.js';
 import { blocked, badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { docxToPdf, watermark } from '../../lib/pdf.js';
@@ -10,6 +8,7 @@ import { audit, systemActor, type Actor } from '../../platform/audit.js';
 import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
 import { nextNumber } from '../../platform/sequences.js';
+import { sendMail } from '../../platform/mail.js';
 import { getSettings } from '../../platform/settings.js';
 import { readFile, saveFile } from '../../platform/storage.js';
 import { scheduleKycPurge } from '../../platform/retention.js';
@@ -215,13 +214,11 @@ export async function updateDispatch(actor: Actor, assignmentId: number, patch: 
 }
 
 export async function sendReportEmail(actor: Actor, assignmentId: number, input: { to: string; subject: string; body: string }) {
-  if (!env.SMTP_HOST) throw badRequest('Email is not configured');
   const out = await outputView(actor.firmId!, assignmentId);
   if (!out.signed || out.render?.status !== 'ready') throw badRequest('The final report is not ready yet');
-  const transport = nodemailer.createTransport({ host: env.SMTP_HOST, port: env.SMTP_PORT ?? 587, secure: (env.SMTP_PORT ?? 587) === 465, auth: { user: env.SMTP_USER, pass: env.SMTP_PASS } });
   const attachments = [];
   for (const f of out.files!) attachments.push({ filename: f.original_name ?? 'report', content: (await readFile(f.id, actor.firmId!)).buffer });
-  await transport.sendMail({ from: { name: env.EMAIL_FROM_NAME ?? 'ValueMitra', address: env.EMAIL_FROM! }, to: input.to, subject: input.subject, text: input.body, attachments });
+  await sendMail({ to: input.to, subject: input.subject, text: input.body, attachments });
   await db.insertInto('messages').values({ firm_id: actor.firmId!, assignment_id: assignmentId, channel: 'email', purpose: 'report_email', to_text: input.to, subject: input.subject, body: input.body, status: 'sent', created_by: actor.id ?? null }).execute();
   await updateDispatch(actor, assignmentId, { email_sent: true });
   await db.updateTable('dispatches').set({ email_to: input.to }).where('assignment_id', '=', assignmentId).execute();

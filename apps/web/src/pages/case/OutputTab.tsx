@@ -1,6 +1,7 @@
 // Output: final Word + PDF, email and WhatsApp drafts, the dispatch checklist and the FY report register.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { financialYear, inr } from '@vm/shared';
 import { Empty, Loading, Panel, fmtDate, useErrorToast, useToast } from '@/components/ui';
 import { api, downloadFile } from '@/lib/api';
@@ -157,6 +158,8 @@ export default function OutputTab({ c, go, refresh }: TabProps) {
         </div>
       </div>
 
+      <BillingPanel c={c} refresh={refresh} />
+
       <Panel title={`Report register · FY ${fy.short}`} right={<span className="sub">continuous, no gaps</span>} pad={false}>
         {reg.isLoading ? <Loading /> : !reg.data?.length ? <p className="sub p-4">No reports signed this year yet.</p> : (
           <div className="tablewrap">
@@ -183,5 +186,39 @@ export default function OutputTab({ c, go, refresh }: TabProps) {
         )}
       </Panel>
     </div>
+  );
+}
+
+interface CaseBilling { enabled: boolean; sent: boolean; stage: string; invoices: { id: number; kind: 'tax' | 'proforma'; invoice_no: string; invoice_date: string; total: number; balance: number; paid: number; converted_invoice_id: number | null; cancelled_at: string | null; released_at: string | null }[] }
+
+/** Billing for this case: its invoices, or bill it now (when the firm has billing on). */
+function BillingPanel({ c, refresh }: Pick<TabProps, 'c' | 'refresh'>) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const err = useErrorToast();
+  const q = useQuery({ queryKey: caseKey(c.id, 'billing'), queryFn: () => api.get<CaseBilling>(`/api/assignments/${c.id}/billing`) });
+  const bill = useMutation({
+    mutationFn: () => api.post<{ id: number; invoiceNo: string }[]>('/api/billing/invoices', { assignmentIds: [c.id], mode: 'case', kind: 'tax' }),
+    onSuccess: (r) => { toast(`Invoice ${r.map((x) => x.invoiceNo).join(', ')} raised`); q.refetch(); refresh(); },
+    onError: err,
+  });
+  const d = q.data;
+  if (!d?.enabled) return null;
+  const live = d.invoices.filter((i) => !i.cancelled_at && !i.released_at && !(i.kind === 'proforma' && i.converted_invoice_id));
+  const tax = live.find((i) => i.kind === 'tax');
+  const pro = live.find((i) => i.kind === 'proforma');
+  const link = (i: CaseBilling['invoices'][number]) => (can('bill') ? <Link className="mono" to={`/billing/invoices/${i.id}`}>{i.invoice_no}</Link> : <span className="mono">{i.invoice_no}</span>);
+  return (
+    <Panel title="Billing" right={tax ? <span className={`chip c-${tax.balance <= 0 ? 'paid' : 'billed'}`}>{tax.balance <= 0 ? 'Paid' : 'Billed'}</span> : null}>
+      {tax ? (
+        <p className="m-0">Tax invoice {link(tax)} dated {fmtDate(tax.invoice_date)} for Rs. {inr(tax.total)}. {tax.balance > 0 ? `Balance Rs. ${inr(tax.balance)}.` : 'Fully settled.'}</p>
+      ) : (
+        <div className="grid gap-2">
+          {pro && <p className="m-0">Proforma {link(pro)} for Rs. {inr(pro.total)}{pro.paid > 0 ? `, advance Rs. ${inr(pro.paid)} received` : ', no advance yet'}. Billing the case converts it with the advance adjusted.</p>}
+          <p className="sub m-0">{d.sent ? 'This report is under Ready to bill. Batch-billed branches are usually billed monthly; you can also bill it on its own now.' : 'The case appears under Ready to bill once it is marked as sent.'}</p>
+          {can('bill') && d.sent && <div className="btns"><button className="btn" disabled={bill.isPending} onClick={() => bill.mutate()}>Bill this case now</button></div>}
+        </div>
+      )}
+    </Panel>
   );
 }

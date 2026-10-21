@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 21 Oct 2026 (AI reading live). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 21 Oct 2026 (WP11 billing, analytics and CSV imports built locally; not yet deployed). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -26,7 +26,7 @@ live password = `SEED_PASSWORD` in the EC2 `.env` (random, not in git).
 - Stack: TypeScript — Fastify + Kysely API, React + Vite + Tailwind web, npm workspaces.
 - Reading: Google Vision OCR → Claude (`claude-opus-5-5`, server-side refusal fallback) for sorting and extraction.
 - SBI Format-A Word template recreated from the prototype's report pages (`apps/api/src/seed/sbi-format-a.ts`) and onboarded through the template engine like any bank upload.
-- Milestone 1 = Gate A (one SBI flat case end to end). Quick Estimate, Billing, Analytics shown as "Coming soon".
+- Milestone 1 = Gate A (one SBI flat case end to end). Quick Estimate shown as "Coming soon".
 - Prototype gaps resolved: evidence-backed rate = weighted median of adjusted comparables (range = weighted IQR, at least ±3%); 20% guideline check both directions; realizable/distress % per bank rule; IGST when supply is out of state (billing, not built yet); a Signed stage; report serial per firm per FY, bank and branch codes from the case; reissue keeps the serial and adds /R1.
 - Two-factor login built but switched off on the live site for testing (`REQUIRE_2FA=false`).
 
@@ -49,6 +49,17 @@ AI reading verified (21 Oct 2026) with `claude-opus-5-5`: the real 26-page pilot
 
 Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 proposal, FMV 69,75,000 at Rs. 15,000; expression language). End-to-end run on the pilot files (OCR, KYC, photos, evidence, conflict, valuation, checks, sign-off, 16-page signed report). Browser screenshots of every screen. Production smoke test (login, case, draft PDF).
 
+## 3a. Built — WP11 Business modules (21 Oct 2026, local)
+
+- **Billing** (feature flag `billing`, permission `bill`; migration `0006_billing.sql`, `modules/billing/`): Ready to bill (signed + sent, not on a tax invoice; fee and payer editable per case), tax invoices one per case or one per bank branch (borrower-paid cases always single), proformas for advances (converted to a tax invoice with the advance moved across), gap-free series per FY (`INV/{FY}/{N}`, `PI/…`, `CN/…`, next number settable), CGST+SGST or IGST by place of supply (branch GSTIN / state), total rounded with round-off, PDF with letterhead/signature/seal and UPI QR for the balance on borrower invoices, payments with TDS (default 10% of taxable for bank payers), part payments, credit notes (GST reversed; a full credit note can release cases to be billed again) and write-offs, ageing 0–30/31–60/61–90/90+, outstanding by party with reminder messages, GST charged / received / to collect by month, email with PDF and WhatsApp (wa.me link, logged). Stage: Sent → Billed on a tax invoice → Paid when every invoice covering the case is settled.
+- **Accounting exports** for a period: Tally XML (sales, credit note, receipt vouchers; ledger names in Billing setup), Zoho Books CSV, invoices / receipts / credit notes CSV, GSTR-1 B2B, B2CS, CDNR and SAC summary CSVs, TDS by party (Form 26AS).
+- **Engineer payouts**: submitted site visits per engineer per month × fee per visit (engineer's fee or default), marked paid with reference, CSV.
+- **Reports & analytics**: reports per week, turnaround (created → sent) and time per stage, banks, localities, property types, engineers, FMV vs guideline; CSV per chart and all rows.
+- **CSV imports** (Data import & export, preview then import): banks & branches, field engineers, comparable transactions, past valuation reports (both feed comparables); export in the same columns.
+- Wording for invoice emails and reminders is in the platform wording config (`invoice_bank`, `invoice_borrower`, `payment_reminder`).
+- Fixed: text firm settings (place, UPI ID, changed number patterns) were read back as empty.
+- Verified locally: 5 demo cases batch/single/proforma billed, payments with TDS, conversion, credit note release and rebill, stages Billed/Paid, every export generated, PDFs checked visually, imports with preview errors and re-import; 4 GST unit tests (15 total).
+
 ## 4. Left — by work package
 
 | WP | Left |
@@ -62,7 +73,7 @@ Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 p
 | 7 Evidence | Distance filter (needs geocoding / Google Maps key); land and bungalow methods in the screens |
 | 9 Learning | Retrieval of past cases in extraction, evaluation sets, approved model/rule updates with rollback, shared anonymised pool, metrics |
 | 10 Quick Estimate | Everything |
-| 11 Business | Billing (per-case/batch, GST incl. IGST, proforma, payments with TDS, credit notes, ageing, Tally/Zoho/GSTR-1, engineer payouts), analytics, CSV imports |
+| 11 Business | Deploy and test on live; validate Tally / Zoho / GSTR-1 files with a sample import (and the SAC code with the CA); verify the SES sender so email works; Quick Estimate conversion KPI in analytics |
 | 12 Privacy | Consent flow for the shared pool |
 | 13 Bank formats | SBI long, BoB, Union Bank, BoI, BoM, NKGSB, Federal, ValueMitra standard (need templates from Premal) |
 | 14 Land & bungalow | Everything, tuned with sample cases |
@@ -73,7 +84,7 @@ Gates: A built (AI reading live; first real pilot case next) → B all property 
 
 1. Internal testing with the team brief; triage feedback (config change vs code change).
 2. First real pilot case (Gate A); measure how many auto-filled fields are accepted without edit (target 85%).
-3. Billing & payouts (WP 11) — cases cannot reach Billed/Paid without it.
+3. Deploy WP11 and test billing on the live site; verify the SES sender identity (`no-response@valuemitra.com`) so report and invoice emails go out.
 4. Collect bank templates and land/bungalow samples from Premal → Gates B and C.
 5. Turn 2FA back on (`REQUIRE_2FA=true`) before real firms use the live site.
 
@@ -88,6 +99,9 @@ Gates: A built (AI reading live; first real pilot case next) → B all property 
 - Logs on EC2: `pm2 logs valuemitra-v2`, `/var/log/valuemitra-v2/`.
 
 ## 7. Known issues and notes
+
+- Email: Amazon SES rejects `no-response@valuemitra.com` (identity not verified in ap-south-1) locally and on EC2, so report, invoice and reminder emails fail with that message until the address or the domain is verified in SES (and, if SES is in sandbox, the recipients too).
+- WhatsApp has no sending API: invoices and reminders open in WhatsApp with the text; the app records that it was sent.
 
 - AI reading: handwritten entries come with low confidence (check `low_confidence` lists them); a 26-page bundle takes 1–3 minutes. A document left mid-read by a restart is requeued automatically.
 - HEIC photos refused (sharp cannot decode); WhatsApp-forwarded photos lose GPS so the map page is skipped.

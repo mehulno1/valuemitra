@@ -11,6 +11,7 @@ import { env } from './config/env.js';
 import { db } from './db/index.js';
 import { adminRoutes } from './http/admin.routes.js';
 import { authRoutes } from './http/auth.routes.js';
+import { billingRoutes } from './http/billing.routes.js';
 import { caseRoutes } from './http/case.routes.js';
 import { publicRoutes } from './http/public.routes.js';
 import { AppError } from './lib/errors.js';
@@ -50,6 +51,7 @@ export async function buildApp() {
   await app.register(publicRoutes);
   await app.register(caseRoutes);
   await app.register(adminRoutes);
+  await app.register(billingRoutes);
   registerListeners();
 
   // serve the built web app in production (nginx may also serve it directly)

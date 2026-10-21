@@ -18,7 +18,9 @@ export type EventType =
   | 'report.reopened'
   | 'report.sent'
   | 'template.published'
-  | 'config.published';
+  | 'config.published'
+  | 'invoice.issued'
+  | 'payment.recorded';
 
 export interface DomainEvent<P = Record<string, unknown>> {
   type: EventType;

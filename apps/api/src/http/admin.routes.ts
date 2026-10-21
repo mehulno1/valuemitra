@@ -14,6 +14,7 @@ import { buildRenderData } from '../modules/reports/data.js';
 import { renderDocx } from '../modules/templates/render.js';
 import { body, idParam, multipartFiles } from './util.js';
 import { requireKind } from '../lib/sniff.js';
+import { parseCsv } from './csv.js';
 
 const KINDS: ConfigKind[] = ['profile', 'rule_set', 'check_set', 'wording', 'doc_types'];
 
@@ -24,26 +25,6 @@ const configPerm = (kind: string) => async (req: any) => {
   const ok = a.role === 'admin' || a.perms.has('config') || (kind === 'rule_set' && a.perms.has('set'));
   if (!ok) throw forbidden(`Needs permission: ${kind === 'rule_set' ? 'set or config' : 'config'}`);
 };
-
-function parseCsv(text: string): Record<string, string>[] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cur = '';
-  let q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) { if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; continue; }
-    if (c === '"') q = true;
-    else if (c === ',') { row.push(cur); cur = ''; }
-    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
-    else cur += c;
-  }
-  if (cur || row.length) { row.push(cur); rows.push(row); }
-  const [head, ...rest] = rows.filter((r) => r.some((x) => x.trim()));
-  if (!head) return [];
-  const keys = head.map((h) => h.trim().toLowerCase());
-  return rest.map((r) => Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? '').trim()])));
-}
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate);

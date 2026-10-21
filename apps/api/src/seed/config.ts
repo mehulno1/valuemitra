@@ -242,5 +242,21 @@ export const WORDING = {
       title: 'WhatsApp to bank contact',
       body: 'Valuation report for {{CUST.NAME}} sent on email. Ref {{CASE.REPORT_NO}}. FMV {{VAL.FMV}}, RV {{VAL.REALIZABLE}}. Hard copy to follow. – {{FIRM.NAME}}',
     },
+    // billing: identifiers are the invoice's own values (INV.*, PARTY.*, FIRM.*), not case fields
+    invoice_bank: {
+      title: 'Invoice to the bank',
+      subject: "{{ INV.KIND == 'proforma' ? 'Proforma invoice' : 'Invoice' }} {{INV.NO}} – {{FIRM.NAME}}",
+      body: "Dear Sir/Madam,\n\nPlease find attached {{ INV.KIND == 'proforma' ? 'proforma invoice' : 'invoice' }} {{INV.NO}} dated {{INV.DATE}} for {{INV.FOR}}, amount Rs. {{INV.TOTAL}} including GST.\n\nKindly process the payment to the account mentioned on the invoice.{{ INV.PAYER == 'bank' ? ' TDS, if deducted, may please be reflected in Form 26AS.' : '' }}\n\nRegards,\n{{FIRM.NAME}}",
+    },
+    invoice_borrower: {
+      title: 'Invoice to the borrower',
+      subject: "{{ INV.KIND == 'proforma' ? 'Proforma invoice' : 'Invoice' }} {{INV.NO}} – {{FIRM.NAME}}",
+      body: "Dear {{INV.TO}},\n\n{{ INV.KIND == 'proforma' ? 'Please find the proforma invoice ' + INV.NO + ' for the advance towards your property valuation' : 'Your valuation report is ready. Please find invoice ' + INV.NO }}. Amount payable: Rs. {{INV.BALANCE}}.{{ present(INV.UPI) ? ' Pay by UPI to ' + INV.UPI + ' or scan the QR on the invoice.' : '' }}\n\nThank you,\n{{FIRM.NAME}}",
+    },
+    payment_reminder: {
+      title: 'Payment reminder',
+      subject: 'Payment reminder – {{FIRM.NAME}}',
+      body: 'Dear Sir/Madam,\n\nThe following invoices from {{FIRM.NAME}} are outstanding:\n{{PARTY.LIST}}\n\nTotal outstanding: Rs. {{PARTY.TOTAL}}.\n\nKindly arrange the payment at the earliest. Please ignore this if already paid.\n\nRegards,\n{{FIRM.NAME}}',
+    },
   },
 };

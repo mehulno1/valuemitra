@@ -1,4 +1,4 @@
-import { db, json, toJson, type Tx } from '../db/index.js';
+import { db, toJson, type Tx } from '../db/index.js';
 
 export interface FirmSettings {
   case_pattern: string;           // VM-{FYC}-{N}
@@ -14,7 +14,19 @@ export interface FirmSettings {
   kyc_policy: 'never' | 'delete_30' | 'delete_90';
   engineer_link_hours: number;
   place: string;                  // "Thane" printed next to the signature
-  billing_enabled: boolean;
+  // billing (the module itself is switched on with the "billing" feature flag)
+  invoice_pattern: string;        // INV/{FY}/{N}
+  proforma_pattern: string;       // PI/{FY}/{N}
+  credit_note_pattern: string;    // CN/{FY}/{N}
+  sac: string;                    // valuation services; confirm with the firm's CA
+  gst_pct: number;
+  tds_pct: number;                // deducted by banks on the taxable value (section 194J)
+  due_days: number;               // invoices older than this are overdue
+  upi_id: string;
+  bank_account: { bank: string; name: string; number: string; ifsc: string; branch: string };
+  invoice_note: string;           // printed under the totals
+  engineer_fee: number;           // default fee per visit when the engineer has none
+  tally_ledgers: { sales: string; cgst: string; sgst: string; igst: string; round_off: string; bank: string; tds: string };
 }
 
 export const DEFAULT_SETTINGS: FirmSettings = {
@@ -31,13 +43,35 @@ export const DEFAULT_SETTINGS: FirmSettings = {
   kyc_policy: 'delete_30',
   engineer_link_hours: 72,
   place: '',
-  billing_enabled: false,
+  invoice_pattern: 'INV/{FY}/{N}',
+  proforma_pattern: 'PI/{FY}/{N}',
+  credit_note_pattern: 'CN/{FY}/{N}',
+  sac: '998399',
+  gst_pct: 18,
+  tds_pct: 10,
+  due_days: 30,
+  upi_id: '',
+  bank_account: { bank: '', name: '', number: '', ifsc: '', branch: '' },
+  invoice_note: '',
+  engineer_fee: 800,
+  tally_ledgers: { sales: 'Valuation Fees', cgst: 'Output CGST', sgst: 'Output SGST', igst: 'Output IGST', round_off: 'Round Off', bank: 'Bank Account', tds: 'TDS Receivable' },
 };
+
+function decoded(v: string): unknown {
+  try {
+    const p = JSON.parse(v);
+    return p && typeof p === 'object' ? p : v;
+  } catch {
+    return v;
+  }
+}
 
 export async function getSettings(firmId: number, tx: Tx = db): Promise<FirmSettings> {
   const rows = await tx.selectFrom('firm_settings').select(['skey', 'value_json']).where('firm_id', '=', firmId).execute();
   const s: any = { ...DEFAULT_SETTINGS };
-  for (const r of rows) if (r.skey in s) s[r.skey] = json(r.value_json, null);
+  // mysql2 returns JSON columns decoded, so a text setting arrives as a plain string ("{FIRM}/{BANK}/..."
+  // is text, not JSON); only a string that parses to an object is treated as encoded JSON
+  for (const r of rows) if (r.skey in s) s[r.skey] = typeof r.value_json === 'string' ? decoded(r.value_json) : r.value_json;
   return s as FirmSettings;
 }
 

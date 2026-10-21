@@ -11,7 +11,7 @@ import { Field, FileImg, Loading, Modal, PageHead, Panel, ago, fmtDate, useError
 // ---- types -----------------------------------------------------------------------------------------
 interface FirmSettings {
   case_pattern: string; report_pattern: string; file_pattern: string; letterhead_file_id: number | null; signature_file_id: number | null; seal_file_id: number | null;
-  doc_grid: number; photo_grid: number; evidence_per_page: number; retention_years: number; kyc_policy: 'never' | 'delete_30' | 'delete_90'; engineer_link_hours: number; place: string; billing_enabled: boolean;
+  doc_grid: number; photo_grid: number; evidence_per_page: number; retention_years: number; kyc_policy: 'never' | 'delete_30' | 'delete_90'; engineer_link_hours: number; place: string;
 }
 interface FirmProfile {
   firm: { id: number; code: string; name: string; address: string | null; city: string | null; state_code: string | null; gstin: string | null; phone: string | null; email: string | null; shared_pool_consent: number };
@@ -651,7 +651,7 @@ function PrivacySection() {
 // ---- 10. features ------------------------------------------------------------------------------------
 const FLAGS: Record<string, { label: string; note: string }> = {
   ai_photo_captions: { label: 'AI photo captions', note: 'Suggest a caption for each site photo from what it shows.' },
-  billing: { label: 'Billing & payouts', note: 'GST invoices, payments and engineer payouts (next milestone).' },
+  billing: { label: 'Billing & payouts', note: 'GST invoices per case or monthly batch, payments with TDS, ageing, accounting exports and engineer payouts.' },
   quick_estimate: { label: 'Quick Estimate', note: 'Estimate from an Index II before a full case (next milestone).' },
   shared_pool: { label: 'Shared anonymised comparables', note: 'Property and rate data only (next milestone).' },
 };

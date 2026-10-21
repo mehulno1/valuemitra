@@ -84,3 +84,31 @@ export async function downloadFile(id: number, name: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+
+/** Download an authenticated endpoint as a file (exports, invoice PDFs). */
+export async function downloadUrl(url: string, name: string) {
+  const buf = await api.binary(url);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf]));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/** Save text as a CSV file (BOM so Excel reads UTF-8). */
+export function saveCsv(name: string, head: string[], rows: unknown[][]) {
+  const cell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const text = [head, ...rows].map((r) => r.map(cell).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/** WhatsApp link for an Indian mobile number (10 digits get the 91 prefix). */
+export function whatsappUrl(phone: string | null | undefined, text: string) {
+  const d = (phone ?? '').replace(/\D/g, '');
+  const n = d.length === 10 ? `91${d}` : d.replace(/^0+/, '');
+  return `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
+}

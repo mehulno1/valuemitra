@@ -1,4 +1,5 @@
-// Data import & export: ready reckoner CSV import (preview first), report register and case list exports.
+// Data import & export: CSV imports with a preview (ready reckoner, branches, engineers, comparables,
+// past reports), report register and case list exports.
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -164,13 +165,76 @@ function CasesExport() {
   );
 }
 
-const NEXT = [
-  { t: 'Banks & branches', k: 'Master', c: 'bank_code, bank_name, branch_code, branch_name, contact_person, contact_email, realizable_pct, report_format' },
-  { t: 'Field engineers', k: 'Master', c: 'name, phone, localities, fee_per_visit' },
-  { t: 'Valuation rules', k: 'Master', c: 'rule, value, note' },
-  { t: 'Comparable transactions', k: 'Historical', c: 'date, source, document_no, building, locality, area_sqft, area_type, price, rate_per_sqft' },
-  { t: 'Past valuation reports', k: 'Historical', c: 'report_no, date, bank, locality, property_type, bua_sqft, rate_per_sqft, fmv, guideline_value, field_engineer, turnaround_hours' },
-];
+interface ImportDef { label: string; columns: string[]; example: string[] }
+interface ImportResult { ok: boolean; errors: string[]; errorCount: number; rows: Record<string, unknown>[]; count: number; added?: number; updated?: number }
+const IMPORT_NOTES: Record<string, { tag: string; note: string }> = {
+  branches: { tag: 'Master', note: 'Matched on bank and branch code: existing branches are updated. Payer is bank or borrower; billing is case or batch.' },
+  engineers: { tag: 'Master', note: 'Matched on name: existing engineers are updated.' },
+  comparables: { tag: 'Historical', note: 'Fills the comparables database for market evidence. Carpet area is converted to built-up with the firm loading. The same document no. again replaces the earlier row.' },
+  past_reports: { tag: 'Historical', note: 'Past reports become comparables (own reports) so evidence finds them. Names and loan details are not needed.' },
+};
+
+function ImportPanel({ kind, def }: { kind: string; def: ImportDef }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [res, setRes] = useState<ImportResult | null>(null);
+  const check = useMutation({ mutationFn: (f: File) => api.upload<ImportResult>(`/api/import/${kind}`, [f], { preview: 'true' }), onSuccess: setRes, onError: (e) => { setFile(null); onErr(e); } });
+  const commit = useMutation({
+    mutationFn: () => api.upload<ImportResult>(`/api/import/${kind}`, [file!], { preview: 'false' }),
+    onSuccess: (r) => { toast(`${r.count} rows imported (${r.added ?? 0} added, ${r.updated ?? 0} updated)`); setFile(null); setRes(null); },
+    onError: onErr,
+  });
+  const exportRows = async () => {
+    try { const r = await api.get<{ columns: string[]; rows: string[][] }>(`/api/import/${kind}/rows`); download(`${kind}_${new Date().toISOString().slice(0, 10)}.csv`, toCsv(r.columns, r.rows)); } catch (e) { onErr(e); }
+  };
+  const n = IMPORT_NOTES[kind];
+  return (
+    <div className="border-b border-line px-4 py-3 last:border-b-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0"><b>{def.label}</b> <span className="tag ml-1">{n?.tag}</span><div className="sub mono break-words">{def.columns.join(', ')}</div></div>
+        <div className="btns">
+          <button className="btn sm" onClick={() => download(`${kind}_template.csv`, toCsv(def.columns, [def.example]))}>Template</button>
+          {can('exp') && <button className="btn sm" onClick={exportRows}>Export</button>}
+          {can('set') && <button className="btn sm pri" disabled={check.isPending || commit.isPending} onClick={() => input.current?.click()}>Import CSV</button>}
+        </div>
+      </div>
+      {n && <div className="sub mt-1">{n.note}</div>}
+      <input ref={input} type="file" hidden accept=".csv,text/csv" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) { setFile(f); setRes(null); check.mutate(f); } }} />
+      {check.isPending && <Loading what={`Reading ${file?.name ?? 'file'}`} />}
+      {res && file && (
+        <div className="panel mt-3 grid gap-3 p-3" style={{ borderLeft: `4px solid var(--${res.ok ? 'ok' : 'crit'})` }}>
+          {res.ok ? <b>{res.count} rows read from {file.name} · check the preview, then import</b> : <b className="text-crit">{file.name}: {res.errorCount} problem(s). Fix them and choose the file again.</b>}
+          {!!res.errors.length && <ul className="m-0 pl-5 text-[13px] text-crit">{res.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+          {res.ok && !!res.rows.length && (
+            <div className="tablewrap">
+              <table className="list">
+                <thead><tr>{Object.keys(res.rows[0]).filter((k) => !['firm_id', 'created_by', 'scope'].includes(k)).slice(0, 8).map((h) => <th key={h}>{h.replace(/_/g, ' ')}</th>)}</tr></thead>
+                <tbody>{res.rows.slice(0, 5).map((r, i) => <tr key={i}>{Object.entries(r).filter(([k]) => !['firm_id', 'created_by', 'scope'].includes(k)).slice(0, 8).map(([k, v]) => <td key={k}>{v instanceof Object ? String(v).slice(0, 10) : String(v ?? '')}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          )}
+          <div className="btns">
+            {res.ok && <button className="btn pri" disabled={commit.isPending} onClick={() => commit.mutate()}>{commit.isPending ? 'Importing…' : `Import ${res.count} rows`}</button>}
+            <button className="btn" onClick={() => { setRes(null); setFile(null); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Imports() {
+  const q = useQuery({ queryKey: ['imports'], queryFn: () => api.get<Record<string, ImportDef>>('/api/import') });
+  return (
+    <section className="panel">
+      <CasesExport />
+      {q.isLoading ? <Loading /> : Object.entries(q.data ?? {}).map(([k, d]) => <ImportPanel key={k} kind={k} def={d} />)}
+    </section>
+  );
+}
 
 export default function DataPage() {
   return (
@@ -180,16 +244,8 @@ export default function DataPage() {
       <div className="grid gap-4">
         <ReadyReckoner />
         <Register />
-        <section className="panel">
-          <CasesExport />
-          {NEXT.map((n) => (
-            <div key={n.t} className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 last:border-b-0">
-              <div><b>{n.t}</b> <span className="tag ml-1">{n.k}</span><div className="sub">{n.c}</div></div>
-              <span className="tag">Next milestone</span>
-            </div>
-          ))}
-        </section>
-        <p className="sub">Importing past reports and transactions fills the firm's comparables database, so market evidence finds data from day one. Names and loan details are not needed in these files. Banks, branches and engineers can be added one by one in Firm settings today.</p>
+        <Imports />
+        <p className="sub">Importing past reports and transactions fills the firm's comparables database, so market evidence finds data from day one. Names and loan details are not needed in these files. Banks, branches and engineers can also be added one by one in Firm settings.</p>
       </div>
     </>
   );

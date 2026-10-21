@@ -13,6 +13,8 @@ const Settings = lazy(() => import('./pages/Settings'));
 const MasterData = lazy(() => import('./pages/admin/MasterData'));
 const DataPage = lazy(() => import('./pages/DataPage'));
 const EngineerVisit = lazy(() => import('./pages/EngineerVisit'));
+const Billing = lazy(() => import('./pages/Billing'));
+const Analytics = lazy(() => import('./pages/Analytics'));
 
 const Next = ({ title, what }: { title: string; what: string }) => (
   <Empty title={title}>{what} Coming soon: it follows the first SBI flat case signed end to end (Gate A).</Empty>
@@ -38,8 +40,8 @@ export function App() {
             <Route path="master/*" element={<MasterData />} />
             <Route path="data" element={<DataPage />} />
             <Route path="quick-estimate" element={<Next title="Quick Estimate" what="Read an Index II or type the area, confirm, and get a calculated estimate with a note for the banker; convert it to a full case." />} />
-            <Route path="billing" element={<Next title="Billing & payouts" what="GST invoices per case or monthly batch, payments with TDS, ageing, accounting exports and engineer payouts." />} />
-            <Route path="analytics" element={<Next title="Reports & analytics" what="Throughput, turnaround by stage, banks, localities and engineers, with CSV export." />} />
+            <Route path="billing/*" element={<Billing />} />
+            <Route path="analytics" element={<Analytics />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         )}
