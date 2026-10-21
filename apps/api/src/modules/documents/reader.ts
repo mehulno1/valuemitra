@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { imageBlock, structured, textBlock, type Block } from '../../ai/claude.js';
 import { LANG_NAME, ocrImages } from '../../ai/vision.js';
-import { db, json, toJson } from '../../db/index.js';
+import { db, json, sql, toJson } from '../../db/index.js';
 import { extractPages, pdfPageCount, pdfToImages } from '../../lib/pdf.js';
 import { audit, systemActor } from '../../platform/audit.js';
 import { activeConfig } from '../../platform/config.js';
@@ -209,7 +209,7 @@ export async function readDocument(documentId: number) {
       page: partPages[v.page - 1]?.orig_page ?? sorted[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence),
     })));
   }
-  if (kycPages) await redactKyc(documentId, a.firm_id, parts.filter((p) => types.find((t) => t.key === p.doc_type)?.is_kyc).flatMap((p) => p.pages), pageCount);
+  if (kycPages) await applyKyc(documentId, a.firm_id, parts.filter((p) => types.find((t) => t.key === p.doc_type)?.is_kyc).flatMap((p) => p.pages));
   await db.updateTable('documents').set({ status: 'read' }).where('id', '=', documentId).execute();
   await syncChecklist(a.id);
   const actor = systemActor(a.firm_id);
@@ -222,34 +222,54 @@ export async function readDocument(documentId: number) {
 }
 
 /**
- * KYC never stays in the stored file. The pages were read from documents.file_id; that same file is
- * replaced by a copy without the KYC pages. The first stored file (the original upload) is kept, flagged
- * KYC, only until the firm's deletion date; any later intermediate copy is deleted at once. A file that
- * is entirely KYC is flagged and deleted under the same policy.
+ * Take KYC pages out of a document. Page numbers always refer to the current stored file
+ * (documents.file_id); after redaction every page reference is renumbered to the new file in one
+ * transaction, so a later re-read or a manual KYC label works on consistent numbers.
+ * Fail-closed: the stored file is flagged KYC before anything that can fail.
  */
-export async function redactKyc(documentId: number, firmId: number, kycPages: number[], pageCount: number) {
-  const d = await db.selectFrom('documents').select(['file_id', 'original_file_id', 'assignment_id']).where('id', '=', documentId).executeTakeFirstOrThrow();
+export async function applyKyc(documentId: number, firmId: number, kycPages: number[]) {
+  const d = await db.selectFrom('documents').select(['file_id', 'original_file_id', 'assignment_id', 'page_count']).where('id', '=', documentId).executeTakeFirstOrThrow();
+  const kyc = [...new Set(kycPages)].filter((p) => p >= 1 && p <= d.page_count);
+  if (!kyc.length) return;
+  const never = (await getSettings(firmId)).kyc_policy === 'never';
+  // 1. the stored file contains KYC until replaced
+  await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', d.file_id).execute();
+  // 2. KYC page images: flagged, text cleared, deleted at once under "never stored"
+  const pg = await db.selectFrom('document_pages').select(['image_file_id', 'thumb_file_id']).where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
+  const imgIds = pg.flatMap((x) => [x.image_file_id, x.thumb_file_id]).filter(Boolean) as number[];
+  if (imgIds.length) await db.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', imgIds).execute();
+  await db.updateTable('document_pages').set({ ocr_text: null, ocr_json: null }).where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
+  if (never) for (const id of imgIds) await purgeFile(id);
+  // 3. replace the stored file with a copy without the KYC pages
   const { file, buffer } = await readFile(d.file_id, firmId);
-  const policyNever = (await getSettings(firmId)).kyc_policy === 'never';
-  const keep = Array.from({ length: pageCount }, (_, i) => i + 1).filter((p) => !kycPages.includes(p));
-  if (file.mime === 'application/pdf' && keep.length) {
-    if ((await pdfPageCount(buffer)) !== pageCount) throw new Error('Page count changed while reading; KYC redaction stopped');
-    const redacted = await extractPages(buffer, keep);
-    const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/( \(KYC removed\))?\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
-    await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', d.file_id).execute();
-    if (d.original_file_id) {
-      // the file just read was an earlier redacted copy: it is not needed
-      await purgeFile(d.file_id);
-      await db.updateTable('documents').set({ file_id: f.id }).where('id', '=', documentId).execute();
-    } else {
-      await db.updateTable('documents').set({ file_id: f.id, original_file_id: d.file_id }).where('id', '=', documentId).execute();
-      if (policyNever) await purgeFile(d.file_id);
-    }
-  } else {
-    // nothing left to keep (e.g. a photo of an Aadhaar card): the stored file itself is KYC
-    await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', d.file_id).execute();
-    if (policyNever) await purgeFile(d.file_id);
+  const keep = Array.from({ length: d.page_count }, (_, i) => i + 1).filter((p) => !kyc.includes(p));
+  if (file.mime !== 'application/pdf' || !keep.length) {
+    // nothing to keep (e.g. a photo of an Aadhaar card): the stored file itself is KYC
+    if (never) await purgeFile(d.file_id);
+    return;
   }
+  if ((await pdfPageCount(buffer)) !== d.page_count) throw new Error('Stored file and page records disagree; KYC redaction stopped (file stays flagged KYC)');
+  const redacted = await extractPages(buffer, keep);
+  const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/( \(KYC removed\))?\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
+  const map = new Map(keep.map((old, i) => [old, i + 1]));
+  const remap = (xs: number[]) => xs.map((x) => map.get(x)).filter((x): x is number => x !== undefined);
+  await db.transaction().execute(async (tx) => {
+    await tx.deleteFrom('document_pages').where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
+    // two steps so the unique (document, page) key never collides
+    for (const [oldNo, newNo] of map) await tx.updateTable('document_pages').set({ page_no: 100000 + newNo }).where('document_id', '=', documentId).where('page_no', '=', oldNo).execute();
+    await tx.updateTable('document_pages').set({ page_no: sql`page_no - 100000` }).where('document_id', '=', documentId).where('page_no', '>', 100000).execute();
+    for (const part of await tx.selectFrom('document_parts').select(['id', 'pages_json', 'in_report_pages', 'is_kyc']).where('document_id', '=', documentId).execute()) {
+      const pages = part.is_kyc ? [] : remap(json<number[]>(part.pages_json, []));
+      await tx.updateTable('document_parts').set({
+        pages_json: toJson(pages), in_report_pages: toJson(part.is_kyc ? [] : remap(json<number[]>(part.in_report_pages, []))),
+        page_from: pages[0] ?? 0, page_to: pages[pages.length - 1] ?? 0,
+      }).where('id', '=', part.id).execute();
+    }
+    for (const [oldNo, newNo] of map) if (oldNo !== newNo) await tx.updateTable('field_values').set({ page_no: newNo }).where('document_id', '=', documentId).where('page_no', '=', oldNo).execute();
+    await tx.updateTable('documents').set({ file_id: f.id, original_file_id: d.original_file_id ?? d.file_id, page_count: keep.length }).where('id', '=', documentId).execute();
+  });
+  // the file just replaced: an intermediate copy goes now; the original upload waits for the KYC policy
+  if (d.original_file_id || never) await purgeFile(d.file_id);
 }
 
 /** Checklist items follow the documents found, unless a person overrode them. */

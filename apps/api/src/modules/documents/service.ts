@@ -8,7 +8,7 @@ import { enqueue, registerJob } from '../../platform/jobs.js';
 import { saveFile } from '../../platform/storage.js';
 import { DOCS, requireKind } from '../../lib/sniff.js';
 import { retractPartCandidates, writeCandidates } from '../casedata/values.js';
-import { docTypes, extractFields, langLabel, readDocument, redactKyc, syncChecklist } from './reader.js';
+import { applyKyc, docTypes, extractFields, langLabel, readDocument, syncChecklist } from './reader.js';
 
 export async function assertCase(firmId: number, assignmentId: number, tx: Tx = db) {
   const a = await tx.selectFrom('assignments').select(['id', 'firm_id', 'signed_at', 'property_type', 'case_no']).where('id', '=', assignmentId).where('firm_id', '=', firmId).executeTakeFirst();
@@ -104,16 +104,8 @@ export async function correctPartLabel(actor: Actor, assignmentId: number, partI
   }).where('id', '=', partId).execute();
   await retractPartCandidates(assignmentId, partId);
   if (t?.is_kyc) {
-    // a person marked these pages KYC: hide them and take them out of the stored file too
-    const pages = json<number[]>(p.pages_json, []);
-    const pg = await db.selectFrom('document_pages').select(['image_file_id', 'thumb_file_id']).where('document_id', '=', p.document_id).where('page_no', 'in', pages).execute();
-    const ids = pg.flatMap((x) => [x.image_file_id, x.thumb_file_id]).filter(Boolean) as number[];
-    if (ids.length) await db.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', ids).execute();
-    await db.updateTable('document_pages').set({ ocr_text: null }).where('document_id', '=', p.document_id).where('page_no', 'in', pages).execute();
-    await db.updateTable('document_parts').set({ in_report_pages: toJson([]) }).where('id', '=', partId).execute();
-    const doc = await db.selectFrom('documents').select('page_count').where('id', '=', p.document_id).executeTakeFirstOrThrow();
-    const kycParts = await db.selectFrom('document_parts').select('pages_json').where('document_id', '=', p.document_id).where('is_kyc', '=', 1).execute();
-    await redactKyc(p.document_id, actor.firmId!, kycParts.flatMap((k) => json<number[]>(k.pages_json, [])), doc.page_count);
+    // a person marked these pages KYC: same handling as KYC found by reading
+    await applyKyc(p.document_id, actor.firmId!, json<number[]>(p.pages_json, []));
   }
   await db.insertInto('feedback_events').values({
     firm_id: actor.firmId!, assignment_id: assignmentId, kind: 'doc_label.correct', doc_type: effective, property_type: a.property_type,
