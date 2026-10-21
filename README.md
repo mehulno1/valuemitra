@@ -56,8 +56,12 @@ Requires LibreOffice (`SOFFICE_PATH`) and poppler's `pdftoppm` (`PDFTOPPM_PATH`)
   confirm → publish an immutable compiled version. Rendering fills the bank's own file.
 - **Learning loop**: every accept/edit, label correction, rate override, check acceptance and mapping
   confirmation is stored in `feedback_events`; every signed report becomes a firm comparable.
+- **Billing** (`modules/billing`, optional per firm): invoices are immutable once issued; credit notes and
+  write-offs reduce them. Each invoice keeps a snapshot of the firm's details as on its date. The case stage
+  follows its tax invoices (Sent → Billed → Paid). Exports and the invoice PDF are built from the same rows.
 - **Numbering**: case IDs at creation (`VM-{FYC}-{N}`); report numbers only at sign-off, gap-free per firm
-  and FY (`{FIRM}/{BANK}/{BRANCH}/{FY}/{N}`); a reissue keeps the serial and adds `/R1`.
+  and FY (`{FIRM}/{BANK}/{BRANCH}/{FY}/{N}`); a reissue keeps the serial and adds `/R1`. Invoices, proformas and credit notes have their own gap-free
+  series per FY (`INV/{FY}/{N}`, `PI/…`, `CN/…`).
 
 ## Deploy (EC2)
 

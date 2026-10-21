@@ -31,13 +31,21 @@ Nothing is carried over from the v1 codebase except the MySQL database (which is
    - Report no. `{FIRM}/{BANK}/{BRANCH}/{FY}/{NNNN}`, given at signing; reopening adds `/R1`.
    - DOCX and PDF output, dispatch, report register.
 
-Next milestones: Quick Estimate, billing and payouts, analytics, CSV import/export, retention and privacy, other property types and banks (Gates B–D).
+## After Gate A
+| Package | State |
+|---|---|
+| **WP11 Business modules** | Built and live (21 Oct 2026): billing to payment (per-case and batch GST invoices, proformas, payments with TDS, credit notes, write-offs, ageing, reminders, GST tracking), engineer payouts, accounting exports (Tally, Zoho, CSV, GSTR-1, TDS), analytics, CSV imports. Left: validate export files with a sample import, confirm SAC with the CA, verified SES sender for email. |
+| WP10 Quick Estimate | Next to build |
+| WP13 Bank formats, WP14 Land & bungalow | Waiting for templates and sample cases from Premal (Gates B and C) |
+| WP9 Learning, WP12 Privacy (shared pool consent) | Later, with the months 0–3 learning targets (Gate C) |
+
+Billing decisions: billing is optional per firm (feature flag); a report is billable once signed and sent; batch = one invoice per bank branch for bank-paid cases; place of supply from the branch GSTIN (else its state) decides CGST+SGST vs IGST; totals rounded to the rupee; a case is Paid when every tax invoice covering it is settled (payments + TDS + credit notes + write-offs); a full credit note can release cases to be billed again; WhatsApp opens a prepared message (no sending API).
 
 ## Prototype gaps and how they are resolved
 - **Proposed rate:** weighted median of the adjusted comparables, filtered to the last 6 months (configurable) and 1–2 km.
 - **20% guideline variation:** checked in both directions.
 - **Realizable and distress %:** taken from each bank's rule version.
-- **GST:** IGST when the place of supply is in another state.
+- **GST:** IGST when the place of supply is in another state (place of supply = the bank branch's GSTIN state, else its state code).
 - **Stages:** New → Awaiting documents → Site visit → Drafting → Ready for review → Signed → Sent → Billed → Paid.
 - **Report numbering:** the serial is per firm per financial year; the bank and branch codes come from the case.
 
