@@ -9,7 +9,8 @@ import { pdfPageCount, pdfToImages } from '../../lib/pdf.js';
 import { audit, systemActor } from '../../platform/audit.js';
 import { activeConfig } from '../../platform/config.js';
 import { publish } from '../../platform/events.js';
-import { readFile, saveFile } from '../../platform/storage.js';
+import { purgeFile, readFile, saveFile } from '../../platform/storage.js';
+import { getSettings } from '../../platform/settings.js';
 import { dictionary } from '../master/dictionary.js';
 import { writeCandidates } from '../casedata/values.js';
 
@@ -183,6 +184,7 @@ export async function readDocument(documentId: number) {
       // KYC is never placed in a report; mark its page images so retention deletes them
       const ids = pages.filter((x) => sorted.includes(x.page_no)).flatMap((x) => [x.image_file_id, x.thumb_file_id]).filter(Boolean) as number[];
       if (ids.length) await db.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', ids).execute();
+      if ((await getSettings(a.firm_id)).kyc_policy === 'never') for (const fid of ids) await purgeFile(fid);
       await db.updateTable('document_pages').set({ ocr_text: null }).where('document_id', '=', documentId).where('page_no', 'in', sorted).execute();
       continue;
     }

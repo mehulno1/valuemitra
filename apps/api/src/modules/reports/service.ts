@@ -12,6 +12,7 @@ import { enqueue, registerJob } from '../../platform/jobs.js';
 import { nextNumber } from '../../platform/sequences.js';
 import { getSettings } from '../../platform/settings.js';
 import { readFile, saveFile } from '../../platform/storage.js';
+import { scheduleKycPurge } from '../../platform/retention.js';
 import { recomputeStage } from '../assignments/service.js';
 import { caseData } from '../casedata/resolver.js';
 import { runChecks, summary } from '../checks/engine.js';
@@ -223,6 +224,7 @@ export async function markSent(actor: Actor, assignmentId: number) {
   if (!d?.email_sent || !d.printed || !d.couriered) throw badRequest('Tick email, print and courier first');
   await db.updateTable('dispatches').set({ marked_sent_at: new Date(), marked_sent_by: actor.id ?? null }).where('id', '=', d.id).execute();
   await db.updateTable('assignments').set({ sent_at: new Date() }).where('id', '=', assignmentId).execute();
+  await scheduleKycPurge(actor.firmId!, assignmentId);
   await audit(actor, { entityType: 'report', assignmentId, action: 'report.sent', summary: `Case marked as sent. Hard copy: ${d.awb || 'by hand'}.` });
   await publish({ type: 'report.sent', firmId: actor.firmId, entityType: 'assignment', entityId: assignmentId, payload: { reportNo: a.report_no } });
   await recomputeStage(assignmentId, actor.id ?? null);

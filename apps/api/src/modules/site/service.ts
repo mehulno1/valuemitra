@@ -217,7 +217,9 @@ export async function listPhotos(firmId: number, assignmentId: number) {
   await assertCase(firmId, assignmentId);
   const photos = await db.selectFrom('site_photos').selectAll().where('assignment_id', '=', assignmentId).orderBy('sort_order').orderBy('taken_at').orderBy('id').execute();
   const visit = await db.selectFrom('site_visits').select(['id', 'status', 'expires_at', 'submitted_at', 'engineer_note', 'pin_lat', 'pin_lng', 'revoked_at', 'created_at']).where('assignment_id', '=', assignmentId).orderBy('id', 'desc').executeTakeFirst();
-  return { visit: visit ?? null, photos };
+  const asg = await db.selectFrom('assignments').select('profile_version_id').where('id', '=', assignmentId).executeTakeFirstOrThrow();
+  const profile = asg.profile_version_id ? (await configById(asg.profile_version_id)).payload : {};
+  return { visit: visit ?? null, photos, minPhotos: profile.min_photos ?? 9, maxPhotos: profile.max_photos ?? 18, prompts: profile.photo_prompts ?? [] };
 }
 
 export async function updatePhoto(actor: Actor, assignmentId: number, photoId: number, patch: { selected?: boolean; caption?: string }) {

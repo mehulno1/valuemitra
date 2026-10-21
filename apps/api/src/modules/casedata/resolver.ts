@@ -266,10 +266,10 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   };
 
   const resolveIdent = (name: string): unknown => {
-    if (name.startsWith('RULE.')) return (rules as any)[name.slice(5)] ?? null;
+    if (name.startsWith('RULE.')) return Object.hasOwn(rules, name.slice(5)) ? (rules as any)[name.slice(5)] ?? null : null;
     if (fields.has(name)) return get(name).value;
-    if (name in caseValues) return caseValues[name];
-    if (name in firmValues) return firmValues[name];
+    if (Object.hasOwn(caseValues, name)) return caseValues[name];
+    if (Object.hasOwn(firmValues, name)) return firmValues[name];
     return null;
   };
 
@@ -279,13 +279,13 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     const out = template.replace(/\{\{([\s\S]+?)\}\}/g, (_, expr: string) => {
       const e = expr.trim();
       let v: unknown;
-      if (e in extra) v = extra[e];
+      if (Object.hasOwn(extra, e)) v = extra[e];
       else if (/^[A-Z][A-Z0-9_]*(\.[A-Z0-9_]+)+$/.test(e) && fields.has(e)) {
         v = get(e).display;
       } else if (/^[A-Z][A-Z0-9_]*(\.[A-Z0-9_]+)+$/.test(e)) {
         v = resolveIdent(e);
       } else {
-        v = evalExpr(e, (n) => (n in extra ? extra[n] : resolveIdent(n)), EXPR_FNS);
+        v = evalExpr(e, (n) => (Object.hasOwn(extra, n) ? extra[n] : resolveIdent(n)), EXPR_FNS);
       }
       if (v === null || v === undefined) { missing = true; return ''; }
       return Array.isArray(v) ? v.join(', ') : String(v);
@@ -347,8 +347,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     const chosen = cands.find((x) => x.chosen);
     if (chosen) { setFrom(r, f, chosen, false); return r; }
     if (!f) {
-      if (r.code in caseValues) { r.value = caseValues[r.code]; r.source = 'case'; }
-      else if (r.code in firmValues) { r.value = firmValues[r.code]; r.source = 'firm'; }
+      if (Object.hasOwn(caseValues, r.code)) { r.value = caseValues[r.code]; r.source = 'case'; }
+      else if (Object.hasOwn(firmValues, r.code)) { r.value = firmValues[r.code]; r.source = 'firm'; }
       return r;
     }
     let pending: string | null = f.pending;

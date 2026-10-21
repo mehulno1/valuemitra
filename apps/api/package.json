@@ -12,7 +12,8 @@
     "db:migrate": "tsx --env-file=../../.env src/db/migrate.ts",
     "db:seed": "tsx --env-file=../../.env src/seed/index.ts",
     "db:reset": "tsx --env-file=../../.env src/db/migrate.ts --reset && tsx --env-file=../../.env src/seed/index.ts",
-    "db:types": "sh scripts/db-types.sh"
+    "db:types": "sh scripts/db-types.sh",
+    "firm:create": "tsx --env-file=../../.env src/seed/create-firm.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.137.0",

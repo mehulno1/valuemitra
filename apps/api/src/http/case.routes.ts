@@ -51,6 +51,10 @@ export async function caseRoutes(app: FastifyInstance) {
     const { files, fields } = await multipartFiles(req);
     return docs.uploadDocuments(actorOf(req), idParam(req), files, { channel: fields.channel || null, from: fields.from || null });
   });
+  app.post('/api/assignments/:id/documents/:did/retry', { preHandler: can('edit') }, async (req) => {
+    await docs.retryDocument(actorOf(req), idParam(req), idParam(req, 'did'));
+    return { ok: true };
+  });
   app.patch('/api/assignments/:id/parts/:pid', { preHandler: can('edit') }, async (req) => {
     const b = body(req, z.object({ type: z.string().nullable().optional(), reportPages: z.array(z.number().int()).optional() }));
     if (b.type !== undefined) await docs.correctPartLabel(actorOf(req), idParam(req), idParam(req, 'pid'), b.type);

@@ -43,6 +43,18 @@ export async function uploadDocuments(
   return { batch, documentIds: ids };
 }
 
+/** Read a document again (after a failure, or once AI keys are fixed). */
+export async function retryDocument(actor: Actor, assignmentId: number, documentId: number) {
+  const a = await assertCase(actor.firmId!, assignmentId);
+  if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
+  const d = await db.selectFrom('documents').select(['id', 'role', 'status']).where('id', '=', documentId).where('assignment_id', '=', assignmentId).executeTakeFirst();
+  if (!d) throw notFound('Document');
+  if (d.status === 'reading') throw badRequest('This document is being read now');
+  await db.updateTable('documents').set({ status: 'uploaded', error: null }).where('id', '=', documentId).execute();
+  await enqueue(d.role === 'site_sheet' ? 'site.read_sheet' : 'document.read', { documentId }, { firmId: actor.firmId, dedupeKey: `doc:${documentId}:${Date.now()}` });
+  await audit(actor, { entityType: 'document', entityId: documentId, assignmentId, action: 'document.retry', summary: 'Document sent for reading again.' });
+}
+
 export async function listDocuments(firmId: number, assignmentId: number) {
   await assertCase(firmId, assignmentId);
   const docs = await db
