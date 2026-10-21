@@ -1,6 +1,8 @@
 // Builds the SBI "Annexure XI, Format-A" Word template as a bank would supply it: labels with empty
 // value cells, plus a few {{FIELD}} placeholders in running text. The template engine then detects,
 // maps and compiles it like any uploaded bank template. Layout follows the ValueMitra prototype.
+// Revision 2: the Format-A body flows from page to page (no fixed page breaks), rows never split
+// across pages, a section heading stays with its first row and signature blocks stay together.
 import {
   AlignmentType, BorderStyle, Document, Packer, PageBreak, Paragraph, Table, TableCell, TableRow, TextRun, WidthType,
 } from 'docx';
@@ -11,9 +13,11 @@ const SZ = 22; // 11 pt
 const t = (text: string, o: { bold?: boolean; size?: number; underline?: boolean; italics?: boolean } = {}) =>
   new TextRun({ text, font: FONT, size: o.size ?? SZ, bold: o.bold, italics: o.italics, underline: o.underline ? {} : undefined });
 
-const p = (text: string | TextRun[], o: { align?: (typeof AlignmentType)[keyof typeof AlignmentType]; bold?: boolean; size?: number; after?: number; underline?: boolean; before?: number } = {}) =>
+const p = (text: string | TextRun[], o: { align?: (typeof AlignmentType)[keyof typeof AlignmentType]; bold?: boolean; size?: number; after?: number; underline?: boolean; before?: number; keepNext?: boolean } = {}) =>
   new Paragraph({
     alignment: o.align,
+    keepNext: o.keepNext,
+    keepLines: true,
     spacing: { after: o.after ?? 80, before: o.before ?? 0 },
     children: typeof text === 'string' ? [t(text, { bold: o.bold, size: o.size, underline: o.underline })] : text,
   });
@@ -21,31 +25,33 @@ const p = (text: string | TextRun[], o: { align?: (typeof AlignmentType)[keyof t
 const border = { style: BorderStyle.SINGLE, size: 4, color: '333333' };
 const borders = { top: border, bottom: border, left: border, right: border };
 
-const cell = (text: string, o: { bold?: boolean; width?: number; span?: number; shade?: boolean } = {}) =>
+const cell = (text: string, o: { bold?: boolean; width?: number; span?: number; shade?: boolean; keepNext?: boolean } = {}) =>
   new TableCell({
     borders,
     columnSpan: o.span,
     width: o.width ? { size: o.width, type: WidthType.PERCENTAGE } : undefined,
     shading: o.shade ? { fill: 'F2F2F2' } : undefined,
-    children: text.split('\n').map((line) => p(line, { bold: o.bold, after: 20 })),
+    children: text.split('\n').map((line) => p(line, { bold: o.bold, after: 20, keepNext: o.keepNext })),
   });
+/** a row that never splits across pages; keepNext holds it on the page of the row below */
+const tr = (children: TableCell[]) => new TableRow({ cantSplit: true, children });
 
 const table = (rows: TableRow[]) => new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
 
 /** numbered section header row */
-const sec = (no: string, title: string) => new TableRow({ children: [cell(no, { bold: true, width: 6, shade: true }), cell(title, { bold: true, span: 2, shade: true })] });
+const sec = (no: string, title: string) => tr([cell(no, { bold: true, width: 6, shade: true, keepNext: true }), cell(title, { bold: true, span: 2, shade: true, keepNext: true })]);
 /** label / empty value row */
-const row = (label: string, value = '') => new TableRow({ children: [cell('', { width: 6 }), cell(label, { width: 40 }), cell(value, { width: 54 })] });
+const row = (label: string, value = '') => tr([cell('', { width: 6 }), cell(label, { width: 40 }), cell(value, { width: 54 })]);
 
 const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
 
 const sigBlock = () => [
-  p(''),
+  p('', { keepNext: true }),
   table([
-    new TableRow({ children: [cell('Place', { width: 30 }), cell('', { width: 70 })] }),
-    new TableRow({ children: [cell('Date', { width: 30 }), cell('', { width: 70 })] }),
-    new TableRow({ children: [cell('Signature & seal of the valuer', { width: 30 }), cell('', { width: 70 })] }),
-    new TableRow({ children: [cell('Name of the valuer', { width: 30 }), cell('', { width: 70 })] }),
+    tr([cell('Place', { width: 30, keepNext: true }), cell('', { width: 70, keepNext: true })]),
+    tr([cell('Date', { width: 30, keepNext: true }), cell('', { width: 70, keepNext: true })]),
+    tr([cell('Signature & seal of the valuer', { width: 30, keepNext: true }), cell('', { width: 70, keepNext: true })]),
+    tr([cell('Name of the valuer', { width: 30 }), cell('', { width: 70 })]),
   ]),
 ];
 
@@ -133,7 +139,7 @@ export async function buildSbiFormatA(): Promise<Buffer> {
     p('VALUATION REPORT', { align: AlignmentType.CENTER, bold: true, size: 26, underline: true }),
     p('STATE BANK OF INDIA ({{CASE.BRANCH_NAME}})', { align: AlignmentType.CENTER, bold: true }),
     table([
-      new TableRow({ children: [cell('Ref No.', { width: 15 }), cell('', { width: 45 }), cell('Date', { width: 15 }), cell('', { width: 25 })] }),
+      tr([cell('Ref No.', { width: 15 }), cell('', { width: 45 }), cell('Date', { width: 15 }), cell('', { width: 25 })]),
     ]),
     p(''),
     table([
@@ -163,7 +169,6 @@ export async function buildSbiFormatA(): Promise<Buffer> {
       sec('7.', 'Violation if any observed'),
       row('Violation if any observed'),
     ]),
-    pageBreak(),
   );
 
   // ---- Format-A, part 2 ----
@@ -180,26 +185,26 @@ export async function buildSbiFormatA(): Promise<Buffer> {
     ]),
     p(''),
     table([
-      new TableRow({ children: [cell('Description', { bold: true, width: 40 }), cell('Built-up area', { bold: true, width: 20 }), cell('Rate', { bold: true, width: 20 }), cell('Estimated value', { bold: true, width: 20 })] }),
-      new TableRow({ children: [cell('Present Value of the Flat', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })] }),
-      new TableRow({ children: [cell('Car Parking', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })] }),
-      new TableRow({ children: [cell('Interior Decorations', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })] }),
-      new TableRow({ children: [cell('Others (Government Charges)', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })] }),
+      tr([cell('Description', { bold: true, width: 40 }), cell('Built-up area', { bold: true, width: 20 }), cell('Rate', { bold: true, width: 20 }), cell('Estimated value', { bold: true, width: 20 })]),
+      tr([cell('Present Value of the Flat', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),
+      tr([cell('Car Parking', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),
+      tr([cell('Interior Decorations', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),
+      tr([cell('Others (Government Charges)', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),
     ]),
     p(''),
-    p('Summary of Valuation', { bold: true }),
+    p('Summary of Valuation', { bold: true, keepNext: true }),
     table([
-      new TableRow({ children: [cell('I.', { width: 6 }), cell('Guideline Value', { width: 44 }), cell('', { width: 50 })] }),
-      new TableRow({ children: [cell('II.', { width: 6 }), cell('Fair Market Value', { width: 44 }), cell('', { width: 50 })] }),
-      new TableRow({ children: [cell('III.', { width: 6 }), cell('Realizable Value', { width: 44 }), cell('', { width: 50 })] }),
-      new TableRow({ children: [cell('IV.', { width: 6 }), cell('Forced/Distress Value', { width: 44 }), cell('', { width: 50 })] }),
-      new TableRow({ children: [cell('V.', { width: 6 }), cell('Agreement Value', { width: 44 }), cell('', { width: 50 })] }),
-      new TableRow({ children: [cell('VI.', { width: 6 }), cell('Insurable Value', { width: 44 }), cell('', { width: 50 })] }),
-      new TableRow({ children: [cell('VII.', { width: 6 }), cell('Rent', { width: 44 }), cell('', { width: 50 })] }),
+      tr([cell('I.', { width: 6 }), cell('Guideline Value', { width: 44 }), cell('', { width: 50 })]),
+      tr([cell('II.', { width: 6 }), cell('Fair Market Value', { width: 44 }), cell('', { width: 50 })]),
+      tr([cell('III.', { width: 6 }), cell('Realizable Value', { width: 44 }), cell('', { width: 50 })]),
+      tr([cell('IV.', { width: 6 }), cell('Forced/Distress Value', { width: 44 }), cell('', { width: 50 })]),
+      tr([cell('V.', { width: 6 }), cell('Agreement Value', { width: 44 }), cell('', { width: 50 })]),
+      tr([cell('VI.', { width: 6 }), cell('Insurable Value', { width: 44 }), cell('', { width: 50 })]),
+      tr([cell('VII.', { width: 6 }), cell('Rent', { width: 44 }), cell('', { width: 50 })]),
     ]),
     p(''),
     table([
-      new TableRow({ children: [cell('Justification for 20% variation in FMV and GV', { bold: true, width: 40 }), cell('', { width: 60 })] }),
+      tr([cell('Justification for 20% variation in FMV and GV', { bold: true, width: 40 }), cell('', { width: 60 })]),
     ]),
     p(''),
     table([
@@ -216,7 +221,7 @@ export async function buildSbiFormatA(): Promise<Buffer> {
       sec('12.', 'Name & Address of Valuer'),
       row('Name & Address of Valuer'),
     ]),
-    pageBreak(),
+    p(''),
   );
 
   // ---- Opinion page with remarks ----
@@ -224,7 +229,8 @@ export async function buildSbiFormatA(): Promise<Buffer> {
     p('{{REPORT.OPINION}}', { after: 160 }),
     ...sigBlock(),
     p(''),
-    p('Remarks:', { bold: true, underline: true }),
+    p('Remarks:', { bold: true, underline: true, keepNext: true }),
+    // long remarks may run onto the next page rather than leave a gap
     table([new TableRow({ children: [cell('Remarks of the valuer', { width: 25 }), cell('', { width: 75 })] })]),
     p(''),
     p('Followed by Annexure-III (declaration-cum-undertaking), valuer comment table, Model Code of Conduct, photographs, map, ready reckoner, listings, sale transactions and document pages.', { size: 18 }),
@@ -235,18 +241,18 @@ export async function buildSbiFormatA(): Promise<Buffer> {
   children.push(
     p('Annexure-III', { align: AlignmentType.RIGHT, bold: true }),
     p('DECLARATION-CUM-UNDERTAKING', { align: AlignmentType.CENTER, bold: true, underline: true, after: 160 }),
-    ...DECLARATIONS.map((d, i) => p(`${String.fromCharCode(97 + i)})  ${d}`, { after: 60 })),
+    ...DECLARATIONS.map((d, i, all) => p(`${String.fromCharCode(97 + i)})  ${d}`, { after: 40, size: 20, keepNext: i === all.length - 1 })),
     ...sigBlock(),
     pageBreak(),
   );
 
   // ---- Valuer comment table ----
   const comment = (no: string, label: string, value = '') =>
-    new TableRow({ children: [cell(no, { width: 6 }), cell(label, { width: 40 }), cell(value, { width: 54 })] });
+    tr([cell(no, { width: 6 }), cell(label, { width: 40 }), cell(value, { width: 54 })]);
   children.push(
     p('VALUER COMMENT', { align: AlignmentType.CENTER, bold: true, underline: true, after: 160 }),
     table([
-      new TableRow({ children: [cell('Sr. No.', { bold: true, width: 6 }), cell('Particulars', { bold: true, width: 40 }), cell('Valuer comment', { bold: true, width: 54 })] }),
+      tr([cell('Sr. No.', { bold: true, width: 6 }), cell('Particulars', { bold: true, width: 40 }), cell('Valuer comment', { bold: true, width: 54 })]),
       comment('1', 'Background information of the asset being valued'),
       comment('2', 'Purpose of valuation and appointing authority'),
       comment('3', 'Identity of the valuer and any other experts involved in the valuation'),
@@ -269,7 +275,7 @@ export async function buildSbiFormatA(): Promise<Buffer> {
     p('Annexure-XIV', { align: AlignmentType.RIGHT, bold: true }),
     p('MODEL CODE OF CONDUCT FOR VALUERS', { align: AlignmentType.CENTER, bold: true, underline: true, after: 60 }),
     p('{Adopted in line with Companies (Registered Valuers and Valuation) Rules, 2017}', { align: AlignmentType.CENTER, after: 160, size: 20 }),
-    ...CODE_OF_CONDUCT.map((c, i) => p(`${i + 1}.  ${c}`, { after: 60, size: 20 })),
+    ...CODE_OF_CONDUCT.map((c, i, all) => p(`${i + 1}.  ${c}`, { after: 60, size: 20, keepNext: i === all.length - 1 })),
     ...sigBlock(),
   );
 

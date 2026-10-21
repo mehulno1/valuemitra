@@ -69,6 +69,11 @@ export default function Board() {
         ))}
       </div>
 
+      <p className="sub -mt-2 mb-3">Click a stage to show only its cases; click it again to show all.</p>
+
+      {alerts.data && !alerts.data.length && (
+        <p className="sub mb-4">No overdue cases. An alert appears here when a case waits too long: documents over 4 h, site visit over 6 h, valuer review over 4 h, signed but not dispatched over 2 h.</p>
+      )}
       {!!alerts.data?.length && (
         <div className="mb-4 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
           {alerts.data.slice(0, 4).map((a) => (

@@ -6,6 +6,7 @@ import { useParams } from 'react-router-dom';
 interface Visit {
   caseNo: string; firm: string; bank: string; branch: string; engineer: string | null; address: string | null;
   status: string; expiresAt: string; prompts: string[]; minPhotos: number; photos: number; sheetUploaded: boolean;
+  photoIds: number[]; newSinceSubmit: number;
 }
 
 async function readError(r: Response) {
@@ -78,7 +79,7 @@ export default function EngineerVisit() {
       const r = await fetch(`${base}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: note.trim() || null }) });
       if (!r.ok) throw new Error(await readError(r));
       await load();
-      setNotice({ ok: true, msg: 'Sent to the office. Thank you.' });
+      setNotice({ ok: true, msg: 'Sent to the office. Thank you. Nothing more is needed unless you missed a photo.' });
     } catch (e) {
       setNotice({ ok: false, msg: (e as Error).message });
     } finally { setBusy(null); }
@@ -106,6 +107,7 @@ export default function EngineerVisit() {
   if (!v) return shell(<div className="muted p-4"><span className="dots">Loading</span></div>);
 
   const submitted = v.status === 'submitted';
+  const pendingSend = !submitted || v.newSinceSubmit > 0;
   const enough = v.photos >= v.minPhotos;
   const expires = new Date(v.expiresAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
@@ -122,7 +124,7 @@ export default function EngineerVisit() {
       {submitted && (
         <div className="panel grid gap-1 p-4" style={{ borderLeft: '4px solid var(--ok)' }}>
           <b className="text-ok">Visit submitted</b>
-          <span className="sub">The office has your sheet and photos. You can still add photos you missed; they go to the same case.</span>
+          <span className="sub">The office has your sheet and photos. You can still add photos you missed; they go to the same case. Do not upload the same photos again.</span>
         </div>
       )}
 
@@ -160,6 +162,16 @@ export default function EngineerVisit() {
         </div>
         <input ref={camIn} type="file" hidden accept="image/*" capture="environment" multiple onChange={(e) => { const f = Array.from(e.target.files ?? []); e.target.value = ''; send('photos', f); }} />
         <input ref={galIn} type="file" hidden accept="image/*" multiple onChange={(e) => { const f = Array.from(e.target.files ?? []); e.target.value = ''; send('photos', f); }} />
+        {!!v.photoIds.length && (
+          <div className="grid gap-1.5">
+            <div className="eyebrow mt-1">Received by the office ({v.photoIds.length})</div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {v.photoIds.map((id) => (
+                <img key={id} src={`${base}/photo/${id}`} alt="" loading="lazy" className="aspect-square w-full rounded-md border border-line object-cover" />
+              ))}
+            </div>
+          </div>
+        )}
         {!!v.prompts.length && (
           <div className="grid gap-1">
             <div className="eyebrow mt-1">Photo checklist</div>
@@ -181,8 +193,8 @@ export default function EngineerVisit() {
           <textarea id="note" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Owner's relative met on site; lift not working" style={{ fontSize: 16 }} />
         </div>
         {!enough && !submitted && <div className="sub" style={{ color: 'var(--warn)' }}>Only {v.photos} photo{v.photos === 1 ? '' : 's'} so far; {v.minPhotos} or more are needed for the report.</div>}
-        <button className="btn pri" style={big} disabled={!!busy || (!v.photos && !v.sheetUploaded)} onClick={submit}>
-          {busy === 'submit' ? 'Sending…' : submitted ? 'Send again' : 'Submit visit'}
+        <button className="btn pri" style={big} disabled={!!busy || (!v.photos && !v.sheetUploaded) || !pendingSend} onClick={submit}>
+          {busy === 'submit' ? 'Sending…' : !submitted ? 'Submit visit' : v.newSinceSubmit ? `Send ${v.newSinceSubmit} new upload${v.newSinceSubmit === 1 ? '' : 's'} to the office` : 'Submitted ✓'}
         </button>
       </section>
     </>,

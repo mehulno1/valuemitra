@@ -157,7 +157,7 @@ export async function caseRoutes(app: FastifyInstance) {
   app.get('/api/assignments/:id/evidence', async (req) => val.evidence(req.auth!.firmId, idParam(req)));
   app.post('/api/assignments/:id/evidence', { preHandler: can('edit') }, async (req) => {
     const { files, fields } = await multipartFiles(req);
-    const kind = (['igr', 'listing', 'other'].includes(fields.kind) ? fields.kind : 'listing') as 'igr' | 'listing' | 'other';
+    const kind = (['igr', 'listing', 'other', 'rr', 'map'].includes(fields.kind) ? fields.kind : 'listing') as val.CaptureKind;
     return { ids: await val.captureEvidence(actorOf(req), idParam(req), files, kind, fields.source || null, fields.url || null) };
   });
   app.post('/api/assignments/:id/evidence/refresh', { preHandler: can('edit') }, async (req) => {
@@ -171,9 +171,7 @@ export async function caseRoutes(app: FastifyInstance) {
   });
   app.patch('/api/assignments/:id/captures/:cid', { preHandler: can('edit') }, async (req) => {
     const b = body(req, z.object({ inReport: z.boolean() }));
-    const a = await docs.assertCase(req.auth!.firmId, idParam(req));
-    if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
-    await db.updateTable('evidence_captures').set({ in_report: b.inReport ? 1 : 0 }).where('id', '=', idParam(req, 'cid')).where('assignment_id', '=', idParam(req)).execute();
+    await val.setCaptureInReport(actorOf(req), idParam(req), idParam(req, 'cid'), b.inReport);
     return { ok: true };
   });
   app.get('/api/assignments/:id/valuation', async (req) => val.valuationView(req.auth!.firmId, idParam(req)));

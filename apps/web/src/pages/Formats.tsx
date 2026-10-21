@@ -129,7 +129,7 @@ function FormatList() {
   return (
     <>
       <PageHead eyebrow="Templates" title="Bank formats" actions={can('config') && !adding && <button className="btn pri" onClick={() => setAdding(true)}>+ Add a bank format</button>} />
-      <p className="muted -mt-3 mb-4">Each format maps to the same master data, so a fact is captured once and printed in every bank's layout.</p>
+      <p className="muted -mt-3 mb-4">Each format maps to the same master data, so a fact is captured once and printed in every bank's layout.{!can('config') && ' Adding or revising a format needs the “Master data & templates” permission (Firm settings → Users).'}</p>
 
       {adding && (
         <Panel title="Add a bank format" className="mb-4">

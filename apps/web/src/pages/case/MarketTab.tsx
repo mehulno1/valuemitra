@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { inr, SQFT_PER_SQM } from '@vm/shared';
-import { Empty, FileDrop, Loading, Modal, Panel, Pending, fmtDate, useErrorToast, useToast } from '@/components/ui';
+import { Empty, FileDrop, FileImg, Loading, Modal, Panel, Pending, fmtDate, useErrorToast, useToast } from '@/components/ui';
 import { api, downloadFile } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { caseKey, type TabProps } from './context';
@@ -15,7 +15,7 @@ interface Comp {
   rate_per_sqft: number | string; adjustments: Adj[]; adjusted_rate: number | string; weight: number | string; weight_label: string; included: number | boolean;
   exclusion_reason: string | null; age_months: number | string | null; note: string | null; notes: string | null; manual_override: number | boolean; file_id: number | null; bhk: string | null;
 }
-interface Capture { id: number; file_id: number; source_kind: string; source_name: string | null; url: string | null; status: string; error: string | null; in_report: number | boolean }
+interface Capture { id: number; file_id: number; mime: string; source_kind: string; source_name: string | null; url: string | null; status: string; error: string | null; in_report: number | boolean }
 interface Evidence {
   readyReckoner: { ratePerSqm: unknown; ratePerSqft: unknown; year: unknown; source: string | null } | null;
   guideline: unknown; consideration: unknown; area: unknown; registrationDate: unknown;
@@ -27,7 +27,9 @@ interface Evidence {
 const n = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const rs = (v: unknown) => (n(v) === null ? '—' : `Rs. ${inr(n(v))}`);
 const SOURCE: Record<string, string> = { index2: 'Index II', igr_search: 'IGR search', listing: 'Listing', own_report: 'Earlier report', manual: 'Manual', valuer_entry: 'Valuer entry' };
-const KIND: Record<string, string> = { igr: 'IGR search', listing: 'Listing page', other: 'Other evidence' };
+const KIND: Record<string, string> = { igr: 'IGR search', listing: 'Listing page', other: 'Other evidence', rr: 'Ready reckoner page', map: 'Location map' };
+const PRINT_ONLY = new Set(['rr', 'map']);
+const DEFAULT_SOURCE: Record<string, string> = { igr: 'IGR Maharashtra', listing: '99acres', rr: 'IGR Maharashtra e-ASR', map: 'Google Maps', other: '' };
 
 export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   const { can } = useAuth();
@@ -40,14 +42,14 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   });
   const vq = useQuery({ queryKey: caseKey(c.id, 'valuation'), queryFn: () => api.get<any>(`/api/assignments/${c.id}/valuation`) });
 
-  const [kind, setKind] = useState<'igr' | 'listing' | 'other'>('listing');
+  const [kind, setKind] = useState<'igr' | 'listing' | 'other' | 'rr' | 'map'>('listing');
   const [source, setSource] = useState('99acres');
   const [url, setUrl] = useState('');
   const [edit, setEdit] = useState<{ comp: Comp; included: boolean; weight: string; reason: string } | null>(null);
 
   const upload = useMutation({
     mutationFn: (files: File[]) => api.upload(`/api/assignments/${c.id}/evidence`, files, { kind, source: kind === 'igr' ? source || 'IGR Maharashtra' : source, url }),
-    onSuccess: (r: any) => { toast(`Captured ${r.ids?.length ?? 0} page(s). Reading entries.`); setUrl(''); refresh(); },
+    onSuccess: (r: any) => { toast(`Captured ${r.ids?.length ?? 0} page(s).${PRINT_ONLY.has(kind) ? ' Printed in the report as captured.' : ' Reading entries.'}`); setUrl(''); refresh(); },
     onError: err,
   });
   const refreshEv = useMutation({
@@ -62,7 +64,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   });
   const inReport = useMutation({
     mutationFn: (b: { cid: number; inReport: boolean }) => api.patch(`/api/assignments/${c.id}/captures/${b.cid}`, { inReport: b.inReport }),
-    onSuccess: () => refresh(),
+    onSuccess: (_r, b) => { toast(b.inReport ? 'Page added to the report' : 'Page left out of the report'); refresh(); },
     onError: err,
   });
 
@@ -133,9 +135,11 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="field">
                   <label>Page type</label>
-                  <select value={kind} onChange={(e) => { const k = e.target.value as typeof kind; setKind(k); setSource(k === 'igr' ? 'IGR Maharashtra' : k === 'listing' ? '99acres' : ''); }}>
+                  <select value={kind} onChange={(e) => { const k = e.target.value as typeof kind; setKind(k); setSource(DEFAULT_SOURCE[k] ?? ''); }}>
                     <option value="igr">IGR search (Index II)</option>
                     <option value="listing">Listing page</option>
+                    <option value="rr">Ready reckoner page (printed as is)</option>
+                    <option value="map">Location map (printed as is)</option>
                     <option value="other">Other</option>
                   </select>
                 </div>
@@ -151,33 +155,41 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
               </div>
               <FileDrop accept="image/*,application/pdf" onFiles={(f) => upload.mutate(f)} disabled={upload.isPending}>
                 <b>{upload.isPending ? <span className="dots">Uploading</span> : 'Drop screenshots or PDFs of the result pages'}</b>
-                <div className="sub">One file per captured page. Each entry on the page becomes a comparable.</div>
+                <div className="sub">{PRINT_ONLY.has(kind) ? 'Printed in the report as captured; not read into comparables.' : 'One file per captured page. Each entry on the page becomes a comparable.'}</div>
               </FileDrop>
+              {kind === 'rr' && <p className="sub m-0">The rate above is looked up from the property's village. To print the official page: igrmaharashtra.gov.in → e-ASR (ready reckoner) → year, district, taluka and village → screenshot the rate table, then drop it here.</p>}
+              {kind === 'map' && <p className="sub m-0">A map is drawn from the site photos' GPS position when they have one. To add your own, pin the property in Google Maps, take a screenshot showing the pin and nearby landmarks, then drop it here.</p>}
             </div>
           ) : <p className="sub">{locked ? 'The report is signed and locked.' : 'You do not have permission to add evidence.'}</p>}
         </Panel>
 
-        <Panel title="Captured pages" right={<span className="sub">{captures.length} page(s) · tick to print in the report</span>} pad={false}>
+        <Panel title="Captured pages" right={<span className="sub">{captures.length} page(s) · click a page to print it in the report or leave it out</span>} pad={false}>
           {captures.length === 0 ? <p className="sub p-4">No pages captured yet.</p> : (
-            <ul className="m-0 list-none p-0">
-              {captures.map((cp) => (
-                <li key={cp.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3 last:border-b-0">
-                  <div className="min-w-0">
-                    <b className="block text-[13.5px]">{KIND[cp.source_kind] ?? cp.source_kind}{cp.source_name ? ` · ${cp.source_name}` : ''}</b>
-                    <div className="sub flex flex-wrap gap-x-3">
-                      <CaptureStatus s={cp.status} />
-                      {cp.error && <span className="text-crit" title={cp.error}>{cp.error.slice(0, 90)}</span>}
-                      {cp.url && <a className="linkbtn" href={cp.url} target="_blank" rel="noreferrer">Open page</a>}
-                      <button className="linkbtn" onClick={() => downloadFile(cp.file_id, `evidence-${cp.id}`).catch(err)}>Download</button>
+            <div className="photos">
+              {captures.map((cp) => {
+                const on = !!Number(cp.in_report);
+                return (
+                  <div key={cp.id} className={`ph ${on ? 'sel' : ''}`}>
+                    <button type="button" className="block w-full border-0 bg-transparent p-0" disabled={!canEdit || inReport.isPending} aria-pressed={on} title={on ? 'In the report: click to leave out' : 'Not in the report: click to include'} onClick={() => inReport.mutate({ cid: cp.id, inReport: !on })}>
+                      {cp.mime === 'application/pdf'
+                        ? <div className="grid place-items-center bg-sunk text-[13px] font-semibold text-muted" style={{ aspectRatio: '3 / 4' }}>PDF</div>
+                        : <FileImg id={cp.file_id} alt={KIND[cp.source_kind] ?? 'Captured page'} />}
+                      <span className="ck">{on ? '✓' : ''}</span>
+                    </button>
+                    <div className="cap">
+                      <b className="block">{KIND[cp.source_kind] ?? cp.source_kind}</b>
+                      {cp.source_name && <span>{cp.source_name}</span>}
+                      <small className="flex flex-wrap gap-x-2">
+                        {!PRINT_ONLY.has(cp.source_kind) && <CaptureStatus s={cp.status} />}
+                        {cp.url && <a className="linkbtn" href={cp.url} target="_blank" rel="noreferrer">Open page</a>}
+                        <button className="linkbtn" onClick={() => downloadFile(cp.file_id, `evidence-${cp.id}`).catch(err)}>Download</button>
+                      </small>
+                      {cp.error && <small className="text-crit" title={cp.error}>{cp.error.slice(0, 90)}</small>}
                     </div>
                   </div>
-                  <label className="flex items-center gap-2 text-[12.5px]">
-                    <input type="checkbox" checked={!!Number(cp.in_report)} disabled={!canEdit || inReport.isPending} onChange={(e) => inReport.mutate({ cid: cp.id, inReport: e.target.checked })} />
-                    In report
-                  </label>
-                </li>
-              ))}
-            </ul>
+                );
+              })}
+            </div>
           )}
         </Panel>
       </div>

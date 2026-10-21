@@ -112,9 +112,9 @@ function BrandingSection() {
   if (!firm.data) return <Loading />;
   const s = firm.data.settings;
   const items = [
-    { kind: 'letterhead', title: 'Letterhead', hint: 'Wide image, placed at the top of every report page', id: s.letterhead_file_id, h: 90 },
-    { kind: 'signature', title: 'Signature', hint: 'PNG with transparent background works best', id: s.signature_file_id, h: 90 },
-    { kind: 'seal', title: 'Round seal', hint: 'Square PNG; also used small on every page', id: s.seal_file_id, h: 110 },
+    { kind: 'letterhead', title: 'Letterhead', hint: 'Wide strip about 6 : 1, at least 2000 × 340 px; printed 17 × 3 cm at the top of every report page', id: s.letterhead_file_id, h: 90 },
+    { kind: 'signature', title: 'Signature', hint: 'About 600 × 230 px, PNG with a transparent background (a JPEG on plain white also works); printed about 3 × 2 cm', id: s.signature_file_id, h: 90 },
+    { kind: 'seal', title: 'Round seal', hint: 'Square, about 600 × 600 px, PNG with a transparent background; printed 2 cm beside the signature, small on every page', id: s.seal_file_id, h: 110 },
   ];
   return (
     <Panel title="Letterhead, signature and seal">
@@ -137,7 +137,7 @@ function BrandingSection() {
           </div>
         ))}
       </div>
-      <p className="sub mb-0 mt-4">Placed only when the valuer approves and signs. Drafts carry a DRAFT watermark instead.</p>
+      <p className="sub mb-0 mt-4">PNG, JPEG or WebP (a few hundred KB is plenty); scan at 300 dpi for a sharp print. Signature and seal are placed only when the valuer approves and signs; drafts carry a DRAFT mark instead.</p>
     </Panel>
   );
 }
@@ -201,7 +201,7 @@ function NumbersSection() {
 const RULES: { k: string; label: string; hint?: string; step?: string }[] = [
   { k: 'distress_pct', label: 'Distress value, % of FMV' },
   { k: 'loading_pct', label: 'Loading on carpet, %', hint: 'Built-up = carpet × (1 + loading)' },
-  { k: 'saleable_factor', label: 'Saleable factor', hint: 'Saleable = built-up × factor', step: '0.01' },
+  { k: 'saleable_factor', label: 'Saleable factor', hint: 'Saleable = carpet × factor', step: '0.01' },
   { k: 'building_cost_per_sqft', label: 'Building cost / sq.ft.', hint: 'For insurable value' },
   { k: 'rental_yield_pct', label: 'Rental yield, % a year', step: '0.1' },
   { k: 'building_life_years', label: 'Building life, years' },
@@ -210,6 +210,9 @@ const RULES: { k: string; label: string; hint?: string; step?: string }[] = [
   { k: 'comparable_window_months', label: 'Comparables: window, months' },
   { k: 'comparable_radius_km', label: 'Comparables: radius, km', step: '0.1' },
   { k: 'listing_discount_pct', label: 'Listing discount, %', hint: 'Asking prices are reduced by this' },
+  { k: 'rate_rounding_step', label: 'Evidence rate rounded to, Rs.', hint: 'e.g. 100: Rs. 12,840 → 12,800' },
+  { k: 'value_rounding_step', label: 'Values rounded to, Rs.', hint: 'FMV, realizable, distress, insurable; 1 = to the rupee' },
+  { k: 'rent_rounding_step', label: 'Rent rounded to, Rs.' },
 ];
 
 function RulesSection() {
@@ -228,7 +231,7 @@ function RulesSection() {
   const [p, setP, dirty] = useForm<any>(base?.payload);
   const [note, setNote] = useState('');
   const [eff, setEff] = useState(today);
-  const ro = !can('config');
+  const ro = !can('set') && !can('config');
 
   const saveDraft = useMutation({
     mutationFn: () => api.put<ConfigVersion>('/api/admin/config/rule_set/firm', { payload: p, note: note || null }),
@@ -258,7 +261,7 @@ function RulesSection() {
     <div className="cols">
       <section className="panel">
         <form className="form" onSubmit={(e) => { e.preventDefault(); saveDraft.mutate(); }}>
-          {ro && <div className="full"><ReadOnlyNote perm="Master data & templates" /></div>}
+          {ro && <div className="full"><ReadOnlyNote perm="Settings" /></div>}
           <div className="full flex flex-wrap items-center gap-2">
             {draft ? <span className="sev warn">Editing draft v{draft.version}</span> : <span className="sev ok">Showing active v{active?.version}{active?.firm_id === null ? ' (platform default)' : ''}</span>}
             {dirty && <span className="sub">Unsaved changes</span>}

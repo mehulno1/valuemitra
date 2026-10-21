@@ -62,13 +62,25 @@ export async function publicVisitInfo(token: string) {
   const { visit, assignment } = await visitByToken(token);
   const profile = assignment.profile_version_id ? (await configById(assignment.profile_version_id)).payload : {};
   const addr = await db.selectFrom('field_values').select('value_text').where('assignment_id', '=', assignment.id).where('field_code', '=', 'PROP.ADDRESS').where('is_current', '=', 1).orderBy('confidence', 'desc').executeTakeFirst();
-  const photos = await db.selectFrom('site_photos').select(['id', 'thumb_file_id', 'taken_at']).where('site_visit_id', '=', visit.id).execute();
-  const sheet = await db.selectFrom('documents').select(['id', 'page_count']).where('assignment_id', '=', assignment.id).where('role', '=', 'site_sheet').orderBy('id', 'desc').executeTakeFirst();
+  const photos = await db.selectFrom('site_photos').select(['id', 'created_at']).where('site_visit_id', '=', visit.id).orderBy('id').execute();
+  const sheet = await db.selectFrom('documents').select(['id', 'created_at']).where('assignment_id', '=', assignment.id).where('role', '=', 'site_sheet').orderBy('id', 'desc').executeTakeFirst();
+  const after = (d: Date) => !!visit.submitted_at && d > visit.submitted_at;
   return {
     caseNo: assignment.case_no, firm: assignment.firm, bank: assignment.bank, branch: assignment.branch, engineer: assignment.engineer,
     address: addr?.value_text ?? assignment.locality_hint, status: visit.status, expiresAt: visit.expires_at,
     prompts: profile.photo_prompts ?? [], minPhotos: profile.min_photos ?? 9, photos: photos.length, sheetUploaded: !!sheet,
+    photoIds: photos.map((p) => p.id),
+    // uploads after the visit was submitted; only these need sending again
+    newSinceSubmit: photos.filter((p) => after(p.created_at)).length + (sheet && after(sheet.created_at) ? 1 : 0),
   };
+}
+
+/** Thumbnail of a photo uploaded through this visit link (the token is the credential). */
+export async function publicThumb(token: string, photoId: number) {
+  const { visit, assignment } = await visitByToken(token);
+  const p = await db.selectFrom('site_photos').select(['thumb_file_id', 'file_id']).where('id', '=', photoId).where('site_visit_id', '=', visit.id).executeTakeFirst();
+  if (!p) throw notFound('Photo');
+  return (await readFile(p.thumb_file_id ?? p.file_id, assignment.firm_id)).buffer;
 }
 
 /** dHash: 64-bit perceptual hash; near-identical photos differ in a few bits. */
@@ -191,6 +203,7 @@ export async function engineerSubmit(token: string, note: string | null) {
   const photos = await db.selectFrom('site_photos').select((eb) => eb.fn.countAll<number>().as('n')).where('site_visit_id', '=', visit.id).executeTakeFirst();
   const sheet = await db.selectFrom('documents').select('id').where('assignment_id', '=', assignment.id).where('role', '=', 'site_sheet').where('status', '=', 'uploaded').orderBy('id', 'desc').executeTakeFirst();
   if (!Number(photos?.n) && !sheet) throw badRequest('Upload the inspection sheet and photos first');
+  if (visit.status === 'submitted' && !(await publicVisitInfo(token)).newSinceSubmit) return; // nothing new to send
   await db.updateTable('site_visits').set({ status: 'submitted', submitted_at: new Date(), engineer_note: note, visit_date: new Date() }).where('id', '=', visit.id).execute();
   const actor: Actor = { type: 'engineer', name: assignment.engineer ?? 'Field engineer', firmId: assignment.firm_id };
   await audit(actor, { entityType: 'site_visit', entityId: visit.id, assignmentId: assignment.id, action: 'site.submit', summary: `Site ${sheet ? 'sheet and ' : ''}${photos?.n ?? 0} photos received via the visit link.${note ? ` Note: ${note}` : ''}` });

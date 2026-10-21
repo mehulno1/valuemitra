@@ -47,18 +47,34 @@ export async function lookupReadyReckoner(assignmentId: number, firmId: number) 
   return { ...hit, matchedYear: hit.year_label === year };
 }
 
-export async function captureEvidence(actor: Actor, assignmentId: number, files: { name: string; mime: string; buffer: Buffer }[], kind: 'igr' | 'listing' | 'other', sourceName: string | null, url: string | null) {
+export type CaptureKind = 'igr' | 'listing' | 'other' | 'rr' | 'map';
+const CAPTURE_LABEL: Record<CaptureKind, string> = { igr: 'IGR search', listing: 'listing', other: 'evidence', rr: 'ready reckoner', map: 'location map' };
+/** Pages that print as they are (ready reckoner, location map); the rest are read into comparables. */
+const PRINT_ONLY = new Set<CaptureKind>(['rr', 'map']);
+
+export async function captureEvidence(actor: Actor, assignmentId: number, files: { name: string; mime: string; buffer: Buffer }[], kind: CaptureKind, sourceName: string | null, url: string | null) {
   const a = await assertCase(actor.firmId!, assignmentId);
   const ids: number[] = [];
+  const printOnly = PRINT_ONLY.has(kind);
   for (const f of files) {
     const mime = requireKind(f.buffer, DOCS, f.name);
     const stored = await saveFile({ firmId: a.firm_id, purpose: 'evidence', folder: `a${a.id}/evidence`, buffer: f.buffer, name: f.name, mime, userId: actor.id });
-    const r = await db.insertInto('evidence_captures').values({ assignment_id: a.id, file_id: stored.id, source_kind: kind, source_name: sourceName, url, captured_by: actor.id ?? null }).executeTakeFirstOrThrow();
+    const r = await db.insertInto('evidence_captures').values({ assignment_id: a.id, file_id: stored.id, source_kind: kind, source_name: sourceName, url, captured_by: actor.id ?? null, status: printOnly ? 'read' : 'uploaded' }).executeTakeFirstOrThrow();
     ids.push(Number(r.insertId));
-    await enqueue('evidence.read', { captureId: Number(r.insertId) }, { firmId: a.firm_id });
+    if (!printOnly) await enqueue('evidence.read', { captureId: Number(r.insertId) }, { firmId: a.firm_id });
   }
-  await audit(actor, { entityType: 'evidence', assignmentId, action: 'evidence.capture', summary: `Captured ${files.length} ${kind === 'igr' ? 'IGR search' : kind === 'listing' ? 'listing' : 'evidence'} page(s)${sourceName ? ` from ${sourceName}` : ''}. Reading entries.` });
+  await audit(actor, { entityType: 'evidence', assignmentId, action: 'evidence.capture', summary: `Captured ${files.length} ${CAPTURE_LABEL[kind]} page(s)${sourceName ? ` from ${sourceName}` : ''}.${printOnly ? ' Printed in the report as captured.' : ' Reading entries.'}` });
   return ids;
+}
+
+/** Tick or untick a captured page for printing in the report. */
+export async function setCaptureInReport(actor: Actor, assignmentId: number, captureId: number, inReport: boolean) {
+  const a = await assertCase(actor.firmId!, assignmentId);
+  if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
+  const c = await db.selectFrom('evidence_captures').select(['id', 'source_kind', 'source_name']).where('id', '=', captureId).where('assignment_id', '=', a.id).executeTakeFirst();
+  if (!c) throw notFound('Captured page');
+  await db.updateTable('evidence_captures').set({ in_report: inReport ? 1 : 0 }).where('id', '=', c.id).execute();
+  await audit(actor, { entityType: 'evidence', entityId: c.id, assignmentId: a.id, action: 'evidence.in_report', summary: `${CAPTURE_LABEL[c.source_kind]} page${c.source_name ? ` (${c.source_name})` : ''} ${inReport ? 'added to' : 'removed from'} the report.` });
 }
 
 const EntrySchema = z.object({
@@ -184,7 +200,7 @@ export async function evidence(firmId: number, assignmentId: number) {
     .select(['cc.id', 'cc.is_subject', 'cc.adjustments', 'cc.adjusted_rate', 'cc.weight', 'cc.weight_label', 'cc.included', 'cc.exclusion_reason', 'cc.age_months', 'cc.note', 'cc.manual_override',
       'c.source_type', 'c.source_ref', 'c.building', 'c.society', 'c.locality', 'c.txn_date', 'c.is_asking_price', 'c.area_value', 'c.area_basis', 'c.area_bua_sqft', 'c.price', 'c.rate_per_sqft', 'c.notes', 'c.file_id', 'c.bhk'])
     .where('cc.assignment_id', '=', assignmentId).orderBy('cc.is_subject', 'desc').orderBy('cc.weight', 'desc').execute();
-  const captures = await db.selectFrom('evidence_captures').selectAll().where('assignment_id', '=', assignmentId).orderBy('id').execute();
+  const captures = await db.selectFrom('evidence_captures as ec').innerJoin('files as f', 'f.id', 'ec.file_id').selectAll('ec').select('f.mime').where('ec.assignment_id', '=', assignmentId).orderBy('ec.id').execute();
   const rr = data.get('VAL.RR_RATE_SQM');
   return {
     readyReckoner: rr.state === 'filled' ? { ratePerSqm: rr.value, ratePerSqft: data.value('VAL.RR_RATE_SQFT'), year: data.value('VAL.RR_YEAR'), source: rr.snippet } : null,

@@ -46,6 +46,8 @@ export interface Resolved {
   edited: boolean;
   candidates: Candidate[];
   conflict: { message: string; options: { label: string; value: unknown; display: string; basis?: string; code?: string; candidateId?: number }[] } | null;
+  formula?: string | null;     // derived arithmetic in words, e.g. "Built-up area 465 ÷ (1 + loading % 20 ÷ 100) = 388"
+  ruleKeys?: string[];         // bank rule keys the derivation uses
 }
 
 const PENDING_BY_SOURCE: Record<string, string> = {
@@ -273,6 +275,21 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     return null;
   };
 
+  /** Arithmetic derivations in words with the values used; text and conditional ones are not explained. */
+  const explain = (expr: string, result: unknown): { formula: string | null; ruleKeys: string[] } => {
+    const ruleKeys = [...expr.matchAll(/RULE\.([a-z0-9_]+)/g)].map((m) => m[1]);
+    const body = expr.replace(/^\s*round\((.*)\)\s*$/, '$1');
+    if (typeof result !== 'number' || !/^[A-Za-z0-9_.\s()+\-*/]+$/.test(body)) return { formula: null, ruleKeys };
+    const words = body
+      .replace(/[A-Z][A-Z0-9_]*(\.[A-Za-z0-9_]+)+/g, (id) => {
+        const v = resolveIdent(id);
+        const label = id.startsWith('RULE.') ? id.slice(5).replace(/_pct$/, ' %').replace(/_/g, ' ') : (fields.get(id)?.label ?? id);
+        return `${label} ${typeof v === 'number' ? v.toLocaleString('en-IN') : (v ?? '?')}`;
+      })
+      .replace(/\s*\/\s*/g, ' ÷ ').replace(/\s*\*\s*/g, ' × ');
+    return { formula: `${words} = ${result.toLocaleString('en-IN')}`, ruleKeys };
+  };
+
   /** {{ IDENT }} shows the formatted value; any other expression is evaluated on raw values. */
   const wordingText = (template: string, extra: Record<string, unknown> = {}): string | null => {
     let missing = false;
@@ -372,7 +389,11 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
       if (src === 'derived') {
         if (!f.derivation) continue;
         const v = evalExpr(f.derivation, resolveIdent, EXPR_FNS);
-        if (v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && !Number.isFinite(v))) { r.value = v; r.source = 'derived'; break; }
+        if (v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && !Number.isFinite(v))) {
+          r.value = v; r.source = 'derived';
+          Object.assign(r, explain(f.derivation, v));
+          break;
+        }
         pending ??= firstPendingDependency(f.derivation);
         continue;
       }

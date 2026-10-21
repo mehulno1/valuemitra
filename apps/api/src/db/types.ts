@@ -378,7 +378,7 @@ export interface EvidenceCaptures {
   file_id: number;
   id: Generated<number>;
   in_report: Generated<number>;
-  source_kind: "igr" | "listing" | "other";
+  source_kind: "igr" | "listing" | "map" | "other" | "rr";
   source_name: string | null;
   status: Generated<"failed" | "read" | "reading" | "uploaded">;
   url: string | null;

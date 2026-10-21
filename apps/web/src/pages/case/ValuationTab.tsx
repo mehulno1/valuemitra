@@ -14,7 +14,8 @@ interface ValView {
   method: string; basis: string; basisArea: unknown;
   proposal: { rate: unknown; lo: unknown; hi: unknown } | null;
   guideline: unknown; agreement: unknown;
-  rules: { realizable_pct: number; distress_pct: number; gv_variation_pct: number; rate_deviation_pct: number; building_cost_per_sqft: number; rental_yield_pct: number };
+  rules: { realizable_pct: number; distress_pct: number; gv_variation_pct: number; rate_deviation_pct: number; building_cost_per_sqft: number; rental_yield_pct: number; value_rounding_step: number; rent_rounding_step: number };
+  bua: unknown;
   current: { adopted_rate: unknown; reason: string | null; values: Values; extras: Extra[]; draft_version: number; created_at: string } | null;
   justification: { display: string | null; state: string; pendingLabel: string | null; edited: boolean };
   history: { id: number; adopted_rate: unknown; proposed_rate: unknown; reason: string | null; draft_version: number; created_at: string; by: string | null; fmv: number }[];
@@ -23,6 +24,7 @@ interface Custom { label: string; qty: string; rate: string }
 
 const n = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const num = (s: string) => { const d = s.replace(/[^\d.]/g, ''); return d ? Number(d) : 0; };
+const roundTo = (x: number, step: number) => Math.round(x / (step || 1)) * (step || 1);
 const rs = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `Rs. ${inr(v)}`);
 const pct = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 1000) / 10)}%`;
 const BASIS: Record<string, string> = { bua: 'Built-up area', carpet: 'Carpet area', plot: 'Plot area' };
@@ -90,13 +92,16 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const differs = !!prop && !!rateN && Math.abs(diff) > 0.001;
   const outside = !!prop && !!rateN && Math.abs(diff) * 100 > r.rate_deviation_pct;
 
-  // live client-side preview (server rounding may differ slightly)
+  // live preview with the same rules and rounding steps the server applies
   const extrasTotal = extras.reduce((t, e) => t + (e.amount ?? (e.qty ?? 1) * (e.rate ?? 0)), 0);
+  const bua = n(d.bua);
+  const step = r.value_rounding_step || 1;
   const pv = area && rateN ? (() => {
     const unit = area * rateN;
-    const fmv = Math.round(unit + extrasTotal);
-    return { unit, fmv, realizable: Math.round((fmv * r.realizable_pct) / 100), distress: Math.round((fmv * r.distress_pct) / 100), insurable: d.basis === 'bua' ? Math.round(area * r.building_cost_per_sqft) : null, rent: Math.round((fmv * r.rental_yield_pct) / 100 / 12 / 500) * 500 };
+    const fmv = roundTo(unit + extrasTotal, step);
+    return { unit, fmv, realizable: roundTo((fmv * r.realizable_pct) / 100, step), distress: roundTo((fmv * r.distress_pct) / 100, step), insurable: bua ? roundTo(bua * r.building_cost_per_sqft, step) : null, rent: roundTo((fmv * r.rental_yield_pct) / 100 / 12, r.rent_rounding_step) };
   })() : null;
+  const roundingNote = `values to the nearest Rs. ${inr(step)}, rent to the nearest Rs. ${inr(r.rent_rounding_step || 1)} (${c.bank_code} rule)`;
 
   const submit = () => {
     if (!(rateN >= 100)) return toast('Enter a rate per sq.ft., for example 12800', 'err');
@@ -184,14 +189,14 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
 
         <div className="grid gap-4">
           {canApply && pv && (!cur || changed) && (
-            <Panel title="Preview" right={<span className="sub">before applying · server rounding may differ</span>}>
+            <Panel title="Preview" right={<span className="sub">before applying · {roundingNote}</span>}>
               <table className="list">
                 <tbody>
                   <Row label="Fair market value" working={`${inr(area)} × Rs. ${inr(rateN)}${extrasTotal ? ` + extras Rs. ${inr(extrasTotal)}` : ''}`} value={pv.fmv} strong />
                   <Row label={`Realizable · ${r.realizable_pct}%`} working={`FMV × ${r.realizable_pct}%`} value={pv.realizable} />
                   <Row label={`Distress · ${r.distress_pct}%`} working={`FMV × ${r.distress_pct}%`} value={pv.distress} />
-                  <Row label="Insurable" working={`Rs. ${inr(r.building_cost_per_sqft)} × ${inr(area)} sq.ft.`} value={pv.insurable} />
-                  <Row label="Rent p.m." working={`FMV × ${r.rental_yield_pct}% ÷ 12, nearest Rs. 500`} value={pv.rent} />
+                  <Row label="Insurable" working={`Rs. ${inr(r.building_cost_per_sqft)} × BUA ${inr(bua)} sq.ft.`} value={pv.insurable} />
+                  <Row label="Rent p.m." working={`FMV × ${r.rental_yield_pct}% a year ÷ 12, nearest Rs. ${inr(r.rent_rounding_step || 1)}`} value={pv.rent} />
                 </tbody>
               </table>
               {gv !== null && <Variation label="guideline value" fmv={pv.fmv} base={gv} limit={r.gv_variation_pct} />}
@@ -213,7 +218,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
                       <Row label="Guideline" working="As per Index II" value={gv} />
                       <Row label="Agreement" working="Consideration as per Index II" value={agr} />
                       <Row label="Insurable" working={`Building cost Rs. ${inr(r.building_cost_per_sqft)} × BUA`} value={sv.insurable} />
-                      <Row label="Rent p.m." working={`FMV × ${r.rental_yield_pct}% a year ÷ 12, rounded`} value={sv.rent} />
+                      <Row label="Rent p.m." working={`FMV × ${r.rental_yield_pct}% a year ÷ 12, nearest Rs. ${inr(r.rent_rounding_step || 1)}`} value={sv.rent} />
                     </tbody>
                   </table>
                 </div>

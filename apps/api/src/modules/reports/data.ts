@@ -107,40 +107,54 @@ async function annexPages(data: CaseData, firmId: number, docGrid: number, image
     pages.push({ title: i === 0 ? 'PHOTOGRAPHS' : 'PHOTOGRAPHS (contd.)', note: '', g3: { rows } });
   }
 
-  // map
-  const lat = Number(data.value('PROP.LAT'));
-  const lng = Number(data.value('PROP.LNG'));
-  if (lat && lng) {
-    try {
-      const maps = await mapImages(firmId, lat, lng);
-      const rows = [];
-      for (const m of maps) rows.push({ a_img: await add(m.buffer, 600, 395), a_cap: m.label });
-      pages.push({ title: 'LOCATION MAP', note: `Latitude/Longitude: ${data.get('PROP.LATLNG_TEXT').display ?? ''}`, g1: { rows } });
-    } catch (e) {
-      pages.push({ title: 'LOCATION MAP', note: `Latitude/Longitude: ${data.get('PROP.LATLNG_TEXT').display ?? ''} (map image unavailable)` });
-    }
-  }
-
-  // ready reckoner
-  const rr = data.get('VAL.RR_RATE_SQM');
-  if (rr.state === 'filled') {
-    pages.push({ title: `STAMP DUTY READY RECKONER FOR YEAR ${data.value('VAL.RR_YEAR') ?? ''}`, note: `Rate: Rs. ${inr(Number(rr.value))}/- per sq.m. (Rs. ${inr(Number(data.value('VAL.RR_RATE_SQFT')))}/- per sq.ft.). ${rr.snippet ?? ''}` });
-  }
-
-  // listings and sale transactions: 2 per page, one above the other
+  // captured evidence pages ticked for the report: ready reckoner and map screenshots print on their
+  // own pages; listings and sale transactions 2 per page, one above the other
   const caps = await tx.selectFrom('evidence_captures').selectAll().where('assignment_id', '=', data.case.id).where('in_report', '=', 1).where('status', '=', 'read').orderBy('id').execute();
-  for (const kind of ['listing', 'igr'] as const) {
-    const list = caps.filter((c) => (kind === 'igr' ? c.source_kind !== 'listing' : c.source_kind === 'listing'));
+  const captured = async (kinds: string[], fallback: string) => {
     const imgs: { buf: Buffer; cap: string }[] = [];
-    for (const c of list) {
+    for (const c of caps.filter((x) => kinds.includes(x.source_kind))) {
       const { file, buffer } = await readFile(c.file_id, firmId, tx);
       const pagesImg = file.mime === 'application/pdf' ? await pdfToImages(buffer, { dpi: 110, first: 1, last: 2 }) : [buffer];
-      for (const b of pagesImg) imgs.push({ buf: b, cap: `${c.source_name ?? (kind === 'igr' ? 'IGR search' : 'Listing')}${c.url ? ` · ${c.url}` : ''}` });
+      for (const b of pagesImg) imgs.push({ buf: b, cap: `${c.source_name || fallback}${c.url ? ` · ${c.url}` : ''}` });
     }
+    return imgs;
+  };
+  const rowsOf = async (imgs: { buf: Buffer; cap: string }[]) => {
+    const rows = [];
+    for (const x of imgs) rows.push({ a_img: await add(x.buf, 600, 400), a_cap: x.cap });
+    return rows;
+  };
+
+  // map: generated from the photos' GPS position, plus any captured map screenshots
+  const lat = Number(data.value('PROP.LAT'));
+  const lng = Number(data.value('PROP.LNG'));
+  const mapCaps = await captured(['map'], 'Location map');
+  const latlng = lat && lng ? `Latitude/Longitude: ${data.get('PROP.LATLNG_TEXT').display ?? ''}` : '';
+  let mapRows: { a_img: string; a_cap: string }[] = [];
+  let mapNote = latlng;
+  if (lat && lng) {
+    try {
+      for (const m of await mapImages(firmId, lat, lng)) mapRows.push({ a_img: await add(m.buffer, 600, 395), a_cap: m.label });
+    } catch { mapNote = `${latlng} (map image unavailable)`; }
+  }
+  mapRows = [...mapRows, ...(await rowsOf(mapCaps))];
+  for (const [i, rows] of chunk(mapRows, 2).entries()) pages.push({ title: i ? 'LOCATION MAP (contd.)' : 'LOCATION MAP', note: i ? '' : mapNote, g1: { rows } });
+  if (!mapRows.length && mapNote) pages.push({ title: 'LOCATION MAP', note: mapNote });
+
+  // ready reckoner: the looked-up rate, plus any captured ready reckoner pages
+  const rr = data.get('VAL.RR_RATE_SQM');
+  const rrRows = await rowsOf(await captured(['rr'], 'Ready reckoner'));
+  if (rr.state === 'filled' || rrRows.length) {
+    const note = rr.state === 'filled' ? `Rate: Rs. ${inr(Number(rr.value))}/- per sq.m. (Rs. ${inr(Number(data.value('VAL.RR_RATE_SQFT')))}/- per sq.ft.). ${rr.snippet ?? ''}` : '';
+    const title = `STAMP DUTY READY RECKONER${data.value('VAL.RR_YEAR') ? ` FOR YEAR ${data.value('VAL.RR_YEAR')}` : ''}`;
+    if (!rrRows.length) pages.push({ title, note });
+    for (const [i, rows] of chunk(rrRows, 2).entries()) pages.push({ title: i ? `${title} (contd.)` : title, note: i ? '' : note, g1: { rows } });
+  }
+
+  for (const kind of ['listing', 'igr'] as const) {
+    const imgs = await captured(kind === 'igr' ? ['igr', 'other'] : ['listing'], kind === 'igr' ? 'IGR search' : 'Listing');
     for (const [i, pg] of chunk(imgs, 2).entries()) {
-      const rows = [];
-      for (const x of pg) rows.push({ a_img: await add(x.buf, 600, 400), a_cap: x.cap });
-      pages.push({ title: `${kind === 'igr' ? 'SALE TRANSACTIONS' : 'PROPERTY LISTING'}${i ? ' (contd.)' : ''}`, note: '', g1: { rows } });
+      pages.push({ title: `${kind === 'igr' ? 'SALE TRANSACTIONS' : 'PROPERTY LISTING'}${i ? ' (contd.)' : ''}`, note: '', g1: { rows: await rowsOf(pg) } });
     }
   }
 
@@ -153,21 +167,38 @@ async function annexPages(data: CaseData, firmId: number, docGrid: number, image
     const pg = await tx.selectFrom('document_pages').select(['page_no', 'image_file_id']).where('document_id', '=', p.document_id).where('page_no', 'in', want).orderBy('page_no').execute();
     for (const x of pg) if (x.image_file_id) docImgs.push({ fileId: x.image_file_id, cap: `${p.title ?? p.detected_type}${pg.length > 1 ? `, p. ${x.page_no}` : ''}` });
   }
+  // portrait pages in the firm's grid; landscape pages (plans, wide scans) 2 per page at full width
   const per = docGrid === 4 ? 4 : docGrid === 1 ? 1 : 9;
   const cols = per === 9 ? 3 : per === 4 ? 2 : 1;
   const box = cols === 3 ? [200, 270] : cols === 2 ? [300, 400] : [620, 860];
-  for (const [i, pg] of chunk(docImgs, per).entries()) {
+  const portrait: { buf: Buffer; cap: string }[] = [];
+  const landscape: { buf: Buffer; cap: string }[] = [];
+  for (const d of docImgs) {
+    const buf = (await readFile(d.fileId, firmId, tx)).buffer;
+    const m = await sharp(buf, { failOn: 'none' }).metadata();
+    const w = m.autoOrient?.width ?? m.width ?? 1;
+    const h = m.autoOrient?.height ?? m.height ?? 1;
+    (w > h * 1.1 ? landscape : portrait).push({ buf, cap: d.cap });
+  }
+  let docPage = 0;
+  const title = () => (docPage++ ? 'DOCUMENTS (contd.)' : 'DOCUMENTS');
+  for (const pg of chunk(portrait, per)) {
     const rows = [];
     for (const r of chunk(pg, cols)) {
       const row: Record<string, string> = {};
       for (const [j, d] of r.entries()) {
         const l = 'abc'[j];
-        row[`${l}_img`] = await add((await readFile(d.fileId, firmId, tx)).buffer, box[0], box[1]);
+        row[`${l}_img`] = await add(d.buf, box[0], box[1]);
         row[`${l}_cap`] = d.cap;
       }
       rows.push(row);
     }
-    pages.push({ title: i ? 'DOCUMENTS (contd.)' : 'DOCUMENTS', note: '', [`g${cols}`]: { rows } });
+    pages.push({ title: title(), note: '', [`g${cols}`]: { rows } });
+  }
+  for (const pg of chunk(landscape, 2)) {
+    const rows = [];
+    for (const d of pg) rows.push({ a_img: await add(d.buf, 600, 400), a_cap: d.cap });
+    pages.push({ title: title(), note: '', g1: { rows } });
   }
   return pages;
 }

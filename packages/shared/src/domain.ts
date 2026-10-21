@@ -37,7 +37,7 @@ export type Permission = keyof typeof PERMISSIONS;
 
 export const DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
   coordinator: ['create', 'edit', 'exp'],
-  valuer: ['create', 'edit', 'val', 'sign', 'bill', 'exp', 'set'],
+  valuer: ['create', 'edit', 'val', 'sign', 'bill', 'exp', 'set', 'config'],
   accounts: ['bill', 'exp'],
   admin: ['create', 'edit', 'exp', 'set', 'config', 'bill'],
 };

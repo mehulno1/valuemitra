@@ -4,7 +4,7 @@ import Docxtemplater from 'docxtemplater';
 import ImageModule from 'docxtemplater-image-module-free';
 import PizZip from 'pizzip';
 import sharp from 'sharp';
-import { CLOSE, OPEN } from './compile.js';
+import { CLOSE, HEADER_XML, OPEN } from './compile.js';
 
 export interface RenderImage {
   buffer: Buffer;
@@ -29,6 +29,7 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
     },
   });
   const zip = new PizZip(compiled);
+  upgradeHeaders(zip);
   const doc = new Docxtemplater(zip, {
     delimiters: { start: OPEN, end: CLOSE },
     paragraphLoop: true,
@@ -41,6 +42,13 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
   });
   doc.render(data);
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
+}
+
+/** Templates compiled before 22 Oct 2026 carry a header that Word refuses (a centred letterhead image
+ *  nested a paragraph inside a run) and an empty cover-page header; swap in the current header. */
+function upgradeHeaders(zip: PizZip) {
+  if (!zip.file('word/header900.xml')?.asText().includes(`${OPEN}%%LETTERHEAD${CLOSE}`)) return;
+  for (const name of Object.keys(zip.files).filter((n) => /^word\/header9\d+\.xml$/.test(n))) zip.file(name, HEADER_XML);
 }
 
 /** Fit an image into a box (px), keeping aspect ratio; re-encode as JPEG/PNG of sensible size. */

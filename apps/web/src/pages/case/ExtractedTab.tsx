@@ -2,6 +2,7 @@
 // snippet, reading confidence, inline editing and conflict resolution.
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Conf, Pending, useErrorToast, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -12,6 +13,7 @@ export interface ResolvedField {
   state: 'filled' | 'pending' | 'not_applicable'; pendingLabel: string | null; source: string | null; sourceDocType: string | null;
   page: number | null; partId: number | null; snippet: string | null; confidence: number | null; edited: boolean;
   candidates: unknown[]; conflict: { message: string; options: { label: string; display: string }[] } | null;
+  formula?: string | null; ruleKeys?: string[];
 }
 export interface FieldsResp { sections: { title: string; fields: ResolvedField[] }[]; filled: number; total: number; fromDocuments: number; signed: boolean }
 
@@ -37,6 +39,7 @@ export function sourceLine(f: ResolvedField, docLabel: (k: string) => string): s
 export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
   const { can } = useAuth();
   const editable = can('edit') && !locked;
+  const canRules = can('set') || can('config');
   const fields = useQuery({ queryKey: caseKey(c.id, 'fields'), queryFn: () => api.get<FieldsResp>(`/api/assignments/${c.id}/fields`) });
   const docs = useQuery({ queryKey: caseKey(c.id, 'documents'), queryFn: () => api.get<{ types: { key: string; label: string }[] }>(`/api/assignments/${c.id}/documents`) });
   const docLabel = (k: string) => docs.data?.types.find((t) => t.key === k)?.label ?? k;
@@ -67,7 +70,7 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
         return (
           <section key={s.title} className="panel sec">
             <h2>{s.title}<span>{filled}/{s.fields.length} filled</span></h2>
-            {s.fields.map((f) => <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} docLabel={docLabel} refresh={refresh} goVal={() => go('val')} />)}
+            {s.fields.map((f) => <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} canRules={canRules} docLabel={docLabel} refresh={refresh} goVal={() => go('val')} />)}
           </section>
         );
       })}
@@ -75,7 +78,7 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
   );
 }
 
-function FieldRow({ f, caseId, editable, docLabel, refresh, goVal }: { f: ResolvedField; caseId: number; editable: boolean; docLabel: (k: string) => string; refresh: () => void; goVal: () => void }) {
+function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal }: { f: ResolvedField; caseId: number; editable: boolean; canRules: boolean; docLabel: (k: string) => string; refresh: () => void; goVal: () => void }) {
   const toast = useToast();
   const err = useErrorToast();
   const [editing, setEditing] = useState(false);
@@ -163,6 +166,12 @@ function FieldRow({ f, caseId, editable, docLabel, refresh, goVal }: { f: Resolv
           </div>
         )}
         {showSrc && f.snippet && <div className="snip">{f.snippet}</div>}
+        {f.source === 'derived' && !f.edited && (f.formula || f.ruleKeys?.length) ? (
+          <div className="src">
+            {f.formula && <span>{f.formula}</span>}
+            {canRules && !!f.ruleKeys?.length && <Link className="linkbtn" to="/settings/rules">Change the bank rule</Link>}
+          </div>
+        ) : null}
         {f.conflict && (
           <div className="flag">
             <div><b>Check: </b>{f.conflict.message}</div>

@@ -18,7 +18,7 @@ export interface CompileMapping {
 }
 
 export interface Layout {
-  cover_first_page: boolean;   // no letterhead / footer on page 1
+  cover_first_page: boolean;   // page 1 is a cover: letterhead but no page number / short signature
   annexures: boolean;          // append ValueMitra annexure pages
 }
 
@@ -122,10 +122,16 @@ const NS_DECL = [
   'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"',
 ].join(' ');
 
-const HEADER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr ${NS_DECL}>${[
-  para(`${tr('#HAS_LETTERHEAD')}${tr('%%LETTERHEAD')}${tr('/HAS_LETTERHEAD')}`, '<w:jc w:val="center"/><w:spacing w:after="0"/>'),
-  para(`${tr('^HAS_LETTERHEAD')}${run(tag('FIRM_LINE'), '<w:b/><w:sz w:val="24"/>')}${tr('/HAS_LETTERHEAD')}`, '<w:spacing w:after="0"/>'),
-  para(`${tr('^HAS_LETTERHEAD')}${run(tag('FIRM_SUB'), '<w:sz w:val="16"/>')}${tr('/HAS_LETTERHEAD')}`, '<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="4" w:color="111111"/></w:pBdr><w:spacing w:after="120"/>'),
+// Each condition tag sits alone in its paragraph, so the paragraph loop drops the unused block whole
+// (an inline `%%` centred image beside condition tags nests a paragraph inside a run: Word refuses it).
+export const HEADER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr ${NS_DECL}>${[
+  para(tr('#HAS_LETTERHEAD')),
+  para(tr('%LETTERHEAD'), '<w:jc w:val="center"/><w:spacing w:after="0"/>'),
+  para(tr('/HAS_LETTERHEAD')),
+  para(tr('^HAS_LETTERHEAD')),
+  para(run(tag('FIRM_LINE'), '<w:b/><w:sz w:val="24"/>'), '<w:spacing w:after="0"/>'),
+  para(run(tag('FIRM_SUB'), '<w:sz w:val="16"/>'), '<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="4" w:color="111111"/></w:pBdr><w:spacing w:after="120"/>'),
+  para(tr('/HAS_LETTERHEAD')),
   para(`${tr('#IS_DRAFT')}${run(tag('DRAFT_LINE'), '<w:b/><w:color w:val="9A9A9A"/><w:sz w:val="16"/>')}${tr('/IS_DRAFT')}`, '<w:jc w:val="right"/><w:spacing w:after="0"/>'),
 ].join('')}</w:hdr>`;
 
@@ -134,7 +140,6 @@ const FOOTER_PARA = para(
   '<w:jc w:val="right"/><w:spacing w:after="0"/>',
 );
 const FOOTER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PARA}</w:ftr>`;
-const EMPTY_HDR = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr ${NS_DECL}><w:p/></w:hdr>`;
 const EMPTY_FTR = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}><w:p/></w:ftr>`;
 
 function addHeaderFooter(parts: ReturnType<typeof openDocx>, layout: Layout) {
@@ -173,7 +178,7 @@ function addHeaderFooter(parts: ReturnType<typeof openDocx>, layout: Layout) {
     if (!hasFooter) ref('w:footerReference', 'default', addPart(`footer90${i}.xml`, FOOTER_XML, 'footer'));
     else appendToExistingFooter(parts, rels, sp);
     if (layout.cover_first_page && i === 0) {
-      ref('w:headerReference', 'first', addPart(`header99.xml`, EMPTY_HDR, 'header'));
+      ref('w:headerReference', 'first', addPart(`header99.xml`, HEADER_XML, 'header'));
       ref('w:footerReference', 'first', addPart(`footer99.xml`, EMPTY_FTR, 'footer'));
       if (!children(sp, 'w:titlePg').length) {
         const tp = doc.createElementNS(W_NS, 'w:titlePg');
