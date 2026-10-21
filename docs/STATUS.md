@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 21 Oct 2026 (WP11 billing, analytics and CSV imports built locally; not yet deployed). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 21 Oct 2026 (WP11 billing, analytics and CSV imports deployed; billing off for the demo firm until switched on). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -49,7 +49,7 @@ AI reading verified (21 Oct 2026) with `claude-opus-5-5`: the real 26-page pilot
 
 Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 proposal, FMV 69,75,000 at Rs. 15,000; expression language). End-to-end run on the pilot files (OCR, KYC, photos, evidence, conflict, valuation, checks, sign-off, 16-page signed report). Browser screenshots of every screen. Production smoke test (login, case, draft PDF).
 
-## 3a. Built — WP11 Business modules (21 Oct 2026, local)
+## 3a. Built — WP11 Business modules (21 Oct 2026, live)
 
 - **Billing** (feature flag `billing`, permission `bill`; migration `0006_billing.sql`, `modules/billing/`): Ready to bill (signed + sent, not on a tax invoice; fee and payer editable per case), tax invoices one per case or one per bank branch (borrower-paid cases always single), proformas for advances (converted to a tax invoice with the advance moved across), gap-free series per FY (`INV/{FY}/{N}`, `PI/…`, `CN/…`, next number settable), CGST+SGST or IGST by place of supply (branch GSTIN / state), total rounded with round-off, PDF with letterhead/signature/seal and UPI QR for the balance on borrower invoices, payments with TDS (default 10% of taxable for bank payers), part payments, credit notes (GST reversed; a full credit note can release cases to be billed again) and write-offs, ageing 0–30/31–60/61–90/90+, outstanding by party with reminder messages, GST charged / received / to collect by month, email with PDF and WhatsApp (wa.me link, logged). Stage: Sent → Billed on a tax invoice → Paid when every invoice covering the case is settled.
 - **Accounting exports** for a period: Tally XML (sales, credit note, receipt vouchers; ledger names in Billing setup), Zoho Books CSV, invoices / receipts / credit notes CSV, GSTR-1 B2B, B2CS, CDNR and SAC summary CSVs, TDS by party (Form 26AS).
@@ -84,7 +84,7 @@ Gates: A built (AI reading live; first real pilot case next) → B all property 
 
 1. Internal testing with the team brief; triage feedback (config change vs code change).
 2. First real pilot case (Gate A); measure how many auto-filled fields are accepted without edit (target 85%).
-3. Deploy WP11 and test billing on the live site; verify the SES sender identity (`no-response@valuemitra.com`) so report and invoice emails go out.
+3. Switch billing on for the demo firm and test it on the live site; verify the SES sender identity (`no-response@valuemitra.com`) so report and invoice emails go out.
 4. Collect bank templates and land/bungalow samples from Premal → Gates B and C.
 5. Turn 2FA back on (`REQUIRE_2FA=true`) before real firms use the live site.
 
