@@ -253,7 +253,11 @@ export async function applyKyc(documentId: number, firmId: number, kycPages: num
   const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/( \(KYC removed\))?\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
   const map = new Map(keep.map((old, i) => [old, i + 1]));
   const remap = (xs: number[]) => xs.map((x) => map.get(x)).filter((x): x is number => x !== undefined);
+  try {
   await db.transaction().execute(async (tx) => {
+    // serialise with any other redaction of this document: the row must be exactly as read above
+    const cur = await tx.selectFrom('documents').select(['file_id', 'page_count']).where('id', '=', documentId).forUpdate().executeTakeFirstOrThrow();
+    if (cur.file_id !== d.file_id || cur.page_count !== d.page_count) throw new Error('Document changed during KYC redaction; it will be redone on the current file');
     await tx.deleteFrom('document_pages').where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
     // two steps so the unique (document, page) key never collides
     for (const [oldNo, newNo] of map) await tx.updateTable('document_pages').set({ page_no: 100000 + newNo }).where('document_id', '=', documentId).where('page_no', '=', oldNo).execute();
@@ -268,6 +272,11 @@ export async function applyKyc(documentId: number, firmId: number, kycPages: num
     for (const [oldNo, newNo] of map) if (oldNo !== newNo) await tx.updateTable('field_values').set({ page_no: newNo }).where('document_id', '=', documentId).where('page_no', '=', oldNo).execute();
     await tx.updateTable('documents').set({ file_id: f.id, original_file_id: d.original_file_id ?? d.file_id, page_count: keep.length }).where('id', '=', documentId).execute();
   });
+  } catch (e) {
+    // the redacted copy was never attached; remove it (the stored file stays flagged KYC)
+    await purgeFile(f.id);
+    throw e;
+  }
   // the file just replaced: an intermediate copy goes now; the original upload waits for the KYC policy
   if (d.original_file_id || never) await purgeFile(d.file_id);
 }
