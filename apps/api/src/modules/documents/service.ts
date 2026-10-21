@@ -105,7 +105,7 @@ export async function correctPartLabel(actor: Actor, assignmentId: number, partI
   await retractPartCandidates(assignmentId, partId);
   if (t?.is_kyc) {
     // a person marked these pages KYC: same handling as KYC found by reading
-    await applyKyc(p.document_id, actor.firmId!, json<number[]>(p.pages_json, []));
+    await applyKyc(p.document_id, actor.firmId!);
   }
   await db.insertInto('feedback_events').values({
     firm_id: actor.firmId!, assignment_id: assignmentId, kind: 'doc_label.correct', doc_type: effective, property_type: a.property_type,

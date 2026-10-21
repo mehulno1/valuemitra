@@ -209,7 +209,7 @@ export async function readDocument(documentId: number) {
       page: partPages[v.page - 1]?.orig_page ?? sorted[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence),
     })));
   }
-  if (kycPages) await applyKyc(documentId, a.firm_id, parts.filter((p) => types.find((t) => t.key === p.doc_type)?.is_kyc).flatMap((p) => p.pages));
+  if (kycPages) await applyKyc(documentId, a.firm_id);
   await db.updateTable('documents').set({ status: 'read' }).where('id', '=', documentId).execute();
   await syncChecklist(a.id);
   const actor = systemActor(a.firm_id);
@@ -227,9 +227,27 @@ export async function readDocument(documentId: number) {
  * transaction, so a later re-read or a manual KYC label works on consistent numbers.
  * Fail-closed: the stored file is flagged KYC before anything that can fail.
  */
-export async function applyKyc(documentId: number, firmId: number, kycPages: number[]) {
+export async function applyKyc(documentId: number, firmId: number) {
+  // one redaction per document at a time (reading job, manual labels): a named MySQL lock
+  await db.connection().execute(async (conn) => {
+    const got = await sql<{ l: number }>`SELECT GET_LOCK(${`vm_kyc_${documentId}`}, 120) AS l`.execute(conn);
+    if (got.rows[0]?.l !== 1) {
+      await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', (await db.selectFrom('documents').select('file_id').where('id', '=', documentId).executeTakeFirstOrThrow()).file_id).execute();
+      throw new Error('Could not lock the document for KYC redaction; the file stays flagged KYC');
+    }
+    try {
+      await applyKycLocked(documentId, firmId);
+    } finally {
+      await sql`SELECT RELEASE_LOCK(${`vm_kyc_${documentId}`})`.execute(conn);
+    }
+  });
+}
+
+async function applyKycLocked(documentId: number, firmId: number) {
   const d = await db.selectFrom('documents').select(['file_id', 'original_file_id', 'assignment_id', 'page_count']).where('id', '=', documentId).executeTakeFirstOrThrow();
-  const kyc = [...new Set(kycPages)].filter((p) => p >= 1 && p <= d.page_count);
+  // KYC pages in the current numbering, read under the lock
+  const parts = await db.selectFrom('document_parts').select('pages_json').where('document_id', '=', documentId).where('is_kyc', '=', 1).execute();
+  const kyc = [...new Set(parts.flatMap((x) => json<number[]>(x.pages_json, [])))].filter((p) => p >= 1 && p <= d.page_count);
   if (!kyc.length) return;
   const never = (await getSettings(firmId)).kyc_policy === 'never';
   // 1. the stored file contains KYC until replaced
@@ -257,7 +275,11 @@ export async function applyKyc(documentId: number, firmId: number, kycPages: num
   await db.transaction().execute(async (tx) => {
     // serialise with any other redaction of this document: the row must be exactly as read above
     const cur = await tx.selectFrom('documents').select(['file_id', 'page_count']).where('id', '=', documentId).forUpdate().executeTakeFirstOrThrow();
-    if (cur.file_id !== d.file_id || cur.page_count !== d.page_count) throw new Error('Document changed during KYC redaction; it will be redone on the current file');
+    if (cur.file_id !== d.file_id || cur.page_count !== d.page_count) {
+      // cannot happen under the lock; if it does, stay fail-closed on whatever is stored now
+      await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', cur.file_id).execute();
+      throw new Error('Document changed during KYC redaction; the stored file stays flagged KYC');
+    }
     await tx.deleteFrom('document_pages').where('document_id', '=', documentId).where('page_no', 'in', kyc).execute();
     // two steps so the unique (document, page) key never collides
     for (const [oldNo, newNo] of map) await tx.updateTable('document_pages').set({ page_no: 100000 + newNo }).where('document_id', '=', documentId).where('page_no', '=', oldNo).execute();
