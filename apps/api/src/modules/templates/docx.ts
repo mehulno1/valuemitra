@@ -1,0 +1,120 @@
+// Low-level helpers over WordprocessingML (document.xml) using a DOM, so templates keep their own
+// layout, fonts and numbering: we only touch the text inside value cells and placeholders.
+import { DOMParser, XMLSerializer, type Document as XDoc, type Element as XEl } from '@xmldom/xmldom';
+import PizZip from 'pizzip';
+
+export const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+export interface DocxParts {
+  zip: PizZip;
+  doc: XDoc;
+}
+
+export function openDocx(buf: Buffer): DocxParts {
+  const zip = new PizZip(buf);
+  const xml = zip.file('word/document.xml')?.asText();
+  if (!xml) throw new Error('Not a Word document (word/document.xml missing)');
+  const doc = new DOMParser().parseFromString(xml, 'text/xml') as unknown as XDoc;
+  return { zip, doc };
+}
+
+export function saveDocx(p: DocxParts): Buffer {
+  p.zip.file('word/document.xml', new XMLSerializer().serializeToString(p.doc as any));
+  return p.zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+export const els = (root: XDoc | XEl, tag: string): XEl[] => Array.from((root as any).getElementsByTagName(tag)) as XEl[];
+
+export const children = (el: XEl, tag: string): XEl[] =>
+  Array.from(el.childNodes as any).filter((n: any) => n.nodeType === 1 && n.nodeName === tag) as XEl[];
+
+export function textOf(el: XEl): string {
+  let s = '';
+  const walk = (n: any) => {
+    if (n.nodeType === 1) {
+      if (n.nodeName === 'w:t') s += n.textContent ?? '';
+      else if (n.nodeName === 'w:tab') s += '\t';
+      else if (n.nodeName === 'w:br' || n.nodeName === 'w:cr') s += '\n';
+      else for (const c of Array.from(n.childNodes)) walk(c);
+      if (n.nodeName === 'w:p' && n.nextSibling) s += '\n';
+    }
+  };
+  walk(el);
+  return s.replace(/\n+$/, '');
+}
+
+export const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** All tables in document order (nested ones included), each with direct rows and cells. */
+export function tables(doc: XDoc) {
+  return els(doc, 'w:tbl').map((tbl) => ({
+    el: tbl,
+    rows: children(tbl, 'w:tr').map((tr) => children(tr, 'w:tc')),
+  }));
+}
+
+export const paragraphs = (doc: XDoc) => els(doc, 'w:p');
+
+/** Is this paragraph inside a table cell? */
+export function inTable(p: XEl): boolean {
+  let n: any = p.parentNode;
+  while (n) { if (n.nodeName === 'w:tc') return true; n = n.parentNode; }
+  return false;
+}
+
+/**
+ * Merge the runs of a paragraph that holds a placeholder so that "{{", the code and "}}" end up in
+ * one w:t (Word often splits typed text across runs). Keeps the first run's formatting.
+ */
+export function mergeRuns(p: XEl) {
+  const runs = children(p, 'w:r');
+  if (runs.length < 2) return;
+  const ts = runs.map((r) => children(r, 'w:t')[0]).filter(Boolean);
+  if (ts.length < 2) return;
+  const full = ts.map((t) => t.textContent ?? '').join('');
+  ts[0].textContent = full;
+  ts[0].setAttribute('xml:space', 'preserve');
+  for (const t of ts.slice(1)) t.parentNode?.removeChild(t);
+}
+
+/** Replace a cell's content with one paragraph holding `text`, keeping paragraph and run formatting. */
+export function setCellText(doc: XDoc, tc: XEl, text: string, fallbackFormatFrom?: XEl) {
+  const ps = children(tc, 'w:p');
+  const firstP = ps[0];
+  const pPr = firstP ? children(firstP, 'w:pPr')[0] : undefined;
+  const firstRun = ps.flatMap((p) => children(p, 'w:r'))[0] ?? (fallbackFormatFrom ? els(fallbackFormatFrom, 'w:r')[0] : undefined);
+  const rPr = firstRun ? children(firstRun, 'w:rPr')[0] : undefined;
+  for (const p of ps) tc.removeChild(p);
+  const np = doc.createElementNS(W_NS, 'w:p');
+  if (pPr) np.appendChild(pPr.cloneNode(true));
+  // one run per tag: image tags must sit alone in their own run
+  for (const piece of text.split(/(⟪[^⟫]*⟫)/).filter(Boolean)) {
+    const r = doc.createElementNS(W_NS, 'w:r');
+    if (rPr) {
+      const rp = rPr.cloneNode(true) as XEl;
+      // value text is never bold just because the label was
+      if (!firstP) children(rp, 'w:b').forEach((b) => rp.removeChild(b));
+      r.appendChild(rp);
+    }
+    const t = doc.createElementNS(W_NS, 'w:t');
+    t.setAttribute('xml:space', 'preserve');
+    t.textContent = piece;
+    r.appendChild(t);
+    np.appendChild(r);
+  }
+  tc.appendChild(np);
+}
+
+/** Replace the text of a paragraph range: everything after `afterText` becomes `text` (inline blanks). */
+export function replaceInParagraph(p: XEl, find: string, replacement: string): boolean {
+  mergeRuns(p);
+  for (const t of els(p, 'w:t')) {
+    const s = t.textContent ?? '';
+    if (s.includes(find)) {
+      t.textContent = s.replace(find, replacement);
+      t.setAttribute('xml:space', 'preserve');
+      return true;
+    }
+  }
+  return false;
+}
