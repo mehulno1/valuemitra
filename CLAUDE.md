@@ -1,6 +1,6 @@
 # ValueMitra v2 — notes for Claude
 
-Read README.md first. Specs: `PLAN.md`; product design document and prototype are the source of truth
+Read docs/STATUS.md first (built / left / environments / runbook), then README.md. Specs: `PLAN.md`; product design document and prototype are the source of truth
 for behaviour. The v1 codebase is not used for anything (only its database was replaced).
 
 ## Rules

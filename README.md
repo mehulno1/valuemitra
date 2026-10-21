@@ -5,6 +5,8 @@ documents read with source and confidence, site visit by link, market evidence, 
 valuer sign-off, bank-format Word and PDF report, dispatch. Built from the *Product Design Document
 (Phase 1)* and the clickable prototype; Milestone 1 is Gate A — one SBI Format-A flat case signed end to end.
 
+Status, environments and what is left: [docs/STATUS.md](docs/STATUS.md).
+
 ## Stack
 
 | Part | Choice |
