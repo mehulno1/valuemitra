@@ -12,6 +12,7 @@ export async function migrate({ reset = false } = {}) {
     host: env.DB_HOST, port: env.DB_PORT, user: env.DB_USER, password: env.DB_PASSWORD,
     database: env.DB_NAME, multipleStatements: true, charset: 'utf8mb4',
   });
+  await conn.query("SET time_zone = '+00:00'");
   try {
     if (reset) {
       const [rows] = await conn.query<any[]>(

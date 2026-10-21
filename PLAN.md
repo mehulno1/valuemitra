@@ -40,3 +40,11 @@ Next milestones: Quick Estimate, billing and payouts, analytics, CSV import/expo
 - **GST:** IGST when the place of supply is in another state.
 - **Stages:** New → Awaiting documents → Site visit → Drafting → Ready for review → Signed → Sent → Billed → Paid.
 - **Report numbering:** the serial is per firm per financial year; the bank and branch codes come from the case.
+
+## Status (21 Oct 2026)
+- Done locally: WP1–WP8 backend and all Gate A screens. An SBI Format-A flat case (pilot files) runs end to end:
+  OCR of the 26-page bundle, sorting with KYC excluded, extraction values with sources, O.C. conflict (35 vs 45 yrs),
+  site photos with duplicate detection, evidence-backed rate Rs. 12,800, valuation at Rs. 15,000, checks, valuer
+  sign-off (DVA/SBI/HLCTHN/26-27/0001) and a 16-page signed Word + PDF report.
+- Blocked: live AI reading — the Anthropic key copied from EC2 is rejected (401). Google Vision OCR works.
+- Not yet done: GitHub push (fresh history + v1-legacy tag) and EC2 cut-over — waiting for go-ahead.

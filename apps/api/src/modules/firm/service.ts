@@ -24,6 +24,7 @@ export async function updateFirm(actor: Actor, patch: { name?: string; address?:
   const firmId = actor.firmId!;
   const f: Record<string, unknown> = {};
   for (const k of ['name', 'address', 'city', 'state_code', 'gstin', 'phone', 'email', 'code'] as const) if (patch[k] !== undefined) f[k] = patch[k];
+  if ((patch as any).shared_pool_consent !== undefined) f.shared_pool_consent = (patch as any).shared_pool_consent ? 1 : 0;
   if (f.code && !/^[A-Z0-9]{2,10}$/.test(String(f.code))) throw badRequest('Firm code: 2 to 10 capital letters or digits');
   if (Object.keys(f).length) await db.updateTable('firms').set(f).where('id', '=', firmId).execute();
   if (patch.settings) {
@@ -119,6 +120,15 @@ export async function branches(firmId: number) {
 }
 
 export async function saveBranch(actor: Actor, input: any) {
+  if (input.id) {
+    const keys = ['bank_id', 'code', 'name', 'address', 'city', 'state_code', 'gstin', 'contact_name', 'contact_role', 'contact_email', 'contact_phone', 'default_payer', 'billing_cycle', 'fee', 'status'];
+    const set = Object.fromEntries(keys.filter((k) => input[k] !== undefined).map((k) => [k, k === 'code' ? String(input[k]).toUpperCase().trim() : input[k]]));
+    if (!Object.keys(set).length) return;
+    const r = await db.updateTable('bank_branches').set(set).where('id', '=', input.id).where('firm_id', '=', actor.firmId!).executeTakeFirst();
+    if (!Number(r.numUpdatedRows)) throw notFound('Branch');
+    await audit(actor, { entityType: 'branch', entityId: input.id, action: 'branch.update', summary: `Branch ${set.code ?? input.id} updated`, after: set });
+    return;
+  }
   const row = {
     bank_id: Number(input.bank_id), code: String(input.code ?? '').toUpperCase().trim(), name: String(input.name ?? '').trim(), address: input.address ?? null, city: input.city ?? null,
     state_code: input.state_code ?? null, gstin: input.gstin ?? null, contact_name: input.contact_name ?? null, contact_role: input.contact_role ?? null,

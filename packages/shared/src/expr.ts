@@ -187,7 +187,8 @@ export function evaluate(node: Node, resolve: Resolver, extraFns: Record<string,
         const b = ev(n.b);
         if (n.op === '==') return a == b; // eslint-disable-line eqeqeq
         if (n.op === '!=') return a != b; // eslint-disable-line eqeqeq
-        if (n.op === '+' && (typeof a === 'string' || typeof b === 'string') && num(a) === null) {
+        // "+" adds only when both sides are numbers; otherwise it joins text
+        if (n.op === '+' && (typeof a === 'string' || typeof b === 'string') && (num(a) === null || num(b) === null)) {
           return a === null || b === null ? null : String(a) + String(b);
         }
         const x = num(a);

@@ -22,19 +22,37 @@ export async function seedPlatform() {
   for (const [code, name, short] of BANKS) {
     await db.insertInto('banks').values({ code, name, short_name: short }).onDuplicateKeyUpdate({ name, short_name: short }).execute();
   }
-  const have = await db.selectFrom('canonical_fields').select('code').where('firm_id', 'is', null).execute();
-  const existing = new Set(have.map((h) => h.code));
+  // platform dictionary: add new fields as v1; a changed definition ships as a new version (never edited in place)
+  const have = await db.selectFrom('canonical_fields').selectAll().where('firm_id', 'is', null).orderBy('version', 'desc').execute();
+  const latest = new Map<string, (typeof have)[number]>();
+  for (const h of have) if (!latest.has(h.code)) latest.set(h.code, h);
+  // MySQL stores JSON with its own key order, so compare with keys sorted
+  const canon = (v: unknown): unknown => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as any)[k])])) : v);
+  const j = (v: unknown) => JSON.stringify(canon(typeof v === 'string' ? JSON.parse(v) : v ?? null));
   let i = 0;
+  let added = 0;
+  let versioned = 0;
   for (const f of FIELDS) {
     i += 10;
-    if (existing.has(f.code)) continue;
-    await db.insertInto('canonical_fields').values({
-      firm_id: null, code: f.code, version: 1, label: f.label, group_code: f.group, data_type: f.type, unit: f.unit ?? null,
+    const row = {
+      label: f.label, group_code: f.group, data_type: f.type, unit: f.unit ?? null,
       enum_options: f.enum ? toJson(f.enum) : null, applies_to: toJson(f.applies ?? ['*']), sources: toJson(f.sources),
       validation: f.validation ? toJson(f.validation) : null, derivation: f.derivation ?? null, rules: f.rules ? toJson(f.rules) : null,
       extraction_hint: f.hint ?? null, aliases: toJson(f.aliases ?? []), pending_label: f.pending ?? null, sort_order: i,
-      change_note: 'Initial dictionary',
-    }).execute();
+    };
+    const cur = latest.get(f.code);
+    if (cur) {
+      const same = cur.label === row.label && cur.group_code === row.group_code && cur.data_type === row.data_type && (cur.unit ?? null) === row.unit &&
+        j(cur.enum_options) === j(row.enum_options) && j(cur.applies_to) === j(row.applies_to) && j(cur.sources) === j(row.sources) &&
+        j(cur.validation) === j(row.validation) && (cur.derivation ?? null) === row.derivation && j(cur.rules) === j(row.rules) &&
+        (cur.extraction_hint ?? null) === row.extraction_hint && j(cur.aliases) === j(row.aliases) && (cur.pending_label ?? null) === row.pending_label;
+      if (same) continue;
+      await db.insertInto('canonical_fields').values({ firm_id: null, code: f.code, version: cur.version + 1, ...row, change_note: 'Platform dictionary update' }).execute();
+      versioned++;
+    } else {
+      await db.insertInto('canonical_fields').values({ firm_id: null, code: f.code, version: 1, ...row, change_note: 'Initial dictionary' }).execute();
+      added++;
+    }
   }
   const configs: [string, string, unknown][] = [
     ['doc_types', 'default', DOC_TYPES],
@@ -51,7 +69,7 @@ export async function seedPlatform() {
       payload_json: toJson(payload), change_note: 'Initial platform configuration', published_at: new Date(),
     }).execute();
   }
-  console.log(`Platform: ${BANKS.length} banks, ${FIELDS.length} fields, ${configs.length} configurations`);
+  console.log(`Platform: ${BANKS.length} banks, ${FIELDS.length} fields (${added} added, ${versioned} new versions), ${configs.length} configurations`);
 }
 
 export async function seedDemoFirm() {

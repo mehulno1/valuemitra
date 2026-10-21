@@ -15,7 +15,7 @@ import { readFile, saveFile } from '../../platform/storage.js';
 import { scheduleKycPurge } from '../../platform/retention.js';
 import { recomputeStage } from '../assignments/service.js';
 import { caseData } from '../casedata/resolver.js';
-import { runChecks, summary } from '../checks/engine.js';
+import { reportFieldCodes, runChecks, summary } from '../checks/engine.js';
 import { renderDocx } from '../templates/render.js';
 import { buildRenderData, fileBase, type Mode } from './data.js';
 
@@ -65,6 +65,15 @@ export async function shareDraft(actor: Actor, assignmentId: number) {
   await db.insertInto('messages').values({ firm_id: actor.firmId!, assignment_id: assignmentId, channel: 'email', purpose: 'draft_share', body: message, created_by: actor.id ?? null }).execute();
   await audit(actor, { entityType: 'report', assignmentId, action: 'report.draft_share', summary: `Draft v${a.draft_version} shared with bank (watermarked).` });
   return { fileId: pf.id, name: pf.original_name, message };
+}
+
+/** Watermarked draft PDF for viewing or printing (not recorded as shared with the bank). */
+export async function draftPdf(firmId: number, assignmentId: number) {
+  const a = await db.selectFrom('assignments').select(['signed_at']).where('id', '=', assignmentId).where('firm_id', '=', firmId).executeTakeFirst();
+  if (!a) throw notFound('Assignment');
+  const { docx } = await renderReport(assignmentId, firmId, a.signed_at ? 'final' : 'draft');
+  const pdf = await docxToPdf(docx);
+  return a.signed_at ? pdf : watermark(pdf);
 }
 
 export async function sendToValuer(actor: Actor, assignmentId: number) {
@@ -165,8 +174,10 @@ export async function reportStatus(firmId: number, assignmentId: number) {
   const versions = await db.selectFrom('report_versions').select(['id', 'kind', 'draft_version', 'report_no', 'status', 'error', 'docx_file_id', 'pdf_file_id', 'created_at']).where('assignment_id', '=', assignmentId).where('kind', '!=', 'preview').orderBy('id', 'desc').execute();
   const s = await summary(assignmentId);
   const data = await caseData(assignmentId, firmId);
+  const codes = await reportFieldCodes(data.case.template_version_id);
+  const pending = data.all(codes).filter((r) => r.state === 'pending').map((r) => ({ code: r.code, label: r.label, pendingLabel: r.pendingLabel }));
   return {
-    ...a, checks: { blocked: s.blocked, crit: s.crit, warn: s.warn },
+    ...a, checks: { blocked: s.blocked, crit: s.crit, warn: s.warn }, pending,
     values: ['VAL.FMV', 'VAL.REALIZABLE', 'VAL.DISTRESS', 'VAL.GUIDELINE', 'VAL.RATE', 'VAL.BASIS_AREA', 'VAL.RATE_REASON'].map((c) => { const r = data.get(c); return { code: c, label: r.label, display: r.display, state: r.state }; }),
     rules: { realizable_pct: data.rules.realizable_pct, distress_pct: data.rules.distress_pct },
     versions,

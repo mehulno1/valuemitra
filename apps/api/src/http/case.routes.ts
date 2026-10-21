@@ -205,6 +205,11 @@ export async function caseRoutes(app: FastifyInstance) {
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document').header('Cache-Control', 'no-store');
     return reply.send(docx);
   });
+  app.get('/api/assignments/:id/report/draft.pdf', async (req, reply) => {
+    const pdf = await reports.draftPdf(req.auth!.firmId, idParam(req));
+    reply.header('Content-Type', 'application/pdf').header('Cache-Control', 'no-store');
+    return reply.send(pdf);
+  });
   app.post('/api/assignments/:id/report/share-draft', { preHandler: can('edit') }, async (req) => reports.shareDraft(actorOf(req), idParam(req)));
   app.post('/api/assignments/:id/report/send-to-valuer', { preHandler: can('edit') }, async (req) => { await reports.sendToValuer(actorOf(req), idParam(req)); return { ok: true }; });
   app.post('/api/assignments/:id/report/sign', { preHandler: can('sign') }, async (req) => reports.signReport({ ...actorOf(req), role: req.auth!.role }, idParam(req)));

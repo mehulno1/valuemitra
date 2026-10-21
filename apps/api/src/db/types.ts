@@ -304,6 +304,7 @@ export interface Documents {
   firm_id: number;
   id: Generated<number>;
   is_scanned: number | null;
+  original_file_id: number | null;
   page_count: Generated<number>;
   received_at: Generated<Date>;
   received_from: string | null;

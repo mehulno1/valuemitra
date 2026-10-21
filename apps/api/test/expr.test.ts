@@ -20,6 +20,7 @@ describe('config expressions', () => {
     expect(evalExpr("' We ' + join(L, ', ')", r)).toBe(' We Agreement, O.C');
     expect(evalExpr("'Rs. 59,60,000/-' + 0", r)).toBe(5960000);
     expect(evalExpr("len(E) > 0 ? 'x' : ''", r)).toBe('');
+    expect(evalExpr("', ' + 4 + ' flats per floor'", r)).toBe(', 4 flats per floor');
   });
   it('interpolates wording and reports pending blocks', () => {
     expect(interpolate('Name: {{NAME}}', r)).toBe('Name: Mr. Rohan');

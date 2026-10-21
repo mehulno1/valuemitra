@@ -133,7 +133,7 @@ export async function analysePhotos(assignmentId: number) {
     await db.updateTable('site_photos').set({ duplicate_of: dup, distance_m: dist }).where('id', '=', p.id).execute();
     (p as any).duplicate_of = dup;
   }
-  if (aiConfigured()) {
+  if (aiConfigured()) try {
     const profile = a.profile_version_id ? (await configById(a.profile_version_id)).payload : {};
     const prompts: string[] = profile.photo_prompts ?? [];
     for (let i = 0; i < photos.length; i += 20) {
@@ -156,6 +156,9 @@ export async function analysePhotos(assignmentId: number) {
         await db.updateTable('site_photos').set({ ai_caption: x.caption.slice(0, 200), caption: p.caption ?? x.caption.slice(0, 200), is_selfie: x.is_selfie ? 1 : 0, names_visible: x.names_visible ? 1 : 0 }).where('id', '=', p.id).execute();
       }
     }
+  } catch (e) {
+    // captions are a convenience; the photo checks and selection still complete without them
+    console.error('[photos] AI captions unavailable:', (e as Error).message);
   }
   // default selection when nothing is chosen yet: non-duplicates in prompt order, between min and 12
   const sel = await db.selectFrom('site_photos').select('id').where('assignment_id', '=', assignmentId).where('selected', '=', 1).limit(1).executeTakeFirst();

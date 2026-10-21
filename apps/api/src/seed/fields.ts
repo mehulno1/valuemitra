@@ -35,7 +35,7 @@ export const FIELDS: FieldDef[] = [
   { code: 'CASE.APPOINTMENT_DATE', label: 'Date of appointment', group: 'CASE', type: 'date', sources: ['case'], aliases: ['Date of appointment'] },
   { code: 'CASE.REPORT_DATE', label: 'Date of report', group: 'CASE', type: 'date', sources: ['case'], aliases: ['Date', 'Date of report', 'Date of valuation report'] },
   { code: 'CASE.REPORT_NO', label: 'Report reference no.', group: 'CASE', type: 'text', sources: ['case'], pending: 'Issued at sign-off', aliases: ['Ref No.', 'Reference no.', 'Report no.'] },
-  { code: 'CASE.APPLICATION_NO', label: 'Application no.', group: 'CASE', type: 'text', sources: ['case', 'manual'], aliases: ['Apl. No.', 'Loan application no.'] },
+  { code: 'CASE.APPLICATION_NO', label: 'Application no.', group: 'CASE', type: 'text', sources: ['case', 'manual', 'derived'], derivation: "'----'", aliases: ['Apl. No.', 'Loan application no.'] },
   { code: 'CASE.ENGINEER_NAME', label: 'Inspecting engineer', group: 'CASE', type: 'text', sources: ['case'], aliases: ["Valuer's representative"] },
   { code: 'FIRM.NAME', label: 'Firm name', group: 'FIRM', type: 'text', sources: ['firm'] },
   { code: 'FIRM.ADDRESS', label: 'Firm address', group: 'FIRM', type: 'text', sources: ['firm'] },

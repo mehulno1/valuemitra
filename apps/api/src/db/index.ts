@@ -18,6 +18,9 @@ export const pool = createPool({
   charset: 'utf8mb4',
 });
 
+// Every session runs in UTC so column defaults (CURRENT_TIMESTAMP) and app-written dates agree.
+pool.on('connection', (conn) => { conn.query("SET time_zone = '+00:00'"); });
+
 export const db = new Kysely<DB>({ dialect: new MysqlDialect({ pool }) });
 
 export type Tx = Kysely<DB> | Transaction<DB>;

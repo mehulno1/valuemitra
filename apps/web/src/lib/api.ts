@@ -6,7 +6,7 @@ let refreshing: Promise<boolean> | null = null;
 const listeners = new Set<() => void>();
 
 export const setAccessToken = (t: string | null) => { accessToken = t; };
-export const onSignedOut = (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); };
+export const onSignedOut = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) { super(message); }

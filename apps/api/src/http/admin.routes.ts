@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ROLES } from '@vm/shared';
 import { db } from '../db/index.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, forbidden } from '../lib/errors.js';
 import { actorOf, authenticate, requirePerm } from '../platform/auth.js';
 import { configById, discardDraft, listConfig, publishConfig, saveDraft, type ConfigKind } from '../platform/config.js';
 import { FEATURE_FLAGS, flagsFor } from '../platform/settings.js';
@@ -16,6 +16,14 @@ import { body, idParam, multipartFiles } from './util.js';
 import { requireKind } from '../lib/sniff.js';
 
 const KINDS: ConfigKind[] = ['profile', 'rule_set', 'check_set', 'wording', 'doc_types'];
+
+/** Valuation rules live in Firm settings (permission "set"); other configuration needs "config". */
+const configPerm = (kind: string) => async (req: any) => {
+  if (!req.auth) await authenticate(req);
+  const a = req.auth;
+  const ok = a.role === 'admin' || a.perms.has('config') || (kind === 'rule_set' && a.perms.has('set'));
+  if (!ok) throw forbidden(`Needs permission: ${kind === 'rule_set' ? 'set or config' : 'config'}`);
+};
 
 function parseCsv(text: string): Record<string, string>[] {
   const rows: string[][] = [];
@@ -125,17 +133,23 @@ export async function adminRoutes(app: FastifyInstance) {
     if (v.firm_id !== null && v.firm_id !== req.auth!.firmId) throw badRequest('Not found');
     return v;
   });
-  app.put('/api/admin/config/:kind/:key', { preHandler: requirePerm('config') }, async (req) => {
+  app.put('/api/admin/config/:kind/:key', async (req) => {
     const kind = (req.params as any).kind as ConfigKind;
     if (!KINDS.includes(kind)) throw badRequest('Unknown configuration');
+    await configPerm(kind)(req);
     const b = body(req, z.object({ payload: z.any(), note: z.string().nullish() }));
     return saveDraft(actorOf(req), kind, (req.params as any).key, b.payload, b.note ?? null);
   });
-  app.post('/api/admin/config/version/:id/publish', { preHandler: requirePerm('config') }, async (req) => {
+  app.post('/api/admin/config/version/:id/publish', async (req) => {
+    await configPerm((await configById(idParam(req))).kind)(req);
     const b = body(req, z.object({ effectiveFrom: z.string().nullish() }));
     return publishConfig(actorOf(req), idParam(req), b.effectiveFrom ? new Date(b.effectiveFrom) : null);
   });
-  app.delete('/api/admin/config/version/:id', { preHandler: requirePerm('config') }, async (req) => { await discardDraft(actorOf(req), idParam(req)); return { ok: true }; });
+  app.delete('/api/admin/config/version/:id', async (req) => {
+    await configPerm((await configById(idParam(req))).kind)(req);
+    await discardDraft(actorOf(req), idParam(req));
+    return { ok: true };
+  });
 
   // ---- template engine ----
   app.get('/api/templates', async (req) => tpl.listTemplates(req.auth!.firmId));

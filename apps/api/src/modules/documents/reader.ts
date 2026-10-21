@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { imageBlock, structured, textBlock, type Block } from '../../ai/claude.js';
 import { LANG_NAME, ocrImages } from '../../ai/vision.js';
 import { db, json, toJson } from '../../db/index.js';
-import { pdfPageCount, pdfToImages } from '../../lib/pdf.js';
+import { extractPages, pdfPageCount, pdfToImages } from '../../lib/pdf.js';
 import { audit, systemActor } from '../../platform/audit.js';
 import { activeConfig } from '../../platform/config.js';
 import { publish } from '../../platform/events.js';
@@ -205,6 +205,7 @@ export async function readDocument(documentId: number) {
       page: partPages[v.page - 1]?.orig_page ?? sorted[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence),
     })));
   }
+  if (kycPages) await redactKyc(documentId, a.firm_id, parts.filter((p) => types.find((t) => t.key === p.doc_type)?.is_kyc).flatMap((p) => p.pages), pageCount);
   await db.updateTable('documents').set({ status: 'read' }).where('id', '=', documentId).execute();
   await syncChecklist(a.id);
   const actor = systemActor(a.firm_id);
@@ -214,6 +215,26 @@ export async function readDocument(documentId: number) {
     summary: `${d.channel ? `Received on ${d.channel}` : 'Uploaded'}: ${pageCount} page(s). Sorted into ${docs} document(s)${kycPages ? `; KYC pages (${kycPages}) kept out of the report` : ''}. ${summary.join('; ')}.`,
   });
   await publish({ type: 'document.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { documentId } });
+}
+
+/**
+ * KYC never stays in the stored upload: a bundle is replaced by a copy without the KYC pages and
+ * the original is flagged KYC (deleted at once under "never stored", else on the firm's schedule).
+ */
+async function redactKyc(documentId: number, firmId: number, kycPages: number[], pageCount: number) {
+  const d = await db.selectFrom('documents').select(['file_id', 'original_file_id', 'assignment_id']).where('id', '=', documentId).executeTakeFirstOrThrow();
+  const originalId = d.original_file_id ?? d.file_id;
+  const { file, buffer } = await readFile(originalId, firmId);
+  const keep = Array.from({ length: pageCount }, (_, i) => i + 1).filter((p) => !kycPages.includes(p));
+  await db.updateTable('files').set({ is_kyc: 1 }).where('id', '=', originalId).execute();
+  if (file.mime === 'application/pdf' && keep.length) {
+    const redacted = await extractPages(buffer, keep);
+    const f = await saveFile({ firmId, purpose: 'upload', folder: `a${d.assignment_id}/uploads`, buffer: redacted, name: (file.original_name ?? 'document.pdf').replace(/\.pdf$/i, '') + ' (KYC removed).pdf', mime: 'application/pdf' });
+    await db.updateTable('documents').set({ file_id: f.id, original_file_id: originalId }).where('id', '=', documentId).execute();
+  } else {
+    await db.updateTable('documents').set({ original_file_id: originalId }).where('id', '=', documentId).execute();
+  }
+  if ((await getSettings(firmId)).kyc_policy === 'never') await purgeFile(originalId);
 }
 
 /** Checklist items follow the documents found, unless a person overrode them. */

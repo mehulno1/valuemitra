@@ -353,8 +353,11 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     }
     let pending: string | null = f.pending;
     const docCands: Candidate[] = [];
+    const DOC_LIKE = (s: string) => !['manual', 'case', 'firm', 'checklist', 'derived', 'wording', 'valuation', 'evidence', 'site_sheet'].includes(s);
     for (const src of f.sources) {
       if (src === 'manual') continue;
+      // a document higher in the list already gave the value: later documents are only conflict candidates
+      if (r.value !== null && !DOC_LIKE(src)) break;
       if (src === 'case' || src === 'firm') {
         const v = src === 'case' ? caseValues[r.code] : firmValues[r.code];
         if (v !== null && v !== undefined && v !== '') { r.value = v; r.source = src; break; }
