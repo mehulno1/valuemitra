@@ -15,7 +15,7 @@ const DataPage = lazy(() => import('./pages/DataPage'));
 const EngineerVisit = lazy(() => import('./pages/EngineerVisit'));
 
 const Next = ({ title, what }: { title: string; what: string }) => (
-  <Empty title={title}>{what} It is in the next milestone, after the first SBI flat case is signed end to end (Gate A).</Empty>
+  <Empty title={title}>{what} Coming soon: it follows the first SBI flat case signed end to end (Gate A).</Empty>
 );
 
 export function App() {

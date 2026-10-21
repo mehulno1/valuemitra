@@ -5,9 +5,9 @@ import { useAuth } from '@/lib/auth';
 
 const NAV: { to: string; label: string; tag?: string; perm?: string; match?: RegExp }[] = [
   { to: '/', label: 'Valuation Assignments', match: /^\/($|cases|new)/ },
-  { to: '/quick-estimate', label: 'Quick Estimate', tag: 'Next' },
-  { to: '/billing', label: 'Billing & payouts', tag: 'Next' },
-  { to: '/analytics', label: 'Reports & analytics', tag: 'Next' },
+  { to: '/quick-estimate', label: 'Quick Estimate', tag: 'Coming soon' },
+  { to: '/billing', label: 'Billing & payouts', tag: 'Coming soon' },
+  { to: '/analytics', label: 'Reports & analytics', tag: 'Coming soon' },
   { to: '/data', label: 'Data import & export' },
   { to: '/formats', label: 'Bank formats' },
   { to: '/master', label: 'Master data', perm: 'config' },
