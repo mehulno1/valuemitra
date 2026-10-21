@@ -103,19 +103,30 @@ export async function tick() {
 }
 
 let timer: NodeJS.Timeout | null = null;
-export async function startWorker() {
-  if (!env.RUN_JOBS || timer) return;
-  // recover jobs left running by a crashed process
+let recovery: NodeJS.Timeout | null = null;
+
+/** Jobs left running by a process that stopped (restart, crash) go back to the queue. */
+async function recoverStale(olderThanMs: number) {
   await db
     .updateTable('jobs')
-    .set({ status: 'queued', locked_at: null })
+    .set({ status: 'queued', locked_at: null, locked_by: null })
     .where('status', '=', 'running')
-    .where('locked_at', '<', new Date(Date.now() - 15 * 60_000))
+    .where((eb) => eb.or([eb('locked_at', '<', new Date(Date.now() - olderThanMs)), eb('locked_by', '!=', env.WORKER_ID)]))
     .execute();
+}
+
+export async function startWorker() {
+  if (!env.RUN_JOBS || timer) return;
+  // at startup nothing can be running in this process: anything marked running belonged to a stopped one
+  // (one worker process per server; with several, give each a stable WORKER_ID and rely on the timeout)
+  await recoverStale(0);
   timer = setInterval(() => { for (let i = 0; i < CONCURRENCY; i++) void tick(); }, 1500);
+  recovery = setInterval(() => { void db.updateTable('jobs').set({ status: 'queued', locked_at: null, locked_by: null }).where('status', '=', 'running').where('locked_at', '<', new Date(Date.now() - 30 * 60_000)).execute().catch(() => undefined); }, 60_000);
 }
 
 export function stopWorker() {
   if (timer) clearInterval(timer);
+  if (recovery) clearInterval(recovery);
   timer = null;
+  recovery = null;
 }

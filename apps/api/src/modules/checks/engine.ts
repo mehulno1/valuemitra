@@ -59,6 +59,16 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
       }
       return out;
     }
+    case 'low_confidence': {
+      // values read from documents that the report prints, read with low confidence and not yet confirmed by a person
+      const below = Number(def.params?.below ?? 75);
+      const codes = new Set<string>(ctx.templateFields);
+      const shaky = [...data.fields.keys()].map((c) => data.get(c)).filter((r) =>
+        (r.source === 'document' || r.source === 'site_sheet') && !r.edited && r.confidence !== null && r.confidence < below &&
+        r.candidates.every((c) => c.status !== 'accepted') && (codes.has(r.code) || [...codes].some((t) => data.wording.fields?.[t]?.includes(r.code))));
+      if (!shaky.length) return null;
+      return { ...base, severity: sev, title: fill(def.title, { count: shaky.length }), detail: `${shaky.map((r) => `${r.label} (${Math.round(r.confidence!)}%)`).join(', ')}. ${def.detail ?? ''}`, actions: { fields: shaky.map((r) => r.code) } };
+    }
     case 'pending_fields': {
       const pend = ctx.templateFields.map((c) => data.get(c)).filter((r) => r.state === 'pending');
       if (!pend.length) return { ...base, severity: 'ok', title: 'All report fields filled', detail: null };

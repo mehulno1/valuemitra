@@ -61,15 +61,20 @@ export async function seedPlatform() {
     ['check_set', 'default', CHECK_SET],
     ['wording', 'default', WORDING],
   ];
+  // platform configuration: a changed payload is published as a new version (cases keep the version they pinned)
+  let cfgVersions = 0;
   for (const [kind, ckey, payload] of configs) {
-    const exists = await db.selectFrom('config_versions').select('id').where('firm_id', 'is', null).where('kind', '=', kind).where('ckey', '=', ckey).executeTakeFirst();
-    if (exists) continue;
+    const latest = await db.selectFrom('config_versions').selectAll().where('firm_id', 'is', null).where('kind', '=', kind).where('ckey', '=', ckey).orderBy('version', 'desc').executeTakeFirst();
+    if (latest && j(latest.payload_json) === j(payload)) continue;
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    if (latest) await db.updateTable('config_versions').set({ status: 'retired' }).where('id', '=', latest.id).where('status', '=', 'published').execute();
     await db.insertInto('config_versions').values({
-      firm_id: null, kind, ckey, version: 1, status: 'published', effective_from: new Date('2025-04-01'),
-      payload_json: toJson(payload), change_note: 'Initial platform configuration', published_at: new Date(),
+      firm_id: null, kind, ckey, version: (latest?.version ?? 0) + 1, status: 'published', effective_from: latest ? today : new Date('2025-04-01'),
+      payload_json: toJson(payload), change_note: latest ? 'Platform configuration update' : 'Initial platform configuration', published_at: new Date(),
     }).execute();
+    cfgVersions++;
   }
-  console.log(`Platform: ${BANKS.length} banks, ${FIELDS.length} fields (${added} added, ${versioned} new versions), ${configs.length} configurations`);
+  console.log(`Platform: ${BANKS.length} banks, ${FIELDS.length} fields (${added} added, ${versioned} new versions), ${configs.length} configurations (${cfgVersions} published)`);
 }
 
 export async function seedDemoFirm() {
