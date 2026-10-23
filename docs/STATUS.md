@@ -73,7 +73,7 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - Billing: a credit note is written to each case's history; a fully credited invoice reads "Cancelled by credit note"; the Output tab lists it. (Case 0002 on live had a full credit note CN/26-27/0001, so its two invoices were correct.)
 - Small: bank contact is a hint from the branch; visit links use unambiguous characters; link expiry in IST; photos without location read "Location removed (came via WhatsApp)"; Market tab window wording matches the code.
 
-## 3c. Gate A review, phase 2: AI format conversion (23 Oct 2026)
+## 3c. Gate A review, phase 2: AI format conversion (23 Oct 2026, live)
 
 - Upload (Bank formats) starts job `template.convert` (`modules/templates/aiconvert.ts`): the Word file as an outline with ids (`outline.ts`) plus the dictionary go to Claude in one structured call (effort high, ~1.5–2 min). The answer is checked (`check()`): cells and paragraphs must exist, field codes must exist or be proposed, bank-only fields get the bank's code (`NKGSB.CROPS`), sources limited to document types / site_sheet / manual, currency and units around money and area fields removed, overlapping ranges dropped.
 - Mappings now carry a template (`location_json.template`, e.g. `{{CUST.NAME}}, {{CASE.BRANCH_NAME}}`), a status (match / new / needs / clear / fixed), section, note and the AI's question with choices. Slot kind `para` rewrites or removes paragraph ranges (earlier case text, earlier valuer identity, annexure sections with the earlier case's images; section bodies print a field).
@@ -83,6 +83,29 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - Every field a format prints comes from `versionFieldCodes()` (checks, rendering, preview, field usage).
 - Migration `0008_ai_formats.sql`. Tests: `test/aiformat.test.ts`. Dev helpers: `scripts/dev/t-aiformat.mts` (dry run), `t-aiformat-e2e.mts` (upload → publish → render a case), `t-aiformat-draft.mts`, `ui-format-review.mts`.
 - Verified on the NKGSB Land & Building file (filled report of another firm): 56 questions found, 26 matched / 32 new fields first time (all matched on a second upload once the fields existed), 11–14 earlier-case items cleared (reference line, remarks, engineer line, valuer block, photographs, map, ready reckoner, comparables), 4–6 items below 85% to check, none needing a choice; rendered with a case: 13 pages, no earlier-case text or images, docx 5.6 MB → 0.9 MB.
+
+## 3d. Gate A review, phase 3: area basis, rate unit, location (23 Oct 2026, live)
+
+- Areas: one stated area is enough. `AREA.CARPET`, `AREA.BUA` and `AREA.SALEABLE` derive from whichever is stated, by the bank's `loading_pct` and `saleable_factor`. Derivations use `STATED.<CODE>` (resolver: the value only when it was not worked out), so there are no cycles. New field `AREA.PLOT`.
+- Valuation tab: the valuer picks the area (carpet, built-up, saleable, measured at site + balcony, plot) and the unit (sq.ft. / sq.m.). The evidence-backed rate (always per sq.ft. built-up) is converted. "Use this basis by default" saves `area_basis_defaults["BANK:type"]` in firm settings; these are listed in Settings → Valuation rules. `valuations.rate_unit`.
+- Report fields written by the valuation: `VAL.RATE_UNIT`, `VAL.RATE_TEXT`, `VAL.AREA_TEXT`, `VAL.BASIS_LABEL`, `VAL.BASIS_NOTE`, and `VAL.RATE_BUA` (the rate check compares this equivalent). `VAL.BASIS_AREA` and `VAL.RATE` display in the case's unit (a dictionary unit may name a field). SBI Format-A rev 4 prints "Area" and "Rate" from these. Remark 6 says how the area was arrived at.
+- Location: photo captioning and evidence reading recognise map screenshots (`site_photos.is_map`; an evidence capture becomes kind `map`) and read the pin's coordinates into `PROP.LAT/LNG` (source evidence). Map screenshots print on the location map page. The Site visit tab has a Location panel with editable coordinates. New check `no_location`. The separate "Location map" capture option is removed.
+- Settings → Valuation rules: "Rules for" any bank. Every rule can have a bank figure, and blank means the default (#18).
+- Migration `0009_area_basis_location.sql`. Dev helpers: `t-area.mts`, `t-area-apply.mts`, `t-mapdetect.mts` (synthetic Google Maps screenshot, real AI call), `ui-p3.mts`.
+
+## 3e. Gate A review, phase 4: remaining issues (23 Oct 2026, live)
+
+- #9 Outliers (`outlier_pct`, 30) are left out with a reason until the valuer includes them (`flagOutliers`). Floor adjustment `floor_pct_per_floor` 0.5, cap `floor_max_pct` 5, lift buildings only (`PHYS.FLOOR` vs comparable floor). Distance still needs a maps key.
+- #11 Checks `inspection_date` and `report_date` (`report_max_days_after_inspection`, 30, per bank); expression function `days_between`.
+- #12 `PHYS.PARKING_COUNT` / `PHYS.PARKING_TEXT` read from the agreement and site sheet; they prefill car parking on the Valuation tab.
+- #13 `sameText()` drops titles and spells S.No./Survey No., Hissa, CTS and (P)/Part one way. When one reading contains the other, the conflict is `minor` (info) and the fuller reading is used.
+- #15 "Preview final PDF" (`draft.pdf?final=1`, mode `final_preview`): the final layout marked PREVIEW, without the signature.
+- #16 The rate reason is built from factors with figures (floor/view, condition, amenities, recent sale, location, size) plus a note.
+- #17 Header chips use `valuation_applied` and `site_received`.
+- #21 The reading summary in the activity log uses page numbers after KYC removal.
+- #22 Document types `dast_goshwara`, `declaration` and `valuation_sheet`.
+- #24 Photos are captioned as the engineer uploads them, and the phone checklist ticks the items they show (`coveredPrompts`).
+- #25 One seen-before message.
 
 ## 4. Left — by work package
 
