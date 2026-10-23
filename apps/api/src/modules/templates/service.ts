@@ -165,15 +165,17 @@ export async function versionDetail(firmId: number, versionId: number) {
   };
 }
 
-async function assertDraft(firmId: number | null, versionId: number, tx: Tx) {
+async function assertDraft(firmId: number | null, versionId: number, tx: Tx, opts: { whileReading?: boolean } = {}) {
   const v = await tx
     .selectFrom('template_versions as v')
     .innerJoin('report_templates as t', 't.id', 'v.template_id')
-    .select(['v.id', 'v.status', 'v.template_id', 'v.version', 'v.source_file_id', 'v.layout_json', 'v.effective_from', 'v.ai_json', 't.firm_id', 't.name', 't.property_types'])
+    .select(['v.id', 'v.status', 'v.template_id', 'v.version', 'v.source_file_id', 'v.layout_json', 'v.effective_from', 'v.ai_json', 'v.ai_status', 't.firm_id', 't.name', 't.property_types'])
     .where('v.id', '=', versionId)
     .executeTakeFirst();
   if (!v || v.firm_id !== firmId) throw notFound('Template version');
   if (v.status !== 'draft') throw conflict('A published version cannot be changed. Upload a revised template to create a new version.');
+  // the AI's answer replaces the draft's mappings: no choices or publishing until it is in
+  if (v.ai_status === 'reading' && !opts.whileReading) throw conflict('The AI is still reading this format. Try again when the review appears.');
   return v;
 }
 
@@ -210,19 +212,19 @@ export async function confirmMapping(actor: Actor, versionId: number, mappingId:
 }
 
 export async function rerunAi(actor: Actor, versionId: number) {
-  const v = await assertDraft(actor.firmId, versionId, db);
+  const v = await assertDraft(actor.firmId, versionId, db, { whileReading: true });
   if (!aiConfigured()) throw badRequest('AI is not configured on this server');
   await db.updateTable('template_versions').set({ ai_status: 'reading', ai_error: null }).where('id', '=', versionId).execute();
   await enqueue('template.convert', { versionId }, { firmId: v.firm_id, dedupeKey: `template.convert:${versionId}`, maxAttempts: 2 });
   await audit(actor, { entityType: 'template_version', entityId: versionId, action: 'template.ai_rerun', summary: `${v.name} v${v.version}: AI reading started again` });
 }
 
-/** One click: accept every AI item that is ready (matched or new at 85% or above, and cleared text). */
+/** One click: accept every AI item that is ready: matched, new or cleared at 85% or above. */
 export async function acceptReady(actor: Actor, versionId: number, tx: Tx = db) {
   await assertDraft(actor.firmId, versionId, tx);
   const r = await tx.updateTable('template_mappings').set({ confirmed_by: actor.id ?? null, confirmed_at: new Date() })
     .where('template_version_id', '=', versionId).where('confirmed_at', 'is', null)
-    .where((eb) => eb.or([eb('status', '=', 'clear'), eb.and([eb('status', 'in', ['match', 'new']), eb('confidence', '>=', READY)])]))
+    .where('status', 'in', ['match', 'new', 'clear']).where('confidence', '>=', READY)
     .executeTakeFirst();
   const n = Number(r.numUpdatedRows ?? 0);
   await audit(actor, { entityType: 'template_version', entityId: versionId, action: 'mapping.accept_ready', summary: `${n} item(s) accepted as read by the AI` }, tx);
@@ -327,13 +329,17 @@ export async function publishVersion(actor: Actor, versionId: number, effectiveF
   }
   // an uploaded past report holds another case (and maybe another valuer): only the compiled file is kept
   const cleared = await tx.selectFrom('template_mappings').select('id').where('template_version_id', '=', versionId).where('status', '=', 'clear').where('ignored', '=', 0).executeTakeFirst();
-  if (cleared) await purgeFile(v.source_file_id, tx);
+  if (cleared) {
+    await purgeFile(v.source_file_id, tx);
+    // the samples are the earlier case's text: they go with the original
+    await tx.updateTable('template_mappings').set({ sample_text: null }).where('template_version_id', '=', versionId).execute();
+  }
   await audit(actor, { entityType: 'template_version', entityId: versionId, action: 'template.publish', summary: `${v.name} v${v.version} published, effective ${eff.toISOString().slice(0, 10)}${made.length ? `; ${made.length} new field(s) added: ${made.map((f) => f.code).join(', ')}` : ''}${cleared ? '; the uploaded original (earlier case) was deleted' : ''}` }, tx);
   await publishEvent({ type: 'template.published', firmId: actor.firmId, entityType: 'template_version', entityId: versionId, payload: { templateId: v.template_id, version: v.version } }, tx);
 }
 
 export async function discardDraftVersion(actor: Actor, versionId: number, tx: Tx = db) {
-  await assertDraft(actor.firmId, versionId, tx);
+  await assertDraft(actor.firmId, versionId, tx, { whileReading: true });
   await tx.deleteFrom('template_mappings').where('template_version_id', '=', versionId).execute();
   await tx.deleteFrom('template_versions').where('id', '=', versionId).execute();
 }

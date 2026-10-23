@@ -24,7 +24,7 @@ const TAG_RE = /\{\{\s*([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)+)\s*\}\}/g;
 
 /** What the valuer must still look at: open questions, and anything not yet accepted. */
 const needsYou = (m: ReviewMapping) => !m.confirmed && (m.status === 'needs' || (m.confidence ?? 0) < READY);
-const filterOf = (m: ReviewMapping): Filter => (m.status === 'needs' || (!m.confirmed && (m.confidence ?? 0) < READY && m.status !== 'clear') ? 'needs' : (m.status as Filter) ?? 'match');
+const filterOf = (m: ReviewMapping): Filter => (m.status === 'needs' || (!m.confirmed && (m.confidence ?? 0) < READY) ? 'needs' : (m.status as Filter) ?? 'match');
 
 export default function FormatReview({ vid, ai, mappings, fields, edit, onChange, Picker }: {
   vid: number; ai: AiInfo; mappings: ReviewMapping[]; fields: DictField[]; edit: boolean; onChange: (d: any) => void;
@@ -89,7 +89,7 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
               <h3>{sec}</h3>
               {mappings.filter((m) => (m.section || 'Other') === sec).map((m) => {
                 const [cls, text] = m.status === 'needs' && m.confirmed ? ['ok', 'Answered'] : PILL[m.status ?? 'match'] ?? PILL.match;
-                const look = !m.confirmed && m.status !== 'needs' && m.status !== 'clear' && (m.confidence ?? 0) < READY;
+                const look = !m.confirmed && m.status !== 'needs' && (m.confidence ?? 0) < READY;
                 return (
                   <button key={m.id} className={`rv-q ${sel?.id === m.id ? 'sel' : ''} ${filter !== 'all' && filterOf(m) !== filter ? 'dim' : ''}`} onClick={() => { setSelId(m.id); setPicking(false); }}>
                     <span className="min-w-0">
@@ -164,7 +164,7 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
 
           <Panel title={open.length ? `${open.filter(needsYou).length} item(s) need you` : 'Everything accepted'}>
             <div className="grid gap-2">
-              <div className="sub">{ready.length ? `${ready.length} item(s) are ready: matched or new at ${READY}% or above, and cleared text.` : open.length ? 'Answer or check the amber items.' : 'Preview with a case, then publish.'}</div>
+              <div className="sub">{ready.length ? `${ready.length} item(s) are ready: matched, new or cleared at ${READY}% or above.` : open.length ? 'Answer or check the amber items.' : 'Preview with a case, then publish.'}</div>
               {edit && ready.length > 0 && <button className="btn pri" disabled={busy} onClick={() => acceptReady.mutate()}>Accept all ready items ({ready.length})</button>}
             </div>
           </Panel>
