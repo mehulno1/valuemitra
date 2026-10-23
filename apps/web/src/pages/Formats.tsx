@@ -7,19 +7,20 @@ import { PROPERTY_TYPES } from '@vm/shared';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Conf, Empty, Field, Loading, Modal, PageHead, Panel, fmtDate, useErrorToast, useToast } from '@/components/ui';
+import FormatReview, { type AiInfo, type ReviewMapping } from './FormatReview';
 
-interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; change_note: string | null }
+interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; confirmed?: number; change_note: string | null; ai_status?: string }
 interface Tpl { id: number; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
-interface Mapping { id: number; kind: string; label: string; context: string | null; sample: string | null; field_code: string | null; field_label: string | null; ignored: boolean; confidence: number | null; method: string | null; confirmed: boolean; suggestions: { code: string; confidence: number }[] }
-interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[] }
-interface DictField { code: string; label: string; group: string; type: string; status: string }
+type Mapping = ReviewMapping;
+interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
+interface DictField { code: string; label: string; group: string; type: string; status: string; sources?: string[] }
 
 const ptLabel = (k: string) => PROPERTY_TYPES.find((p) => p.key === k)?.label ?? k;
 const today = () => new Date().toISOString().slice(0, 10);
 const METHOD: Record<string, string> = { placeholder: 'placeholder', history: 'learned', alias: 'alias', label: 'label', fuzzy: 'similar words', manual: 'you chose', new_field: 'new field', ai: 'AI' };
 
 // ---------------------------------------------------------------------------------------------------
-function UploadForm({ revise, onDone, onCancel }: { revise?: Tpl | null; onDone: (r: { versionId: number; found: number; matched: number }) => void; onCancel?: () => void }) {
+function UploadForm({ revise, onDone, onCancel }: { revise?: Tpl | null; onDone: (r: { versionId: number; found: number; matched: number; ai?: boolean }) => void; onCancel?: () => void }) {
   const onErr = useErrorToast();
   const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get<{ banks: { id: number; code: string; name: string }[]; branches: { bank_code: string; code: string; name: string }[] }>('/api/meta') });
   const [bankCode, setBankCode] = useState(revise?.bank_code ?? '');
@@ -34,7 +35,7 @@ function UploadForm({ revise, onDone, onCancel }: { revise?: Tpl | null; onDone:
   const branches = (meta.data?.branches ?? []).filter((b) => b.bank_code === bankCode);
 
   const up = useMutation({
-    mutationFn: () => api.upload<{ templateId: number; versionId: number; version: number; found: number; matched: number }>('/api/templates/upload', [file!], {
+    mutationFn: () => api.upload<{ templateId: number; versionId: number; version: number; found: number; matched: number; ai?: boolean }>('/api/templates/upload', [file!], {
       ...(revise ? { templateId: String(revise.id) } : { bankCode, name, propertyTypes: types.join(','), branchScope: scopeAll ? '*' : scope.join(',') }),
       effectiveFrom: eff, note,
     }),
@@ -84,7 +85,7 @@ function UploadForm({ revise, onDone, onCancel }: { revise?: Tpl | null; onDone:
       <Field label="Change note"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={revise ? 'What did the bank change?' : 'Optional'} /></Field>
       <div className="full">
         <div className="drop">
-          {file ? <div><b>{file.name}</b> <span className="sub">· {(file.size / 1024).toFixed(0)} KB</span></div> : <div className="muted">The bank's blank Word template (.docx). Old .doc files: open in Word and save as .docx first.</div>}
+          {file ? <div><b>{file.name}</b> <span className="sub">· {(file.size / 1024).toFixed(0)} KB</span></div> : <div className="muted">The bank's Word file (.docx): a blank template, or a past report in this format from your firm or another valuer (with consent). A past report also teaches the wording; its case details and the earlier valuer's name, registration and firm are cleared. Old .doc files: save as .docx first.</div>}
           <div className="btns mt-3 justify-center">
             <button type="button" className="btn" onClick={() => input.current?.click()}>{file ? 'Choose another file' : 'Upload Word template'}</button>
           </div>
@@ -92,7 +93,7 @@ function UploadForm({ revise, onDone, onCancel }: { revise?: Tpl | null; onDone:
         </div>
       </div>
       <div className="full btns">
-        <button className="btn pri" disabled={!ok || up.isPending} onClick={() => up.mutate()}>{up.isPending ? 'Reading template…' : 'Read and match fields'}</button>
+        <button className="btn pri" disabled={!ok || up.isPending} onClick={() => up.mutate()}>{up.isPending ? 'Uploading…' : 'Read the format'}</button>
         {onCancel && <button className="btn" onClick={onCancel}>Cancel</button>}
       </div>
     </div>
@@ -106,7 +107,7 @@ function StatusCell({ t }: { t: Tpl }) {
   return (
     <div className="grid gap-1">
       {pub ? <span><span className="sev ok">Active</span> <span className="sub">v{pub.version}{pub.effective_from && ` · from ${fmtDate(pub.effective_from)}`}</span></span> : !draft && <span className="sev info">Not published</span>}
-      {draft && <Link to={`/formats/v/${draft.id}`} onClick={(e) => e.stopPropagation()}><span className="sev warn">Draft mapping {draft.slots ? Math.round(((draft.mapped + draft.ignored) / draft.slots) * 100) : 0}%</span> <span className="sub">v{draft.version}</span></Link>}
+      {draft && <Link to={`/formats/v/${draft.id}`} onClick={(e) => e.stopPropagation()}><span className="sev warn">{draft.ai_status === 'reading' ? 'Draft · AI reading' : `Draft ${draft.slots ? Math.round(((draft.confirmed ?? draft.mapped + draft.ignored) / draft.slots) * 100) : 0}% reviewed`}</span> <span className="sub">v{draft.version}</span></Link>}
     </div>
   );
 }
@@ -120,9 +121,9 @@ function FormatList() {
   const [adding, setAdding] = useState(false);
   const [revise, setRevise] = useState<Tpl | null>(null);
   const qc = useQueryClient();
-  const done = (r: { versionId: number; found: number; matched: number }) => {
+  const done = (r: { versionId: number; found: number; matched: number; ai?: boolean }) => {
     qc.invalidateQueries({ queryKey: ['templates'] });
-    toast(`${r.found} fields found. ${r.matched} matched automatically; ${r.found - r.matched} need you.`);
+    toast(r.ai ? 'Uploaded. The AI is reading the format; this takes about 1 to 2 minutes.' : `${r.found} fields found. ${r.matched} matched automatically; ${r.found - r.matched} need you.`);
     nav(`/formats/v/${r.versionId}`);
   };
 
@@ -133,7 +134,7 @@ function FormatList() {
 
       {adding && (
         <Panel title="Add a bank format" className="mb-4">
-          <p className="sub mb-4 mt-0">Upload the bank's blank Word template. Each label in it is matched to a master field; you confirm the rest. The exact layout of the bank's template is kept.</p>
+          <p className="sub mb-4 mt-0">Upload the bank's Word file. The AI maps each question to a master field by meaning, creates the fields that are missing and clears any earlier case's details; you review the few doubts. The exact layout of the bank's form is kept.</p>
           <UploadForm onDone={done} onCancel={() => setAdding(false)} />
         </Panel>
       )}
@@ -151,7 +152,7 @@ function FormatList() {
                       <td><b>{t.bank_code ?? '—'}</b><div className="sub">{t.bank_name}</div></td>
                       <td>{t.name}<div className="sub">{t.branch_scope.includes('*') ? 'All branches' : t.branch_scope.join(', ')}{t.firm_id === null ? ' · platform format' : ' · your firm'}</div></td>
                       <td>{t.property_types.map(ptLabel).join(', ')}</td>
-                      <td className="mono">{cur ? `${cur.mapped + cur.ignored}/${cur.slots}` : '—'}{cur && !!cur.ignored && <div className="sub">{cur.ignored} fixed text</div>}</td>
+                      <td className="mono">{cur ? (cur.ai_status === 'reading' ? <span className="sub">AI reading…</span> : `${cur.confirmed ?? cur.mapped + cur.ignored}/${cur.slots}`) : '—'}{cur && !!cur.ignored && <div className="sub">{cur.ignored} fixed text</div>}</td>
                       <td><StatusCell t={t} /></td>
                     </tr>,
                     open === t.id && (
@@ -169,7 +170,7 @@ function FormatList() {
                                   <td className="mono">v{v.version}</td>
                                   <td><span className={`sev ${v.status === 'published' ? 'ok' : v.status === 'draft' ? 'warn' : 'info'}`}>{v.status === 'published' ? 'Active' : v.status === 'draft' ? 'Draft' : 'Retired'}</span></td>
                                   <td>{fmtDate(v.effective_from) || '—'}{v.published_at && <div className="sub">published {fmtDate(v.published_at)}</div>}</td>
-                                  <td className="mono">{v.mapped + v.ignored}/{v.slots}</td>
+                                  <td className="mono">{v.confirmed ?? v.mapped + v.ignored}/{v.slots}</td>
                                   <td className="sub">{v.change_note}</td>
                                   <td><Link className="btn sm" to={`/formats/v/${v.id}`}>{v.status === 'draft' && can('config') ? 'Map fields' : 'View mapping'}</Link></td>
                                 </tr>
@@ -295,7 +296,9 @@ function MappingScreen() {
   const qc = useQueryClient();
   const toast = useToast();
   const onErr = useErrorToast();
-  const v = useQuery({ queryKey: ['tplv', vid], queryFn: () => api.get<VersionDetail>(`/api/templates/versions/${vid}`) });
+  const v = useQuery({ queryKey: ['tplv', vid], queryFn: () => api.get<VersionDetail>(`/api/templates/versions/${vid}`), refetchInterval: (q) => (q.state.data?.ai_status === 'reading' ? 4000 : false) });
+  const [advanced, setAdvanced] = useState(false);
+  const rerun = useMutation({ mutationFn: () => api.post(`/api/templates/versions/${vid}/ai`), onSuccess: () => qc.invalidateQueries({ queryKey: ['tplv', vid] }), onError: onErr });
   const fields = useQuery({ queryKey: ['fields'], queryFn: () => api.get<DictField[]>('/api/admin/fields'), staleTime: 60_000 });
   const [filter, setFilter] = useState<'need' | 'all'>('need');
   const [q, setQ] = useState('');
@@ -327,15 +330,67 @@ function MappingScreen() {
   const s = q.trim().toLowerCase();
   const rows = d.mappings.filter((m) => (filter === 'all' || !m.confirmed) && (!s || m.label.toLowerCase().includes(s) || (m.field_label ?? '').toLowerCase().includes(s) || (m.field_code ?? '').toLowerCase().includes(s)));
   const pct = d.mappings.length ? Math.round(((d.mappings.length - open.length) / d.mappings.length) * 100) : 0;
+  const reading = d.ai_status === 'reading';
+  const review = !!d.ai && d.ai_status === 'done' && !advanced;
+  const picker = (p: { value: string | null; suggestions: { code: string; confidence: number }[]; onPick: (code: string) => void; disabled?: boolean }) => <FieldPicker fields={fields.data ?? []} {...p} />;
 
   return (
     <>
       <PageHead
         eyebrow={<Link to="/formats" className="text-inherit no-underline">Bank formats</Link>}
         title={<>{d.bank_code} · {d.name} <span className="mono text-[18px] font-medium">v{d.version}</span></>}
-        actions={<span className={`sev ${draft ? 'warn' : d.status === 'published' ? 'ok' : 'info'}`}>{draft ? `Draft · ${pct}% confirmed` : d.status === 'published' ? 'Active' : 'Retired'}</span>}
+        actions={<div className="flex flex-wrap items-center gap-2">
+          {d.ai && d.ai_status === 'done' && <button className="btn sm" onClick={() => setAdvanced((x) => !x)}>{advanced ? 'Back to review' : 'Advanced: full mapping table'}</button>}
+          <span className={`sev ${draft ? 'warn' : d.status === 'published' ? 'ok' : 'info'}`}>{reading ? 'AI reading' : draft ? `Draft · ${pct}% reviewed` : d.status === 'published' ? 'Active' : 'Retired'}</span>
+        </div>}
       />
-      <div className="cols">
+      {reading && (
+        <Panel className="mb-4" title="The AI is reading the format">
+          <ol className="m-0 grid gap-1.5 pl-5 text-[13.5px]">
+            <li>Opens the Word file and finds the questions, grids and text sections</li>
+            <li>Separates the bank's own text from an earlier case's details and the earlier valuer's identity</li>
+            <li>Matches each question to a master field by meaning, and proposes the fields that are missing</li>
+            <li>Marks what needs you</li>
+          </ol>
+          <p className="sub mb-0 mt-3"><span className="dots">About 1 to 2 minutes</span>. You can leave this page; the review is here when you come back.</p>
+        </Panel>
+      )}
+      {d.ai_status === 'none' && draft && edit && (
+        <Panel className="mb-4" title="Read this format with the AI">
+          <p className="sub mt-0">This draft was matched by words only. The AI maps each question by meaning, proposes the fields that are missing and clears an earlier case's details and the earlier valuer's identity. Your choices on this draft are replaced.</p>
+          <button className="btn pri" disabled={rerun.isPending} onClick={() => rerun.mutate()}>Read with the AI</button>
+        </Panel>
+      )}
+      {d.ai_status === 'failed' && draft && (
+        <Panel className="mb-4" title="The AI could not read this format">
+          <p className="sub mt-0">{d.ai_error ?? 'Unknown error'}. The labels below were matched by words instead; you can map them by hand, or try the AI again.</p>
+          {edit && <button className="btn" disabled={rerun.isPending} onClick={() => rerun.mutate()}>Read with the AI again</button>}
+        </Panel>
+      )}
+      {review && d.ai && (
+        <div className="grid gap-4">
+          <FormatReview vid={vid} ai={d.ai} mappings={d.mappings} fields={fields.data ?? []} edit={edit} onChange={(nd) => qc.setQueryData(['tplv', vid], nd)} Picker={picker} />
+          <div className="split">
+            {can('config') && <Panel title="Preview with a case"><PreviewBox versionId={vid} /></Panel>}
+            {draft && (
+              <Panel title="Publish">
+                <div className="grid gap-3">
+                  {open.length ? <div className="sub"><b className="text-warn">{open.length} item(s) not accepted yet.</b></div> : <div className="sub text-ok">Everything accepted. New fields are created and site questions added to the engineer's sheet when you publish.</div>}
+                  <Field label="Effective from" hint="New cases created on or after this date use this version"><input type="date" value={eff} onChange={(e) => setEff(e.target.value)} disabled={!edit} /></Field>
+                  {edit && (
+                    <div className="btns">
+                      <button className="btn pri" disabled={!!open.length || publish.isPending} onClick={() => publish.mutate()}>{publish.isPending ? 'Publishing…' : 'Publish format'}</button>
+                      <button className="btn danger" disabled={discard.isPending} onClick={() => window.confirm('Discard this draft and its mappings?') && discard.mutate()}>Discard draft</button>
+                      <button className="btn ghost" disabled={rerun.isPending} onClick={() => window.confirm('Read the format with the AI again? Your choices on this draft are replaced.') && rerun.mutate()}>Read again</button>
+                    </div>
+                  )}
+                </div>
+              </Panel>
+            )}
+          </div>
+        </div>
+      )}
+      {!review && !reading && <div className="cols">
         <section className="panel min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
             <div className="tabs" style={{ margin: 0, border: 0 }}>
@@ -352,6 +407,7 @@ function MappingScreen() {
                   <tr key={m.id} style={!m.confirmed ? { background: 'var(--warn-soft)' } : undefined}>
                     <td style={{ maxWidth: 320 }}>
                       <b className="font-semibold">{m.label}</b>
+                      {m.template && m.template !== `{{${m.field_code}}}` && <div className="sub mono">{m.template}</div>}
                       {m.context && m.context !== m.label && <div className="sub">{m.context}</div>}
                       {m.sample && <div className="snip" style={{ fontSize: 12.5 }}>{m.sample}</div>}
                       {m.kind && m.kind !== 'label' && <span className="tag mt-1 inline-block">{m.kind}</span>}
@@ -409,7 +465,7 @@ function MappingScreen() {
             </ul>
           </Panel>
         </aside>
-      </div>
+      </div>}
 
       <NewFieldModal
         open={!!newFor}

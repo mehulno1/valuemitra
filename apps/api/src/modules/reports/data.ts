@@ -8,6 +8,7 @@ import { getSettings } from '../../platform/settings.js';
 import { readFile } from '../../platform/storage.js';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { fitImage, type RenderData, type RenderImage } from '../templates/render.js';
+import { fillTemplate, templateKey, versionFieldCodes, versionTemplates } from '../templates/codes.js';
 import { mapImages } from './maps.js';
 
 export type Mode = 'preview' | 'draft' | 'final';
@@ -45,9 +46,7 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
   const snapshot: Record<string, unknown> = {};
   const signed = mode === 'final';
 
-  const mappings = await tx.selectFrom('template_mappings').select(['field_code']).distinct().where('template_version_id', '=', data.case.template_version_id!).where('field_code', 'is not', null).where('ignored', '=', 0).execute();
-  for (const { field_code } of mappings) {
-    const code = field_code!;
+  for (const code of await versionFieldCodes(data.case.template_version_id, tx)) {
     const r = data.get(code);
     if (r.type === 'image') continue;
     const shown = r.state === 'filled' || r.notProvided;
@@ -59,6 +58,9 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
   }
 
   // signature and seal: full at signing blocks, short on every page footer
+  // cells and paragraphs that print several fields with fixed words between them
+  for (const t of await versionTemplates(data.case.template_version_id, tx)) out[templateKey(t.key)] = fillTemplate(t.template, (c) => String(out[c] ?? ''));
+
   out.SIGNED = signed;
   out.SIGN_PENDING = mode === 'preview' ? `${M.start}REPORT.SIGNATURE${M.pend}Signature and seal placed at sign-off${M.end}` : '';
   if (signed) {

@@ -73,6 +73,17 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - Billing: a credit note is written to each case's history; a fully credited invoice reads "Cancelled by credit note"; the Output tab lists it. (Case 0002 on live had a full credit note CN/26-27/0001, so its two invoices were correct.)
 - Small: bank contact is a hint from the branch; visit links use unambiguous characters; link expiry in IST; photos without location read "Location removed (came via WhatsApp)"; Market tab window wording matches the code.
 
+## 3c. Gate A review, phase 2: AI format conversion (23 Oct 2026)
+
+- Upload (Bank formats) starts job `template.convert` (`modules/templates/aiconvert.ts`): the Word file as an outline with ids (`outline.ts`) plus the dictionary go to Claude in one structured call (effort high, ~1.5–2 min). The answer is checked (`check()`): cells and paragraphs must exist, field codes must exist or be proposed, bank-only fields get the bank's code (`NKGSB.CROPS`), sources limited to document types / site_sheet / manual, currency and units around money and area fields removed, overlapping ranges dropped.
+- Mappings now carry a template (`location_json.template`, e.g. `{{CUST.NAME}}, {{CASE.BRANCH_NAME}}`), a status (match / new / needs / clear / fixed), section, note and the AI's question with choices. Slot kind `para` rewrites or removes paragraph ranges (earlier case text, earlier valuer identity, annexure sections with the earlier case's images; section bodies print a field).
+- Compile: a single field prints its own tag; a template prints `TPL.<slot>` filled at render time (`codes.ts fillTemplate`: empty fields drop with their separator); paragraph ranges rewritten or removed (section properties kept); a single-field rewrite drops list numbering and justification; empty paragraphs at the end of the bank's text trimmed; images nothing references are removed from the package; author fields cleared; a bank footer that already numbers pages gets only the short signature.
+- Review screen (`web/src/pages/FormatReview.tsx`): tiles, the bank's form as a list by section, details panel (what prints, where each value comes from, earlier text vs replacement), Accept all ready items (≥85% and cleared), answer the AI's questions, change a field, keep the bank's text; preview with a case (proposed fields show as "[New field: …]" or their default); the old table stays as "Advanced". Drafts made before the AI get "Read with the AI".
+- Publish creates the proposed fields the version prints (firm-scoped; `origin_bank` for bank-only; default text as a derivation), adds site-sheet fields to the firm's profiles (new profile version), and deletes the uploaded original when earlier-case text was cleared (published versions render from the compiled file).
+- Every field a format prints comes from `versionFieldCodes()` (checks, rendering, preview, field usage).
+- Migration `0008_ai_formats.sql`. Tests: `test/aiformat.test.ts`. Dev helpers: `scripts/dev/t-aiformat.mts` (dry run), `t-aiformat-e2e.mts` (upload → publish → render a case), `t-aiformat-draft.mts`, `ui-format-review.mts`.
+- Verified on the NKGSB Land & Building file (filled report of another firm): 56 questions found, 26 matched / 32 new fields first time (all matched on a second upload once the fields existed), 11–14 earlier-case items cleared (reference line, remarks, engineer line, valuer block, photographs, map, ready reckoner, comparables), 4–6 items below 85% to check, none needing a choice; rendered with a case: 13 pages, no earlier-case text or images, docx 5.6 MB → 0.9 MB.
+
 ## 4. Left — by work package
 
 | WP | Left |
@@ -88,7 +99,7 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 | 10 Quick Estimate | Everything |
 | 11 Business | Fill in Billing setup on live (bank account, UPI ID, PAN, invoice note: needs admin or valuer); first live invoice test; validate Tally / Zoho / GSTR-1 files with a sample import (and the SAC code with the CA); verify the SES sender so email works; Quick Estimate conversion KPI in analytics |
 | 12 Privacy | Consent flow for the shared pool |
-| 13 Bank formats | AI format conversion (Gate A review phase 2, next); then SBI long, BoB, Union Bank, BoI, BoM, NKGSB, Federal, ValueMitra standard (need templates from Premal) |
+| 13 Bank formats | AI conversion built (rename a proposed field before publishing, cost-approach block on the Valuation tab still to do); onboard SBI long, BoB, Union Bank, BoI, BoM, NKGSB, Federal, ValueMitra standard (need templates from Premal) |
 | 14 Land & bungalow | Everything, tuned with sample cases |
 
 Gates: A built (AI reading live; first real pilot case next) → B all property types → C all banks + months 0–3 learning targets → D second firm by configuration only.

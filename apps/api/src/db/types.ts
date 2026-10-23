@@ -128,6 +128,7 @@ export interface CanonicalFields {
   group_code: string;
   id: Generated<number>;
   label: string;
+  origin_bank: string | null;
   pending_label: string | null;
   rules: Json | null;
   sort_order: Generated<number>;
@@ -716,6 +717,9 @@ export interface StageHistory {
 }
 
 export interface TemplateMappings {
+  ai_note: string | null;
+  answer: string | null;
+  ask_json: Json | null;
   confidence: Decimal | null;
   confirmed_at: Date | null;
   confirmed_by: number | null;
@@ -725,14 +729,20 @@ export interface TemplateMappings {
   ignored: Generated<number>;
   label_text: string;
   location_json: Json;
-  method: "auto" | "history" | "manual" | "new_field" | "placeholder" | null;
+  method: "ai" | "auto" | "history" | "manual" | "new_field" | "placeholder" | null;
   sample_text: string | null;
+  section: string | null;
   slot_key: string;
   slot_kind: string;
+  sort_order: Generated<number>;
+  status: string | null;
   template_version_id: number;
 }
 
 export interface TemplateVersions {
+  ai_error: string | null;
+  ai_json: Json | null;
+  ai_status: Generated<string>;
   change_note: string | null;
   compiled_file_id: number | null;
   created_at: Generated<Date>;

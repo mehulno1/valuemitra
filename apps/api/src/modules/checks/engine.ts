@@ -10,6 +10,7 @@ import { configById } from '../../platform/config.js';
 import { publish } from '../../platform/events.js';
 import { getSettings } from '../../platform/settings.js';
 import { caseData, EXPR_FNS, type CaseData } from '../casedata/resolver.js';
+import { versionFieldCodes } from '../templates/codes.js';
 
 interface CheckDef {
   code: string;
@@ -41,9 +42,7 @@ interface Result {
 
 /** Fields the pinned template prints, minus those filled at sign-off. */
 export async function reportFieldCodes(templateVersionId: number | null, tx: Tx = db): Promise<string[]> {
-  if (!templateVersionId) return [];
-  const rows = await tx.selectFrom('template_mappings').select('field_code').distinct().where('template_version_id', '=', templateVersionId).where('field_code', 'is not', null).where('ignored', '=', 0).execute();
-  return rows.map((r) => r.field_code!).filter((c) => !SIGN_OFF_FIELDS.has(c));
+  return (await versionFieldCodes(templateVersionId, tx)).filter((c) => !SIGN_OFF_FIELDS.has(c));
 }
 export const SIGN_OFF_FIELDS = new Set(['CASE.REPORT_NO', 'REPORT.SIGNATURE']);
 

@@ -4,7 +4,8 @@
 // and pinned per assignment; rendering always uses the compiled file, never a re-drawn copy.
 import type { Element as XEl } from '@xmldom/xmldom';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, tables, W_NS } from './docx.js';
+import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, setParagraphText, tables, W_NS, type DocxParts } from './docx.js';
+import { singleField, templateKey } from './codes.js';
 import type { Slot } from './detect.js';
 
 export const OPEN = '⟪';
@@ -12,9 +13,19 @@ export const CLOSE = '⟫';
 export const tag = (s: string) => `${OPEN}${s}${CLOSE}`;
 
 export interface CompileMapping {
-  slot: Slot;
-  fieldCode: string;
+  slot: Slot | { key: string; kind: 'para'; location: { p: number; p_to: number } };
+  fieldCode: string | null;
   fieldType: string;
+  template?: string | null;     // what prints, with {{CODE}} fields; null on a paragraph range removes it
+}
+
+/** One field prints its own tag (an image field the signed / pending block); a template with fixed
+ *  words or several fields prints one key the renderer fills, so empty fields leave no stray commas. */
+function tagsFor(m: CompileMapping): string {
+  const t = m.template ?? (m.fieldCode ? `{{${m.fieldCode}}}` : '');
+  const one = singleField(t);
+  if (one) return m.fieldType === 'image' && one === m.fieldCode ? imageSlot(one) : tag(one);
+  return tag(templateKey(m.slot.key));
 }
 
 export interface Layout {
@@ -33,20 +44,25 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
 
   // placeholders and inline blanks first (paragraph indices are from the untouched document)
   for (const m of mappings) {
-    const { slot } = m;
+    const slot = m.slot as Slot;
     if (slot.kind !== 'placeholder' && slot.kind !== 'inline') continue;
     const p = ps[slot.location.p!];
     if (!p) continue;
-    const t = m.fieldType === 'image' ? imageSlot(m.fieldCode) : tag(m.fieldCode);
-    replaceInParagraph(p, slot.location.find!, t);
+    replaceInParagraph(p, slot.location.find!, tagsFor(m));
   }
   for (const m of mappings) {
-    const { slot } = m;
+    const slot = m.slot as Slot;
     if (slot.kind !== 'cell' && slot.kind !== 'grid') continue;
     const tc = tbls[slot.location.t!]?.rows[slot.location.r!]?.[slot.location.c!];
     if (!tc) continue;
     const labelCell = tbls[slot.location.t!].rows[slot.location.r!][Math.max(0, slot.location.c! - 1)];
-    setCellText(doc, tc, m.fieldType === 'image' ? imageSlot(m.fieldCode) : tag(m.fieldCode), labelCell);
+    setCellText(doc, tc, tagsFor(m), labelCell);
+  }
+  // paragraph ranges last: rewritten (earlier case / valuer identity / section bodies) or removed
+  for (const m of mappings) {
+    if (m.slot.kind !== 'para') continue;
+    const { p, p_to } = (m.slot as { location: { p: number; p_to: number } }).location;
+    rewriteRange(doc, ps, p, p_to, m.template ? tagsFor(m) : null, !!singleField(m.template));
   }
   // unmapped placeholders would print literally; blank them
   for (const p of paragraphs(doc)) {
@@ -58,6 +74,13 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
   const body = els(doc, 'w:body')[0];
   const finalSect = children(body, 'w:sectPr')[0];
   if (layout.annexures) {
+    // empty paragraphs at the end of the bank's text (space for an earlier signature) would make a blank page
+    for (let n: any = finalSect ? finalSect.previousSibling : body.lastChild; n; ) {
+      const prev = n.previousSibling;
+      if (n.nodeType === 1 && n.nodeName === 'w:p' && !els(n, 'w:t').some((t) => (t.textContent ?? '').trim()) && !els(n, 'w:drawing').length && !els(n, 'w:sectPr').length) body.removeChild(n);
+      else if (n.nodeType === 1) break;
+      n = prev;
+    }
     const frag = new DOMParser().parseFromString(`<root xmlns:w="${W_NS}">${annexXml()}</root>`, 'text/xml');
     for (const n of Array.from(frag.documentElement!.childNodes as any) as any[]) {
       const imported = (doc as any).importNode(n, true);
@@ -67,7 +90,69 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
   }
 
   addHeaderFooter(parts, layout);
+  dropUnusedImages(parts);
+  scrubAuthor(parts);
   return saveDocx(parts);
+}
+
+/** Paragraphs from..to: the first gets `text` (null removes it too); body-level elements between go.
+ *  A single field (remarks, a text section) brings its own numbering and lines: list numbering and
+ *  justification of the bank's paragraph would double the numbers and stretch the lines. */
+function rewriteRange(doc: any, ps: XEl[], from: number, to: number, text: string | null, single = false) {
+  const first = ps[from];
+  const last = ps[to] ?? first;
+  if (!first) return;
+  const body = els(doc, 'w:body')[0];
+  let targets: XEl[];
+  if (first.parentNode === body && last.parentNode === body) {
+    targets = [];
+    for (let n: any = first; n; n = n.nextSibling) {
+      if (n.nodeType === 1) targets.push(n);
+      if (n === last) break;
+    }
+  } else targets = ps.slice(from, to + 1).filter(Boolean);
+  targets.forEach((n, i) => {
+    if (i === 0 && text !== null) {
+      if (single) {
+        const pPr = children(n as any, 'w:pPr')[0];
+        if (pPr) {
+          children(pPr, 'w:numPr').forEach((x) => pPr.removeChild(x));
+          children(pPr, 'w:jc').forEach((x) => { if (x.getAttribute('w:val') === 'both') x.setAttribute('w:val', 'left'); });
+        }
+      }
+      return setParagraphText(doc, n as any, text);
+    }
+    // a paragraph carrying section properties (page size, orientation) stays, emptied
+    if (n.nodeName === 'w:p' && els(n, 'w:sectPr').length) {
+      for (const c of Array.from(n.childNodes as any) as any[]) if (c.nodeName !== 'w:pPr') n.removeChild(c);
+      return;
+    }
+    n.parentNode?.removeChild(n);
+  });
+}
+
+/** Images no longer referenced (an earlier case's photos and maps) leave the package entirely. */
+function dropUnusedImages(parts: DocxParts) {
+  const relPath = 'word/_rels/document.xml.rels';
+  const relXml = parts.zip.file(relPath)?.asText();
+  if (!relXml) return;
+  const used = new Set([...new XMLSerializer().serializeToString(parts.doc as any).matchAll(/r:(?:embed|id|link|pict)="([^"]+)"/g)].map((m) => m[1]));
+  const rels = new DOMParser().parseFromString(relXml, 'text/xml');
+  const all = Array.from(rels.getElementsByTagName('Relationship') as any) as XEl[];
+  for (const r of all) {
+    if (!/\/image$/.test(r.getAttribute('Type') ?? '') || used.has(r.getAttribute('Id') ?? '')) continue;
+    const target = r.getAttribute('Target') ?? '';
+    const stillUsed = all.some((o) => o !== r && o.parentNode && o.getAttribute('Target') === target);
+    if (!stillUsed && r.getAttribute('TargetMode') !== 'External') parts.zip.remove(`word/${target.replace(/^\//, '').replace(/^word\//, '')}`);
+    r.parentNode?.removeChild(r);
+  }
+  parts.zip.file(relPath, new XMLSerializer().serializeToString(rels as any));
+}
+
+/** The file's author fields would name whoever saved the bank's sample. */
+function scrubAuthor(parts: DocxParts) {
+  const core = parts.zip.file('docProps/core.xml')?.asText();
+  if (core) parts.zip.file('docProps/core.xml', core.replace(/(<dc:creator>|<cp:lastModifiedBy>)[^<]*(<\/)/g, '$1$2'));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -139,6 +224,7 @@ const FOOTER_PARA = para(
   `${tr('#SIGNED')}${tr('%MINI_SIG')}${run('  ')}${tr('/SIGNED')}${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`,
   '<w:spacing w:after="0"/><w:jc w:val="right"/>',
 );
+const FOOTER_SIG_PARA = para(`${tr('#SIGNED')}${tr('%MINI_SIG')}${tr('/SIGNED')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>');
 const FOOTER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PARA}</w:ftr>`;
 const EMPTY_FTR = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}><w:p/></w:ftr>`;
 
@@ -199,5 +285,7 @@ function appendToExistingFooter(parts: ReturnType<typeof openDocx>, rels: any, s
   const path = `word/${rel.getAttribute('Target')}`;
   const xml = parts.zip.file(path)?.asText();
   if (!xml) return;
-  parts.zip.file(path, xml.replace(/<\/w:ftr>\s*$/, `${FOOTER_PARA}</w:ftr>`));
+  // the bank's footer may number pages itself: then add only the short signature
+  const numbered = /PAGE\b/.test(xml.replace(/<w:t[^>]*>[^<]*<\/w:t>/g, ''));
+  parts.zip.file(path, xml.replace(/<\/w:ftr>\s*$/, `${numbered ? FOOTER_SIG_PARA : FOOTER_PARA}</w:ftr>`));
 }

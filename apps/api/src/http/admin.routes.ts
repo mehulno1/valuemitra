@@ -10,6 +10,7 @@ import { audit } from '../platform/audit.js';
 import * as firm from '../modules/firm/service.js';
 import { dictionary, fieldHistory, saveField } from '../modules/master/dictionary.js';
 import * as tpl from '../modules/templates/service.js';
+import { fillTemplate, templateKey, versionFieldCodes, versionTemplates } from '../modules/templates/codes.js';
 import { buildRenderData } from '../modules/reports/data.js';
 import { renderDocx } from '../modules/templates/render.js';
 import { body, idParam, multipartFiles } from './util.js';
@@ -143,7 +144,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return db.transaction().execute((tx) => tpl.uploadTemplate(actorOf(req), {
       templateId: fields.templateId ? Number(fields.templateId) : undefined, bankCode: fields.bankCode || undefined, name: fields.name || undefined,
       propertyTypes: fields.propertyTypes ? fields.propertyTypes.split(',') : undefined, branchScope: fields.branchScope ? fields.branchScope.split(',') : undefined,
-      fileName: f.name, buffer: f.buffer, effectiveFrom: fields.effectiveFrom || null, note: fields.note || null,
+      fileName: f.name, buffer: f.buffer, effectiveFrom: fields.effectiveFrom || null, note: fields.note || null, ai: fields.ai !== 'false',
     }, tx));
   });
   app.get('/api/templates/versions/:id', async (req) => tpl.versionDetail(req.auth!.firmId, idParam(req)));
@@ -151,6 +152,20 @@ export async function adminRoutes(app: FastifyInstance) {
     const b = body(req, z.object({ fieldCode: z.string().nullish(), ignore: z.boolean().optional(), newField: z.any().optional() }));
     await db.transaction().execute((tx) => tpl.confirmMapping(actorOf(req), idParam(req), idParam(req, 'mid'), b, tx));
     return tpl.versionDetail(req.auth!.firmId, idParam(req));
+  });
+  app.post('/api/templates/versions/:id/accept-ready', { preHandler: requirePerm('config') }, async (req) => {
+    const n = await db.transaction().execute((tx) => tpl.acceptReady(actorOf(req), idParam(req), tx));
+    return { accepted: n, version: await tpl.versionDetail(req.auth!.firmId, idParam(req)) };
+  });
+  app.post('/api/templates/versions/:id/mappings/:mid/answer', { preHandler: requirePerm('config') }, async (req) => {
+    const b = body(req, z.object({ option: z.number().int().min(0) }));
+    await db.transaction().execute((tx) => tpl.answerMapping(actorOf(req), idParam(req), idParam(req, 'mid'), b.option, tx));
+    return tpl.versionDetail(req.auth!.firmId, idParam(req));
+  });
+  /** Read the draft with the AI again (after a failure, or to start over). */
+  app.post('/api/templates/versions/:id/ai', { preHandler: requirePerm('config') }, async (req) => {
+    await tpl.rerunAi(actorOf(req), idParam(req));
+    return { ok: true };
   });
   app.patch('/api/templates/versions/:id/layout', { preHandler: requirePerm('config') }, async (req) => { await tpl.setLayout(actorOf(req), idParam(req), req.body as any); return { ok: true }; });
   app.post('/api/templates/versions/:id/publish', { preHandler: requirePerm('config') }, async (req) => {
@@ -169,10 +184,17 @@ export async function adminRoutes(app: FastifyInstance) {
     const { compiled } = await tpl.compileVersion(v.firm_id, idParam(req));
     // render with this version's mapping: temporarily treat it as the case's template
     const built = await buildRenderData(assignmentId, req.auth!.firmId, 'preview', db);
-    const maps = await db.selectFrom('template_mappings').select('field_code').distinct().where('template_version_id', '=', idParam(req)).where('field_code', 'is not', null).execute();
     const { caseData } = await import('../modules/casedata/resolver.js');
     const data = await caseData(assignmentId, req.auth!.firmId);
-    for (const m of maps) if (!(m.field_code! in built.data)) built.data[m.field_code!] = data.get(m.field_code!).display ?? '';
+    // fields the AI proposes exist only once published: show where each will be asked
+    const detail = await tpl.versionDetail(req.auth!.firmId, idParam(req));
+    const proposed = new Map<string, any>((detail.ai?.new_fields ?? []).map((f: any) => [f.code, f]));
+    for (const code of await versionFieldCodes(idParam(req))) {
+      if (code in built.data) continue;
+      const f = proposed.get(code);
+      built.data[code] = f && !data.fields.has(code) ? (f.default_text ?? `[New field: ${f.label}${f.sources.includes('site_sheet') ? ' (asked on the site sheet)' : ''}]`) : data.get(code).display ?? '';
+    }
+    for (const t of await versionTemplates(idParam(req))) built.data[templateKey(t.key)] = fillTemplate(t.template, (c) => String(built.data[c] ?? ''));
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     return reply.send(renderDocx(compiled, built.data, built.images));
   });

@@ -77,6 +77,37 @@ export function mergeRuns(p: XEl) {
   for (const t of ts.slice(1)) t.parentNode?.removeChild(t);
 }
 
+/** Append `text` as runs: each ⟪tag⟫ in a run of its own (image tags require it), line breaks as w:br. */
+export function appendRuns(doc: XDoc, parent: XEl, text: string, rPr?: XEl, dropBold = false) {
+  for (const piece of text.split(/(⟪[^⟫]*⟫)/).filter(Boolean)) {
+    const lines = piece.startsWith('⟪') ? [piece] : piece.split('\n');
+    lines.forEach((line, i) => {
+      const r = doc.createElementNS(W_NS, 'w:r');
+      if (rPr) {
+        const rp = rPr.cloneNode(true) as XEl;
+        if (dropBold) children(rp, 'w:b').forEach((b) => rp.removeChild(b));
+        r.appendChild(rp);
+      }
+      if (i > 0) r.appendChild(doc.createElementNS(W_NS, 'w:br'));
+      if (line) {
+        const t = doc.createElementNS(W_NS, 'w:t');
+        t.setAttribute('xml:space', 'preserve');
+        t.textContent = line;
+        r.appendChild(t);
+      }
+      parent.appendChild(r);
+    });
+  }
+}
+
+/** Replace a paragraph's runs with `text`, keeping its paragraph formatting and first run's font. */
+export function setParagraphText(doc: XDoc, p: XEl, text: string) {
+  const rPr = els(p, 'w:r').map((r) => children(r, 'w:rPr')[0]).find(Boolean);
+  const keep = rPr?.cloneNode(true) as XEl | undefined;
+  for (const n of Array.from(p.childNodes as any) as any[]) if (n.nodeName !== 'w:pPr') p.removeChild(n);
+  appendRuns(doc, p, text, keep);
+}
+
 /** Replace a cell's content with one paragraph holding `text`, keeping paragraph and run formatting. */
 export function setCellText(doc: XDoc, tc: XEl, text: string, fallbackFormatFrom?: XEl) {
   const ps = children(tc, 'w:p');
@@ -87,21 +118,8 @@ export function setCellText(doc: XDoc, tc: XEl, text: string, fallbackFormatFrom
   for (const p of ps) tc.removeChild(p);
   const np = doc.createElementNS(W_NS, 'w:p');
   if (pPr) np.appendChild(pPr.cloneNode(true));
-  // one run per tag: image tags must sit alone in their own run
-  for (const piece of text.split(/(⟪[^⟫]*⟫)/).filter(Boolean)) {
-    const r = doc.createElementNS(W_NS, 'w:r');
-    if (rPr) {
-      const rp = rPr.cloneNode(true) as XEl;
-      // value text is never bold just because the label was
-      if (!firstP) children(rp, 'w:b').forEach((b) => rp.removeChild(b));
-      r.appendChild(rp);
-    }
-    const t = doc.createElementNS(W_NS, 'w:t');
-    t.setAttribute('xml:space', 'preserve');
-    t.textContent = piece;
-    r.appendChild(t);
-    np.appendChild(r);
-  }
+  // value text is never bold just because the label was
+  appendRuns(doc, np, text, rPr, !firstP);
   tc.appendChild(np);
 }
 
