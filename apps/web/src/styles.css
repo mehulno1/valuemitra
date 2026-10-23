@@ -159,6 +159,7 @@ table.list td.n { text-align: right; font-variant-numeric: tabular-nums; white-s
 .snip { margin-top: 6px; padding: 8px 10px; border-left: 3px solid var(--stamp); background: var(--sunk); font-family: var(--f-report); font-size: 13.5px; border-radius: 0 4px 4px 0; }
 .flag { margin-top: 7px; padding: 8px 10px; background: var(--warn-soft); color: var(--ink); border-radius: 6px; font-size: 12.5px; display: grid; gap: 6px; }
 .flag b { color: var(--warn); }
+.flag.ok { background: var(--ok-soft); } .flag.ok b { color: var(--ok); }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--muted); margin-bottom: 14px; align-items: center; }
 .ck2 { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; padding: 12px 16px; align-items: start; border-left: 4px solid var(--line); }
 .ck2.crit { border-left-color: var(--crit); } .ck2.warn { border-left-color: var(--warn); } .ck2.ok { border-left-color: var(--ok); } .ck2.info { border-left-color: var(--muted); }
@@ -175,7 +176,7 @@ table.list td.n { text-align: right; font-variant-numeric: tabular-nums; white-s
 .ph .ck { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--line); display: grid; place-items: center; font-size: 11px; font-weight: 700; }
 .ph.sel .ck { background: var(--stamp); border-color: var(--stamp); color: var(--stamp-ink); }
 .ph .bd { position: absolute; top: 6px; left: 6px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
-.bd.dup { background: var(--sunk); color: var(--muted); } .bd.nm { background: var(--warn-soft); color: var(--warn); } .bd.sf { background: var(--ok-soft); color: var(--ok); }
+.bd.dup { background: var(--sunk); color: var(--muted); } .bd.nm { background: var(--warn-soft); color: var(--warn); } .bd.sf { background: var(--ok-soft); color: var(--ok); } .bd.mp { background: var(--stamp-soft); color: var(--stamp); }
 .desk { background: var(--desk); border-radius: var(--r); padding: 24px 16px; overflow-x: auto; }
 .msgbox { padding: 14px 16px; display: grid; gap: 10px; }
 .msgbox pre { white-space: pre-wrap; font-family: var(--f-body); background: var(--sunk); padding: 12px; border-radius: 6px; margin: 0; font-size: 13px; }

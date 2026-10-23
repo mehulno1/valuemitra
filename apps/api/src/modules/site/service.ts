@@ -155,17 +155,30 @@ export async function analysePhotos(assignmentId: number) {
         const { buffer } = await readFile(p.thumb_file_id ?? p.file_id, a.firm_id);
         content.push(textBlock(`Photo ${k + 1}:`), imageBlock(await sharp(buffer).resize({ width: 480, withoutEnlargement: true }).jpeg({ quality: 70 }).toBuffer()));
       }
-      content.push(textBlock(`Caption each photo for a property valuation report in 2-5 words. Prefer these captions when they fit: ${prompts.join(', ')}.`));
+      content.push(textBlock(`Caption each photo for a property valuation report in 2-5 words. Prefer these captions when they fit: ${prompts.join(', ')}. A screenshot of a map app (Google Maps or similar) showing where the property is: mark it as a map and read the pin's latitude and longitude when they are written on the screen.`));
       const r = await structured({
         system: 'You look at site photographs taken by a field engineer at a property being valued for a bank loan in India.',
         content,
-        schema: z.object({ photos: z.array(z.object({ index: z.number().int(), caption: z.string(), is_selfie: z.boolean().describe('The engineer is visible at the site'), names_visible: z.boolean().describe("A board or list showing residents' or members' names is readable") })) }),
+        schema: z.object({ photos: z.array(z.object({
+          index: z.number().int(), caption: z.string(), is_selfie: z.boolean().describe('The engineer is visible at the site'), names_visible: z.boolean().describe("A board or list showing residents' or members' names is readable"),
+          is_map: z.boolean().describe('A screenshot of a map app showing the location (not a photo of the site)'),
+          map_lat: z.number().nullable().describe('Latitude written on the map screenshot (decimal degrees), else null'),
+          map_lng: z.number().nullable().describe('Longitude written on the map screenshot (decimal degrees), else null'),
+        })) }),
         effort: 'low',
       });
       for (const x of r.data.photos) {
         const p = batch[x.index - 1];
         if (!p) continue;
-        await db.updateTable('site_photos').set({ ai_caption: x.caption.slice(0, 200), caption: p.caption ?? x.caption.slice(0, 200), is_selfie: x.is_selfie ? 1 : 0, names_visible: x.names_visible ? 1 : 0 }).where('id', '=', p.id).execute();
+        // a map screenshot prints on the location map page, not among the photographs
+        const map = x.is_map ? 1 : 0;
+        await db.updateTable('site_photos').set({ ai_caption: x.caption.slice(0, 200), caption: p.caption ?? (map ? 'Location map' : x.caption.slice(0, 200)), is_selfie: x.is_selfie ? 1 : 0, names_visible: x.names_visible ? 1 : 0, is_map: map, ...(map ? { selected: 0 } : {}) }).where('id', '=', p.id).execute();
+        if (map && x.map_lat !== null && x.map_lng !== null && Math.abs(x.map_lat) <= 90 && Math.abs(x.map_lng) <= 180) {
+          await writeCandidates(assignmentId, a.firm_id, [
+            { fieldCode: 'PROP.LAT', value: x.map_lat.toFixed(6), sourceType: 'evidence', snippet: 'Read from the map screenshot among the site photos', confidence: 85 },
+            { fieldCode: 'PROP.LNG', value: x.map_lng.toFixed(6), sourceType: 'evidence', snippet: 'Read from the map screenshot among the site photos', confidence: 85 },
+          ]);
+        }
       }
     }
   } catch (e) {
@@ -175,7 +188,7 @@ export async function analysePhotos(assignmentId: number) {
   // default selection when nothing is chosen yet: non-duplicates in prompt order, between min and 12
   const sel = await db.selectFrom('site_photos').select('id').where('assignment_id', '=', assignmentId).where('selected', '=', 1).limit(1).executeTakeFirst();
   if (!sel) {
-    const fresh = await db.selectFrom('site_photos').select(['id', 'duplicate_of']).where('assignment_id', '=', assignmentId).where('source', '!=', 'document').orderBy('taken_at').orderBy('id').execute();
+    const fresh = await db.selectFrom('site_photos').select(['id', 'duplicate_of']).where('assignment_id', '=', assignmentId).where('source', '!=', 'document').where('is_map', '=', 0).orderBy('taken_at').orderBy('id').execute();
     const pick = fresh.filter((p) => !p.duplicate_of).slice(0, 12).map((p) => p.id);
     if (pick.length) await db.updateTable('site_photos').set({ selected: 1 }).where('id', 'in', pick).execute();
     for (const [i, id] of pick.entries()) await db.updateTable('site_photos').set({ sort_order: i }).where('id', '=', id).execute();
@@ -235,7 +248,16 @@ export async function listPhotos(firmId: number, assignmentId: number) {
   const visit = await db.selectFrom('site_visits').select(['id', 'status', 'expires_at', 'submitted_at', 'engineer_note', 'pin_lat', 'pin_lng', 'revoked_at', 'created_at']).where('assignment_id', '=', assignmentId).orderBy('id', 'desc').executeTakeFirst();
   const asg = await db.selectFrom('assignments').select('profile_version_id').where('id', '=', assignmentId).executeTakeFirstOrThrow();
   const profile = asg.profile_version_id ? (await configById(asg.profile_version_id)).payload : {};
-  return { visit: visit ?? null, photos, minPhotos: profile.min_photos ?? 9, maxPhotos: profile.max_photos ?? 18, prompts: profile.photo_prompts ?? [] };
+  // where the property's location came from: photo GPS, a map screenshot (photo or evidence page), or typed in
+  const data = await caseData(assignmentId, firmId);
+  const lat = data.get('PROP.LAT');
+  const mapPages = await db.selectFrom('evidence_captures').select((eb) => eb.fn.countAll<number>().as('n')).where('assignment_id', '=', assignmentId).where('source_kind', '=', 'map').executeTakeFirst();
+  const location = {
+    lat: lat.value ?? null, lng: data.value('PROP.LNG') ?? null, text: data.get('PROP.LATLNG_TEXT').display,
+    source: lat.edited ? 'manual' : lat.source, snippet: lat.snippet,
+    mapPhotos: photos.filter((p) => p.is_map).length, mapPages: Number(mapPages?.n ?? 0),
+  };
+  return { visit: visit ?? null, photos, location, minPhotos: profile.min_photos ?? 9, maxPhotos: profile.max_photos ?? 18, prompts: profile.photo_prompts ?? [] };
 }
 
 export async function updatePhoto(actor: Actor, assignmentId: number, photoId: number, patch: { selected?: boolean; caption?: string }) {

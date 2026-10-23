@@ -188,7 +188,7 @@ export async function buildSbiFormatA(): Promise<Buffer> {
     ]),
     p(''),
     table([
-      tr([cell('Description', { bold: true, width: 40 }), cell('Built-up area', { bold: true, width: 20 }), cell('Rate', { bold: true, width: 20 }), cell('Estimated value', { bold: true, width: 20 })]),
+      tr([cell('Description', { bold: true, width: 40 }), cell('Area', { bold: true, width: 20 }), cell('Rate', { bold: true, width: 20 }), cell('Estimated value', { bold: true, width: 20 })]),
       tr([cell('Present Value of the Flat', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),
       tr([cell('Car Parking', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),
       tr([cell('Interior Decorations', { width: 40 }), cell('', { width: 20 }), cell('', { width: 20 }), cell('', { width: 20 })]),

@@ -10,12 +10,18 @@ const CONFIRM: Record<string, string> = {
   'Adjoining Properties: Boundaries as per Actual': 'PHYS.BOUNDARIES',
 };
 
+// labels whose field changed since an earlier version (the earlier choice would otherwise carry over)
+const FORCE: Record<string, string> = {
+  'Present Value of the Flat | Rate': 'VAL.RATE_TEXT',
+};
+
 /** Bump when the built layout changes; the next seed publishes it as a new version (cases keep theirs). */
-const REV = 3;
+const REV = 4;
 const REV_NOTES: Record<number, string> = {
   1: 'Recreated from the ValueMitra prototype report pages',
   2: 'Format-A flows from page to page; rows and signature blocks are kept together',
   3: 'Annexure pages start on a new page without leaving a blank page; no ready reckoner page without a capture',
+  4: 'Valuation table prints the area and unit the rate is quoted on (carpet, built-up, saleable; sq.ft. or sq.m.)',
 };
 
 export async function seedTemplates() {
@@ -38,6 +44,8 @@ export async function seedTemplates() {
       const code = CONFIRM[m.label_text];
       await confirmMapping(actor, r.versionId, m.id, code ? { fieldCode: code } : { ignore: true }, tx);
     }
+    const all = await tx.selectFrom('template_mappings').select(['id', 'label_text', 'field_code']).where('template_version_id', '=', r.versionId).execute();
+    for (const m of all) if (FORCE[m.label_text] && m.field_code !== FORCE[m.label_text]) await confirmMapping(actor, r.versionId, m.id, { fieldCode: FORCE[m.label_text] }, tx);
     await publishVersion(actor, r.versionId, effective, tx);
     console.log(`SBI Format-A v${r.version} (rev ${REV}): ${r.found} slots, ${r.matched} matched automatically, ${open.length} confirmed by onboarding`);
   });

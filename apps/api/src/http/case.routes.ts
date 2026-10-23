@@ -178,6 +178,7 @@ export async function caseRoutes(app: FastifyInstance) {
   app.post('/api/assignments/:id/valuation', { preHandler: can('val') }, async (req) => {
     const b = body(req, z.object({
       rate: z.number(), reason: z.string().nullish(), landRate: z.number().nullish(),
+      basis: z.enum(['carpet', 'bua', 'saleable', 'measured', 'plot']).optional(), unit: z.enum(['sqft', 'sqm']).optional(), saveDefault: z.boolean().optional(),
       extras: z.array(z.object({ code: z.string(), label: z.string(), qty: z.number().optional(), rate: z.number().optional(), amount: z.number().optional() })).optional(),
     }));
     return val.applyValuation(actorOf(req), idParam(req), b);

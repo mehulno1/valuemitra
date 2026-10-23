@@ -116,8 +116,9 @@ export interface Extra { code: string; label: string; qty?: number; rate?: numbe
 
 export interface ValuationInput {
   method: 'market_comparison' | 'cost' | 'land_building';
-  basisArea: number;
+  basisArea: number;            // in the rate's unit
   rate: number;
+  unitLabel?: string;           // 'sq.ft.' (default) or 'sq.m.'
   extras: Extra[];
   bua: number | null;
   // cost approach
@@ -154,7 +155,7 @@ export function computeValues(v: ValuationInput, r: Rules): ValuesOut {
   let depPct: number | undefined;
   if (v.method === 'market_comparison') {
     unit = v.basisArea * v.rate;
-    lines.push({ label: 'Present value of the unit', working: `${v.basisArea} sq.ft. × Rs. ${v.rate}`, amount: unit });
+    lines.push({ label: 'Present value of the unit', working: `${v.basisArea} ${v.unitLabel ?? 'sq.ft.'} × Rs. ${v.rate}`, amount: unit });
   } else {
     // land + depreciated building (bungalow / L&B); depreciation straight-line by default
     land = (v.plotArea ?? 0) * (v.landRate ?? 0);

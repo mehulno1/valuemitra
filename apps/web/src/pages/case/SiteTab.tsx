@@ -1,5 +1,6 @@
 // Site visit: engineer link, office upload, the inspection sheet's fields, photo selection with
-// checks (geo-tag, time stamps, selfie, duplicates) and the captions used in the report.
+// checks (geo-tag, time stamps, selfie, duplicates), the property's location (photo GPS or a map
+// screenshot found among the pictures) and the captions used in the report.
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { PHOTO_MAX, PHOTO_MIN } from '@vm/shared';
@@ -13,9 +14,10 @@ import type { FieldsResp } from './ExtractedTab';
 interface Visit { id: number; status: string; expires_at: string; submitted_at: string | null; engineer_note: string | null; pin_lat: string | number | null; pin_lng: string | number | null; revoked_at: string | null }
 interface Photo {
   id: number; file_id: number; thumb_file_id: number | null; source: string; taken_at: string | null; lat: string | number | null; lng: string | number | null;
-  duplicate_of: number | null; is_selfie: number; names_visible: number; distance_m: number | null; ai_caption: string | null; caption: string | null; selected: number; sort_order: number;
+  duplicate_of: number | null; is_selfie: number; names_visible: number; distance_m: number | null; ai_caption: string | null; caption: string | null; selected: number; sort_order: number; is_map: number;
 }
-interface SiteResp { visit: Visit | null; photos: Photo[]; minPhotos?: number; maxPhotos?: number }
+interface Location { lat: unknown; lng: unknown; text: string | null; source: string | null; snippet: string | null; mapPhotos: number; mapPages: number }
+interface SiteResp { visit: Visit | null; photos: Photo[]; location?: Location; minPhotos?: number; maxPhotos?: number }
 
 const GEO_LIMIT_M = 40;
 const BUSY = (d: DocRow) => d.status === 'uploaded' || d.status === 'reading';
@@ -121,7 +123,7 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
 
   // ---- photo checks, computed from the data ----
   const dups = photos.filter((p) => p.duplicate_of);
-  const fresh = photos.filter((p) => !p.duplicate_of);
+  const fresh = photos.filter((p) => !p.duplicate_of && !p.is_map);
   const selected = photos.filter((p) => p.selected).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
   const geo = fresh.filter((p) => p.lat !== null && p.lng !== null);
   const far = geo.filter((p) => (p.distance_m ?? 0) > GEO_LIMIT_M);
@@ -208,7 +210,7 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
         ) : (
           <div className="photos">
             {photos.map((p) => {
-              const badge = p.duplicate_of ? { cls: 'dup', t: 'dup' } : p.names_visible ? { cls: 'nm', t: 'Names visible' } : p.is_selfie ? { cls: 'sf', t: 'Selfie' } : null;
+              const badge = p.duplicate_of ? { cls: 'dup', t: 'dup' } : p.is_map ? { cls: 'mp', t: 'Map' } : p.names_visible ? { cls: 'nm', t: 'Names visible' } : p.is_selfie ? { cls: 'sf', t: 'Selfie' } : null;
               return (
                 <button key={p.id} type="button" className={`ph ${p.selected ? 'sel' : ''}`} onClick={() => togglePhoto(p)} disabled={!editable || busy === `ph${p.id}`} aria-pressed={!!p.selected}>
                   <FileImg id={p.thumb_file_id ?? p.file_id} alt={p.caption ?? p.ai_caption ?? 'Site photo'} />
@@ -216,7 +218,7 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
                   <span className="ck">{p.selected ? '✓' : ''}</span>
                   <div className="cap">
                     {p.caption ?? p.ai_caption ?? <span className="muted">No caption</span>}
-                    <small>{!p.taken_at && p.lat === null ? 'Location removed (came via WhatsApp)' : [p.taken_at ? timeOf(p.taken_at) : 'no time', p.distance_m !== null ? `${p.distance_m} m` : p.lat !== null ? `${Number(p.lat).toFixed(4)}N ${Number(p.lng).toFixed(4)}E` : 'no location'].join(' · ')}</small>
+                    <small>{p.is_map ? 'Prints on the location map page' : !p.taken_at && p.lat === null ? 'Location removed (came via WhatsApp)' : [p.taken_at ? timeOf(p.taken_at) : 'no time', p.distance_m !== null ? `${p.distance_m} m` : p.lat !== null ? `${Number(p.lat).toFixed(4)}N ${Number(p.lng).toFixed(4)}E` : 'no location'].join(' · ')}</small>
                   </div>
                 </button>
               );
@@ -224,6 +226,8 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
           </div>
         )}
       </Panel>
+
+      {hasData && site.data?.location && <LocationPanel c={c} loc={site.data.location} editable={editable} refresh={refresh} />}
 
       {selected.length > 0 && (
         <Panel title="Captions in the report" right={<span className="sub">Suggested from what each photo shows</span>} pad={false}>
@@ -260,5 +264,46 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
 
       {officeUpload && <Panel title="Upload more from the office">{officeUpload}</Panel>}
     </div>
+  );
+}
+
+/** Where the property is: read from photo GPS or a map screenshot, or typed in. Prints on the location map page. */
+function LocationPanel({ c, loc, editable, refresh }: { c: TabProps['c']; loc: Location; editable: boolean; refresh: () => void }) {
+  const toast = useToast();
+  const err = useErrorToast();
+  const has = loc.lat !== null && loc.lat !== undefined && loc.lat !== '' && loc.lng !== null && loc.lng !== undefined && loc.lng !== '';
+  const [val, setVal] = useState(has ? `${loc.lat}, ${loc.lng}` : '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setVal(has ? `${loc.lat}, ${loc.lng}` : ''); }, [loc.lat, loc.lng, has]);
+  const from = loc.source === 'manual' ? 'entered by hand' : loc.source === 'site_sheet' ? (loc.snippet ?? 'from the photos\' GPS') : loc.source === 'evidence' ? (loc.snippet ?? 'read from a map screenshot') : loc.source === 'document' ? 'from the documents' : '';
+  const save = async () => {
+    const m = val.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+    if (!m || Math.abs(Number(m[1])) > 90 || Math.abs(Number(m[2])) > 180) return toast('Enter latitude and longitude, for example 19.2136, 72.9785', 'err');
+    setSaving(true);
+    try {
+      await api.put(`/api/assignments/${c.id}/fields/PROP.LAT`, { value: m[1], reason: 'Location corrected on the Site visit tab' });
+      await api.put(`/api/assignments/${c.id}/fields/PROP.LNG`, { value: m[2], reason: 'Location corrected on the Site visit tab' });
+      toast('Location saved. The map page uses it.');
+      refresh();
+    } catch (e) { err(e); } finally { setSaving(false); }
+  };
+  const maps = loc.mapPhotos + loc.mapPages;
+  return (
+    <Panel title="Location" right={<span className="sub">Every picture is scanned for a map screenshot</span>}>
+      <div className="grid gap-3">
+        {has ? (
+          <div className="flag ok"><div>✓ <b>Location found</b>{loc.text ? `: ${loc.text}` : ''}{from ? ` · ${from}` : ''}.{maps ? ` ${maps} map screenshot${maps > 1 ? 's' : ''} print${maps > 1 ? '' : 's'} on the location map page.` : ''}</div></div>
+        ) : (
+          <div className="flag"><div><b>No location found.</b> {maps ? `A map screenshot was found but its coordinates could not be read. ` : 'No map screenshot among the pictures, and the photos carry no GPS. '}Ask {c.engineer_name ?? 'the engineer'} for a Google Maps screenshot of the site, or enter the coordinates below.</div></div>
+        )}
+        <div className="field" style={{ maxWidth: 360 }}>
+          <label>Coordinates (edit if needed)</label>
+          <div className="flex gap-2">
+            <input className="mono min-w-0 flex-1" value={val} disabled={!editable} onChange={(e) => setVal(e.target.value)} placeholder="19.2136, 72.9785" onKeyDown={(e) => e.key === 'Enter' && save()} />
+            {editable && <button className="btn" disabled={saving || val.trim() === (has ? `${loc.lat}, ${loc.lng}` : '')} onClick={save}>{saving ? <span className="dots">Saving</span> : 'Save'}</button>}
+          </div>
+        </div>
+      </div>
+    </Panel>
   );
 }

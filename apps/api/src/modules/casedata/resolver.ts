@@ -73,7 +73,8 @@ export function formatValue(type: string, v: unknown, unit?: string | null): str
     }
     case 'area': {
       const n = Number(v);
-      return Number.isFinite(n) ? `${inr(n)} ${unit === 'sqm' ? 'sq.m.' : 'sq.ft.'}` : String(v);
+      if (!Number.isFinite(n)) return String(v);
+      return unit === 'sqm' ? `${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })} sq.m.` : `${inr(n)} sq.ft.`;
     }
     case 'date':
       return ddmmyyyy(String(v)) || String(v);
@@ -282,6 +283,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
 
   const resolveIdent = (name: string): unknown => {
     if (name.startsWith('DOCSTATE.')) return docState.get(name.slice(9).toLowerCase()) ?? null;
+    // a value stated in a document, on the site sheet or by a person: never one worked out by a derivation
+    if (name.startsWith('STATED.')) { const r = fields.has(name.slice(7)) ? get(name.slice(7)) : null; return r && r.source !== 'derived' ? r.value : null; }
     if (name.startsWith('RULE.')) return Object.hasOwn(rules, name.slice(5)) ? (rules as any)[name.slice(5)] ?? null : null;
     if (fields.has(name)) return get(name).value;
     if (Object.hasOwn(caseValues, name)) return caseValues[name];
@@ -292,12 +295,18 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   /** Arithmetic derivations in words with the values used; text and conditional ones are not explained. */
   const explain = (expr: string, result: unknown): { formula: string | null; ruleKeys: string[] } => {
     const ruleKeys = [...expr.matchAll(/RULE\.([a-z0-9_]+)/g)].map((m) => m[1]);
-    const body = expr.replace(/^\s*round\((.*)\)\s*$/, '$1');
+    let body = expr.replace(/^\s*round\((.*)\)\s*$/, '$1');
+    // coalesce(a, b): explain the alternative that gave the value
+    body = body.replace(/coalesce\(([^()]*(?:\([^()]*\)[^()]*)*)\)/, (whole, args: string) => {
+      const alts = args.split(',').map((a) => a.trim());
+      const hit = alts.find((a) => { const v = evalExpr(a, resolveIdent, EXPR_FNS); return v !== null && v !== undefined && v !== ''; }) ?? alts[0];
+      return whole === body.trim() || !/[+\-*/]/.test(hit) ? hit : `(${hit})`;
+    });
     if (typeof result !== 'number' || !/^[A-Za-z0-9_.\s()+\-*/]+$/.test(body)) return { formula: null, ruleKeys };
     const words = body
       .replace(/[A-Z][A-Z0-9_]*(\.[A-Za-z0-9_]+)+/g, (id) => {
         const v = resolveIdent(id);
-        const label = id.startsWith('RULE.') ? id.slice(5).replace(/_pct$/, ' %').replace(/_/g, ' ') : (fields.get(id)?.label ?? id);
+        const label = id.startsWith('RULE.') ? id.slice(5).replace(/_pct$/, ' %').replace(/_/g, ' ') : (fields.get(id.replace(/^STATED\./, ''))?.label ?? id);
         return `${label} ${typeof v === 'number' ? v.toLocaleString('en-IN') : (v ?? '?')}`;
       })
       .replace(/\s*\/\s*/g, ' ÷ ').replace(/\s*\*\s*/g, ' × ');
@@ -326,7 +335,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
 
   function firstPendingDependency(expr: string): string | null {
     const ids = expr.match(/[A-Z][A-Z0-9_]*(\.[A-Z0-9_]+)+/g) ?? [];
-    for (const id of ids) {
+    for (const raw of ids) {
+      const id = raw.replace(/^STATED\./, '');
       if (!fields.has(id)) continue;
       const r = get(id);
       if (r.state === 'pending') return r.pendingLabel;
@@ -347,7 +357,9 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     stack.add(code);
     try {
       const r = compute(f, base);
-      if (r.value !== null && r.value !== undefined && r.value !== '' && r.display === null) r.display = formatValue(r.type, r.value, f?.unit);
+      // a unit can name a field (VAL.RATE_UNIT): the case's chosen unit
+      const unit = f?.unit && /^[A-Z][A-Z0-9_]*\.[A-Z0-9_]+$/.test(f.unit) ? String(get(f.unit).value ?? 'sqft') : f?.unit;
+      if (r.value !== null && r.value !== undefined && r.value !== '' && r.display === null) r.display = formatValue(r.type, r.value, unit);
       if (r.value === null || r.value === undefined || r.value === '') {
         r.state = f && !(f.applies.includes('*') || f.applies.includes(c.property_type)) ? 'not_applicable' : 'pending';
         if (r.state === 'pending' && f && notProvided(f)) { r.state = 'not_applicable'; r.notProvided = true; r.pendingLabel = 'Not provided'; }

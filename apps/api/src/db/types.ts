@@ -677,6 +677,7 @@ export interface SitePhotos {
   file_id: number;
   flags_json: Json | null;
   id: Generated<number>;
+  is_map: Generated<number>;
   is_selfie: Generated<number>;
   lat: Decimal | null;
   lng: Decimal | null;
@@ -801,6 +802,7 @@ export interface Valuations {
   proposed_hi: Decimal | null;
   proposed_lo: Decimal | null;
   proposed_rate: Decimal | null;
+  rate_unit: Generated<"sqft" | "sqm">;
   reason: string | null;
   rule_version_id: number;
   values_json: Json;

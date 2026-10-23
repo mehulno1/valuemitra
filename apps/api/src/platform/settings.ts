@@ -27,6 +27,7 @@ export interface FirmSettings {
   invoice_note: string;           // printed under the totals
   engineer_fee: number;           // default fee per visit when the engineer has none
   tally_ledgers: { sales: string; cgst: string; sgst: string; igst: string; round_off: string; bank: string; tds: string };
+  area_basis_defaults: Record<string, { basis: string; unit: 'sqft' | 'sqm' }>;   // "SBI:flat" → area and unit the rate is quoted on
 }
 
 export const DEFAULT_SETTINGS: FirmSettings = {
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: FirmSettings = {
   invoice_note: '',
   engineer_fee: 800,
   tally_ledgers: { sales: 'Valuation Fees', cgst: 'Output CGST', sgst: 'Output SGST', igst: 'Output IGST', round_off: 'Round Off', bank: 'Bank Account', tds: 'TDS Receivable' },
+  area_basis_defaults: {},
 };
 
 function decoded(v: string): unknown {

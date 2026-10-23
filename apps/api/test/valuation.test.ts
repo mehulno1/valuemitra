@@ -63,3 +63,30 @@ describe('values', () => {
     expect(v.realizable).toBe(Math.round(5952000 * 0.95));
   });
 });
+
+describe('area basis', () => {
+  // derivations as in the dictionary: STATED.X is a value stated in a document, never one worked out
+  const FIELDS = (async () => (await import('../src/seed/fields')).FIELDS)();
+  const derive = async (stated: Record<string, number>) => {
+    const { evalExpr } = await import('@vm/shared');
+    const f = await FIELDS;
+    const expr = (code: string) => f.find((x: any) => x.code === code)!.derivation!;
+    const res = (n: string) => (n.startsWith('STATED.') ? stated[n.slice(7)] ?? null : n.startsWith('RULE.') ? (r as any)[n.slice(5)] : null);
+    const out: Record<string, unknown> = {};
+    for (const c of ['AREA.CARPET', 'AREA.BUA', 'AREA.SALEABLE']) out[c] = stated[c] ?? evalExpr(expr(c), res);
+    return out;
+  };
+  it('works out the other areas from any one stated area', async () => {
+    expect(await derive({ 'AREA.CARPET': 610 })).toEqual({ 'AREA.CARPET': 610, 'AREA.BUA': 732, 'AREA.SALEABLE': 854 });
+    expect(await derive({ 'AREA.BUA': 732 })).toEqual({ 'AREA.CARPET': 610, 'AREA.BUA': 732, 'AREA.SALEABLE': 854 });
+    expect(await derive({ 'AREA.SALEABLE': 854 })).toEqual({ 'AREA.CARPET': 610, 'AREA.BUA': 732, 'AREA.SALEABLE': 854 });
+  });
+  it('keeps a stated figure over a worked-out one', async () => {
+    expect(await derive({ 'AREA.CARPET': 610, 'AREA.BUA': 750 })).toEqual({ 'AREA.CARPET': 610, 'AREA.BUA': 750, 'AREA.SALEABLE': 854 });
+  });
+  it('prints the working in the chosen unit', () => {
+    const v = computeValues({ method: 'market_comparison', basisArea: 56.67, rate: 150000, unitLabel: 'sq.m.', extras: [], bua: 732 }, r);
+    expect(v.lines[0].working).toBe('56.67 sq.m. × Rs. 150000');
+    expect(v.unit).toBe(8500500);
+  });
+});

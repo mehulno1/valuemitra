@@ -1,5 +1,6 @@
-// Valuation: the valuer adopts a rate (with a reason when it departs from the evidence), adds
-// extras, sees a live preview, applies; the server computes the values with the bank's rules.
+// Valuation: the valuer picks the area and unit the rate is quoted on, adopts a rate (with a reason
+// when it departs from the evidence), adds extras, sees a live preview, applies; the server computes
+// the values with the bank's rules.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { inr } from '@vm/shared';
@@ -10,13 +11,17 @@ import { caseKey, type TabProps } from './context';
 
 interface Extra { code: 'parking' | 'interior' | 'custom' | string; label: string; qty?: number; rate?: number; amount?: number }
 interface Values { unit: number; parking: number; interior: number; others: number; fmv: number; realizable: number; distress: number; insurable: number | null; rent: number; lines: { label: string; working: string; amount: number }[] }
+type Basis = 'carpet' | 'bua' | 'saleable' | 'measured' | 'plot';
+type Unit = 'sqft' | 'sqm';
+interface AreaOpt { key: Basis; label: string; sqft: number | null; how: 'stated' | 'rule' | 'site' | 'none'; src: string }
 interface ValView {
-  method: string; basis: string; basisArea: unknown;
+  method: string; basis: Basis; unit: Unit; basisArea: unknown; choosesBasis: boolean;
+  areas: AreaOpt[]; workedOutFrom: string | null; defaultBasis: { basis: Basis; unit: Unit; saved: boolean };
   proposal: { rate: unknown; lo: unknown; hi: unknown } | null;
   guideline: unknown; agreement: unknown;
-  rules: { realizable_pct: number; distress_pct: number; gv_variation_pct: number; rate_deviation_pct: number; building_cost_per_sqft: number; rental_yield_pct: number; value_rounding_step: number; rent_rounding_step: number };
+  rules: { realizable_pct: number; distress_pct: number; gv_variation_pct: number; rate_deviation_pct: number; building_cost_per_sqft: number; rental_yield_pct: number; value_rounding_step: number; rent_rounding_step: number; loading_pct: number; saleable_factor: number };
   bua: unknown;
-  current: { adopted_rate: unknown; reason: string | null; values: Values; extras: Extra[]; draft_version: number; created_at: string } | null;
+  current: { adopted_rate: unknown; reason: string | null; values: Values; extras: Extra[]; draft_version: number; created_at: string; basis: string; rate_unit: Unit } | null;
   justification: { display: string | null; state: string; pendingLabel: string | null; edited: boolean };
   history: { id: number; adopted_rate: unknown; proposed_rate: unknown; reason: string | null; draft_version: number; created_at: string; by: string | null; fmv: number }[];
 }
@@ -27,7 +32,11 @@ const num = (s: string) => { const d = s.replace(/[^\d.]/g, ''); return d ? Numb
 const roundTo = (x: number, step: number) => Math.round(x / (step || 1)) * (step || 1);
 const rs = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `Rs. ${inr(v)}`);
 const pct = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 1000) / 10)}%`;
-const BASIS: Record<string, string> = { bua: 'Built-up area', carpet: 'Carpet area', plot: 'Plot area' };
+const SQM = 10.7639104;
+const UL: Record<Unit, string> = { sqft: 'sq.ft.', sqm: 'sq.m.' };
+const TAG: Record<AreaOpt['how'], [string, string] | null> = { stated: ['Stated', 'ok'], rule: ['Worked out', 'info'], site: ['Measured', 'warn'], none: null };
+const inUnit = (sqft: number, u: Unit) => (u === 'sqm' ? Math.round((sqft / SQM) * 100) / 100 : sqft);
+const fmtArea = (x: number, u: Unit) => (u === 'sqm' ? x.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : inr(x));
 
 export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const { can } = useAuth();
@@ -41,6 +50,9 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const [pkRate, setPkRate] = useState('');
   const [interior, setInterior] = useState('');
   const [custom, setCustom] = useState<Custom[]>([]);
+  const [basis, setBasis] = useState<Basis>('bua');
+  const [unit, setUnit] = useState<Unit>('sqft');
+  const [saveDefault, setSaveDefault] = useState(false);
   const [seeded, setSeeded] = useState<string | null>(null);
 
   // seed the form from the current valuation (or the proposal) once per server version
@@ -51,7 +63,14 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
     if (seeded === key) return;
     setSeeded(key);
     const cur = d.current;
-    setRate(String(n(cur?.adopted_rate) ?? n(d.proposal?.rate) ?? ''));
+    setBasis(d.basis);
+    setUnit(d.unit);
+    setSaveDefault(false);
+    const opt = d.areas.find((x) => x.key === d.basis);
+    const bua0 = n(d.bua);
+    // evidence is per sq.ft. built-up: convert it to the chosen area and unit
+    const ev = n(d.proposal?.rate) !== null && opt?.sqft && bua0 ? Math.round((n(d.proposal!.rate)! * bua0 / inUnit(opt.sqft, d.unit)) / 100) * 100 : n(d.proposal?.rate);
+    setRate(String(n(cur?.adopted_rate) ?? ev ?? ''));
     setReason(cur?.reason ?? '');
     const ex = cur?.extras ?? [];
     const pk = ex.find((e) => e.code === 'parking');
@@ -63,7 +82,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   }, [q.data, seeded]);
 
   const apply = useMutation({
-    mutationFn: (b: { rate: number; reason: string | null; extras: Extra[] }) => api.post<{ values: Values; draftVersion: number }>(`/api/assignments/${c.id}/valuation`, b),
+    mutationFn: (b: { rate: number; reason: string | null; extras: Extra[]; basis?: Basis; unit?: Unit; saveDefault?: boolean }) => api.post<{ values: Values; draftVersion: number }>(`/api/assignments/${c.id}/valuation`, b),
     onSuccess: (r) => { toast(`Valuation applied: FMV Rs. ${inr(r.values.fmv)}. Draft v${r.draftVersion}.`); setSeeded(null); refresh(); },
     onError: err,
   });
@@ -80,21 +99,28 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   if (q.isLoading) return <Loading />;
   if (!d) return <Empty title="Valuation could not be loaded" />;
 
-  const area = n(d.basisArea);
+  const opt = d.areas.find((x) => x.key === basis) ?? null;
+  const area = d.choosesBasis ? (opt?.sqft ? inUnit(opt.sqft, unit) : null) : n(d.basisArea);
+  const ul = UL[d.choosesBasis ? unit : 'sqft'];
   const prop = d.proposal ? { rate: n(d.proposal.rate)!, lo: n(d.proposal.lo), hi: n(d.proposal.hi) } : null;
+  const bua = n(d.bua);
+  // evidence-backed rate (per sq.ft. built-up) converted to the chosen area and unit
+  const factor = area && bua ? bua / area : 1;
+  const evRate = prop ? Math.round((prop.rate * factor) / 100) * 100 : null;
   const gv = n(d.guideline);
   const agr = n(d.agreement);
   const r = d.rules;
   const cur = d.current;
   const canApply = can('val') && !locked;
   const rateN = num(rate);
-  const diff = prop && rateN ? (rateN - prop.rate) / prop.rate : 0;
+  // compare like with like: the adopted rate as its equivalent per sq.ft. built-up
+  const rateBua = rateN && area && bua ? (area * rateN) / bua : rateN;
+  const diff = prop && rateN ? (rateBua - prop.rate) / prop.rate : 0;
   const differs = !!prop && !!rateN && Math.abs(diff) > 0.001;
   const outside = !!prop && !!rateN && Math.abs(diff) * 100 > r.rate_deviation_pct;
 
   // live preview with the same rules and rounding steps the server applies
   const extrasTotal = extras.reduce((t, e) => t + (e.amount ?? (e.qty ?? 1) * (e.rate ?? 0)), 0);
-  const bua = n(d.bua);
   const step = r.value_rounding_step || 1;
   const pv = area && rateN ? (() => {
     const unit = area * rateN;
@@ -104,13 +130,24 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const roundingNote = `values to the nearest Rs. ${inr(step)}, rent to the nearest Rs. ${inr(r.rent_rounding_step || 1)} (${c.bank_code} rule)`;
 
   const submit = () => {
-    if (!(rateN >= 100)) return toast('Enter a rate per sq.ft., for example 12800', 'err');
-    if (!area) return toast('The area for valuation is not known yet', 'err');
+    if (!(rateN > 0)) return toast(`Enter the rate per ${ul}, for example ${unit === 'sqm' ? '137800' : '12800'}`, 'err');
+    if (!area) return toast(`The ${(opt?.label ?? 'area for valuation').toLowerCase()} is not known yet`, 'err');
     if (outside && !reason.trim()) return toast(`Record the reason: the rate is more than ${r.rate_deviation_pct}% away from the evidence-backed rate`, 'err');
-    apply.mutate({ rate: rateN, reason: reason.trim() || null, extras });
+    apply.mutate({ rate: rateN, reason: reason.trim() || null, extras, ...(d.choosesBasis ? { basis, unit, saveDefault } : {}) });
   };
 
-  const changed = !!cur && (rateN !== n(cur.adopted_rate) || (reason.trim() || null) !== (cur.reason || null) || JSON.stringify(extras) !== JSON.stringify(cur.extras ?? []));
+  /** Switching the area or unit keeps the value: the rate is converted to the new basis. */
+  const choose = (b: Basis, u: Unit) => {
+    const next = d.areas.find((x) => x.key === b);
+    if (!next?.sqft) return;
+    if (area && rateN) setRate(String(Math.round((area * rateN) / inUnit(next.sqft, u))));
+    setBasis(b);
+    setUnit(u);
+  };
+
+  const changed = !!cur && (rateN !== n(cur.adopted_rate) || (reason.trim() || null) !== (cur.reason || null) || JSON.stringify(extras) !== JSON.stringify(cur.extras ?? [])
+    || (d.choosesBasis && (basis !== cur.basis || unit !== cur.rate_unit)) || saveDefault);
+  const ptype = c.property_type.replace(/_/g, ' ');
   const sv = cur?.values;
 
   return (
@@ -128,22 +165,59 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="kv">
                 <div className="k">Basis</div>
-                {area ? <div className="v">{inr(area)} sq.ft.</div> : <div className="mt-1"><Pending label="Area awaiting documents" /></div>}
-                <div className="s">{BASIS[d.basis] ?? d.basis}{d.method !== 'market_comparison' ? ` · ${d.method.replace(/_/g, ' ')}` : ' · market comparison'}</div>
+                {area ? <div className="v">{fmtArea(area, unit)} {ul}</div> : <div className="mt-1"><Pending label="Area awaiting documents" /></div>}
+                <div className="s">{opt?.label ?? 'Area'}{d.method !== 'market_comparison' ? ` · ${d.method.replace(/_/g, ' ')}` : ' · market comparison'}</div>
               </div>
               <div className="kv">
                 <div className="k">Evidence-backed rate</div>
-                {prop ? <div className="v">Rs. {inr(prop.rate)}</div> : <div className="mt-1"><Pending label="Awaiting market evidence" /></div>}
-                {prop && prop.lo !== null && <div className="s">range Rs. {inr(prop.lo)} to {inr(prop.hi)}</div>}
+                {prop ? <div className="v">Rs. {inr(evRate)} <span className="text-[13px] font-normal">per {ul}</span></div> : <div className="mt-1"><Pending label="Awaiting market evidence" /></div>}
+                {prop && (basis !== 'bua' || unit !== 'sqft'
+                  ? <div className="s">Rs. {inr(prop.rate)} per sq.ft. built-up{basis !== 'bua' && opt?.sqft && bua ? `, × ${(bua / opt.sqft).toFixed(3)} for ${opt?.label.toLowerCase()}` : ''}{unit === 'sqm' ? ', × 10.7639 for sq.m.' : ''}</div>
+                  : prop.lo !== null && <div className="s">range Rs. {inr(prop.lo)} to {inr(prop.hi)}</div>)}
               </div>
             </div>
 
+            {d.choosesBasis && d.method === 'market_comparison' && (
+              <div>
+                <div className="eyebrow mb-1">Area used for valuation</div>
+                <p className="sub mb-2 mt-0">One stated area is enough: the others are worked out by {c.bank_code}'s rule (built-up = carpet × {(1 + (r.loading_pct ?? 0) / 100).toFixed(2)}, saleable = carpet × {r.saleable_factor}). A stated figure always wins. Pick the area the rate is quoted on.</p>
+                <div className="grid gap-1.5" role="radiogroup" aria-label="Area used for valuation">
+                  {d.areas.map((a) => {
+                    const tag = TAG[a.how];
+                    const off = !a.sqft || !canApply;
+                    return (
+                      <label key={a.key} className={`flex items-start gap-2.5 rounded-md border px-3 py-2 ${basis === a.key ? 'border-stamp bg-stamp-soft' : 'border-line'} ${off ? 'opacity-60' : 'cursor-pointer'}`}>
+                        <input type="radio" name="basis" className="mt-1" checked={basis === a.key} disabled={off} onChange={() => choose(a.key, unit)} />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">{a.label}{tag && <span className={`sev ${tag[1]}`}>{tag[0]}</span>}</span>
+                          <span className="sub block text-[12px]">{a.src}</span>
+                        </span>
+                        <span className="mono whitespace-nowrap text-[13px]">{a.sqft ? `${fmtArea(inUnit(a.sqft, unit), unit)} ${UL[unit]}` : '—'}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex gap-1" role="group" aria-label="Rate unit">
+                    {(['sqft', 'sqm'] as Unit[]).map((u) => <button key={u} type="button" className={`btn sm ${unit === u ? 'pri' : 'ghost'}`} disabled={!canApply} aria-pressed={unit === u} onClick={() => choose(basis, u)}>per {UL[u]}</button>)}
+                  </div>
+                  {canApply && (
+                    <label className="flex items-center gap-2 text-[13px]">
+                      <input type="checkbox" checked={saveDefault} onChange={(e) => setSaveDefault(e.target.checked)} />
+                      Use this basis by default for {c.bank_code} {ptype}s
+                    </label>
+                  )}
+                </div>
+                {d.defaultBasis.saved && <div className="sub mt-1 text-[12px]">Default for {c.bank_code} {ptype}s: {d.areas.find((x) => x.key === d.defaultBasis.basis)?.label.toLowerCase()}, per {UL[d.defaultBasis.unit]}.</div>}
+              </div>
+            )}
+
             <div className="field">
-              <label>Rate adopted, Rs. per sq.ft. {(BASIS[d.basis] ?? 'built-up').toLowerCase()}</label>
+              <label>Rate adopted, Rs. per {ul} of {(opt?.label ?? 'built-up area').toLowerCase()}</label>
               <input className="mono" inputMode="numeric" value={rate} disabled={!canApply} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 12800" style={{ fontSize: 18 }} />
               {differs && (
                 <div className={`hint ${outside && !reason.trim() ? 'text-crit' : ''}`}>
-                  Adopted rate is {Math.abs(Math.round(diff * 1000) / 10)}% {diff > 0 ? 'above' : 'below'} the evidence-backed rate. {reason.trim() ? 'Reason recorded.' : outside ? 'Record the reason below.' : 'No reason recorded yet.'}
+                  Adopted rate is {Math.abs(Math.round(diff * 1000) / 10)}% {diff > 0 ? 'above' : 'below'} the evidence-backed rate{basis !== 'bua' || unit !== 'sqft' ? ` (Rs. ${inr(Math.round(rateBua))} per sq.ft. built-up)` : ''}. {reason.trim() ? 'Reason recorded.' : outside ? 'Record the reason below.' : 'No reason recorded yet.'}
                 </div>
               )}
             </div>
@@ -192,7 +266,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
             <Panel title="Preview" right={<span className="sub">before applying · {roundingNote}</span>}>
               <table className="list">
                 <tbody>
-                  <Row label="Fair market value" working={`${inr(area)} × Rs. ${inr(rateN)}${extrasTotal ? ` + extras Rs. ${inr(extrasTotal)}` : ''}`} value={pv.fmv} strong />
+                  <Row label="Fair market value" working={`${fmtArea(area!, unit)} ${ul} × Rs. ${inr(rateN)}${extrasTotal ? ` + extras Rs. ${inr(extrasTotal)}` : ''}`} value={pv.fmv} strong />
                   <Row label={`Realizable · ${r.realizable_pct}%`} working={`FMV × ${r.realizable_pct}%`} value={pv.realizable} />
                   <Row label={`Distress · ${r.distress_pct}%`} working={`FMV × ${r.distress_pct}%`} value={pv.distress} />
                   <Row label="Insurable" working={`Rs. ${inr(r.building_cost_per_sqft)} × BUA ${inr(bua)} sq.ft.`} value={pv.insurable} />
@@ -201,10 +275,17 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
               </table>
               {gv !== null && <Variation label="guideline value" fmv={pv.fmv} base={gv} limit={r.gv_variation_pct} />}
               {agr !== null && <Variation label="agreement value" fmv={pv.fmv} base={agr} />}
+              {d.choosesBasis && opt && (
+                <p className="sub mb-0 mt-3 border-t border-line pt-3">
+                  Prints in the report as: <b>{opt.label} {fmtArea(area!, unit)} {ul} × Rs. {inr(rateN)}/- per {ul} = Rs. {inr(roundTo(pv.unit, step))}/-</b>
+                  {opt.how === 'rule' && <> with the note “(worked out from the {d.workedOutFrom ?? 'stated area'} as per bank norms)”</>}
+                  {bua && basis !== 'bua' ? <> · equivalent Rs. {inr(Math.round(pv.unit / bua))} per sq.ft. built-up</> : null}
+                </p>
+              )}
             </Panel>
           )}
 
-          <Panel title="Values in the report" right={cur && <span className="sub">Rs. {inr(n(cur.adopted_rate))} per sq.ft. · draft v{cur.draft_version}</span>} pad={!sv}>
+          <Panel title="Values in the report" right={cur && <span className="sub">Rs. {inr(n(cur.adopted_rate))} per {UL[cur.rate_unit ?? 'sqft']} · draft v{cur.draft_version}</span>} pad={!sv}>
             {!sv ? <p className="sub m-0">No valuation applied yet. Values show as pending in the report until the valuer applies a rate.</p> : (
               <>
                 <div className="tablewrap">
@@ -212,7 +293,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
                     <thead><tr><th>Value</th><th>Working</th><th className="text-right">Rs.</th></tr></thead>
                     <tbody>
                       {sv.lines.map((l, i) => <Row key={i} label={l.label} working={l.working.replace(/Rs\. (\d+)/g, (_, x) => `Rs. ${inr(Number(x))}`)} value={l.amount} />)}
-                      <Row label="Fair market value" working={sv.lines.length > 1 ? 'Total of the above' : `${inr(area)} sq.ft. × Rs. ${inr(n(cur!.adopted_rate))}`} value={sv.fmv} strong />
+                      <Row label="Fair market value" working={sv.lines.length > 1 ? 'Total of the above' : sv.lines[0]?.working ?? ''} value={sv.fmv} strong />
                       <Row label={`Realizable · ${r.realizable_pct}%`} working={`FMV × ${r.realizable_pct}% (${c.bank_code} rule)`} value={sv.realizable} />
                       <Row label={`Distress · ${r.distress_pct}%`} working={`FMV × ${r.distress_pct}%`} value={sv.distress} />
                       <Row label="Guideline" working="As per Index II" value={gv} />

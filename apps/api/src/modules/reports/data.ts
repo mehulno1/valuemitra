@@ -140,6 +140,9 @@ async function annexPages(data: CaseData, firmId: number, docGrid: number, image
       for (const m of await mapImages(firmId, lat, lng)) mapRows.push({ a_img: await add(m.buffer, 600, 395), a_cap: m.label });
     } catch { mapNote = `${latlng} (map image unavailable)`; }
   }
+  // map screenshots recognised among the site photos
+  const mapPhotos = await tx.selectFrom('site_photos').select(['file_id']).where('assignment_id', '=', data.case.id).where('is_map', '=', 1).where('duplicate_of', 'is', null).orderBy('id').execute();
+  for (const m of mapPhotos) mapCaps.push({ buf: (await readFile(m.file_id, firmId, tx)).buffer, cap: 'Location map (screenshot from the site visit)' });
   mapRows = [...mapRows, ...(await rowsOf(mapCaps))];
   for (const [i, rows] of chunk(mapRows, 2).entries()) pages.push({ title: i ? 'LOCATION MAP (contd.)' : 'LOCATION MAP', note: i ? '' : mapNote, g1: { rows } });
   if (!mapRows.length && mapNote) pages.push({ title: 'LOCATION MAP', note: mapNote });

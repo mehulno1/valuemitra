@@ -139,7 +139,6 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                     <option value="igr">IGR search (Index II)</option>
                     <option value="listing">Listing page</option>
                     <option value="rr">Ready reckoner page (printed as is)</option>
-                    <option value="map">Location map (printed as is)</option>
                     <option value="other">Other</option>
                   </select>
                 </div>
@@ -158,7 +157,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                 <div className="sub">{PRINT_ONLY.has(kind) ? 'Printed in the report as captured; not read into comparables.' : 'One file per captured page. Each entry on the page becomes a comparable.'}</div>
               </FileDrop>
               {kind === 'rr' && <p className="sub m-0">The rate above is looked up from the property's village. To print the official page: igrmaharashtra.gov.in → e-ASR (ready reckoner) → year, district, taluka and village → screenshot the rate table, then drop it here.</p>}
-              {kind === 'map' && <p className="sub m-0">A map is drawn from the site photos' GPS position when they have one. To add your own, pin the property in Google Maps, take a screenshot showing the pin and nearby landmarks, then drop it here.</p>}
+              {kind === 'other' && <p className="sub m-0">A Google Maps screenshot is recognised automatically, here or among the site photos: its pin gives the coordinates and it prints on the location map page.</p>}
             </div>
           ) : <p className="sub">{locked ? 'The report is signed and locked.' : 'You do not have permission to add evidence.'}</p>}
         </Panel>

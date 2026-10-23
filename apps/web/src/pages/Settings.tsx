@@ -12,6 +12,7 @@ import { Field, FileImg, Loading, Modal, PageHead, Panel, ago, fmtDate, useError
 interface FirmSettings {
   case_pattern: string; report_pattern: string; file_pattern: string; letterhead_file_id: number | null; signature_file_id: number | null; seal_file_id: number | null;
   doc_grid: number; photo_grid: number; evidence_per_page: number; retention_years: number; kyc_policy: 'never' | 'delete_30' | 'delete_90'; engineer_link_hours: number; place: string;
+  area_basis_defaults?: Record<string, { basis: string; unit: 'sqft' | 'sqm' }>;
 }
 interface FirmProfile {
   firm: { id: number; code: string; name: string; address: string | null; city: string | null; state_code: string | null; gstin: string | null; phone: string | null; email: string | null; shared_pool_consent: number };
@@ -199,6 +200,7 @@ function NumbersSection() {
 
 // ---- 4. valuation rules (versioned rule set) ---------------------------------------------------------
 const RULES: { k: string; label: string; hint?: string; step?: string }[] = [
+  { k: 'realizable_pct', label: 'Realizable value, % of FMV', step: '0.5' },
   { k: 'distress_pct', label: 'Distress value, % of FMV' },
   { k: 'loading_pct', label: 'Loading on carpet, %', hint: 'Built-up = carpet × (1 + loading)' },
   { k: 'saleable_factor', label: 'Saleable factor', hint: 'Saleable = carpet × factor', step: '0.01' },
@@ -231,6 +233,7 @@ function RulesSection() {
   const [p, setP, dirty] = useForm<any>(base?.payload);
   const [note, setNote] = useState('');
   const [eff, setEff] = useState(today);
+  const [scope, setScope] = useState('');
   const ro = !can('set') && !can('config');
 
   const saveDraft = useMutation({
@@ -254,8 +257,15 @@ function RulesSection() {
   const banks = p.banks ?? {};
   const num = (v: string) => (v === '' ? null : Number(v));
   const setDef = (k: string, v: string) => setP({ ...p, defaults: { ...defs, [k]: num(v) } });
-  const setBank = (code: string, v: string) => setP({ ...p, banks: { ...banks, [code]: { ...(banks[code] ?? {}), realizable_pct: num(v) } } });
+  // a bank's own figure overrides the default; clearing it goes back to the default
+  const setBank = (code: string, k: string, v: string) => {
+    const own = { ...(banks[code] ?? {}) };
+    if (v === '') delete own[k]; else own[k] = num(v);
+    setP({ ...p, banks: { ...banks, [code]: own } });
+  };
   const bankList: Bank[] = meta.data?.banks ?? Object.keys(banks).map((code, i) => ({ id: i, code, name: code }));
+  const label = (k: string) => RULES.find((r) => r.k === k)?.label.replace(/,.*$/, '') ?? k.replace(/_/g, ' ');
+  const overrides = (code: string) => Object.entries(banks[code] ?? {}).filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object');
 
   return (
     <div className="cols">
@@ -266,17 +276,24 @@ function RulesSection() {
             {draft ? <span className="sev warn">Editing draft v{draft.version}</span> : <span className="sev ok">Showing active v{active?.version}{active?.firm_id === null ? ' (platform default)' : ''}</span>}
             {dirty && <span className="sub">Unsaved changes</span>}
           </div>
-          <h3>Realizable value, % of FMV, by bank</h3>
-          {bankList.map((b) => (
-            <Field key={b.code} label={`${b.short_name ?? b.code}`} hint={banks[b.code] ? undefined : `Uses the default (${defs.realizable_pct ?? '—'}%)`}>
-              <input type="number" step="0.5" value={banks[b.code]?.realizable_pct ?? ''} placeholder={String(defs.realizable_pct ?? '')} onChange={(e) => setBank(b.code, e.target.value)} disabled={ro} />
-            </Field>
-          ))}
-          <Field label="Default realizable %" hint="For banks without their own figure"><input type="number" step="0.5" value={defs.realizable_pct ?? ''} onChange={(e) => setDef('realizable_pct', e.target.value)} disabled={ro} /></Field>
-          <h3>Rates and factors</h3>
-          {RULES.map((r) => (
-            <Field key={r.k} label={r.label} hint={r.hint}><input type="number" step={r.step ?? '1'} value={defs[r.k] ?? ''} onChange={(e) => setDef(r.k, e.target.value)} disabled={ro} /></Field>
-          ))}
+          <Field label="Rules for" full hint={scope ? `Blank boxes use the default. Only ${scope}'s reports use the figures entered here.` : 'The default for every bank. A bank can set its own figure for any rule.'}>
+            <select value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="">All banks (default)</option>
+              {bankList.map((b) => <option key={b.code} value={b.code}>{b.short_name ?? b.code}{overrides(b.code).length ? ` · ${overrides(b.code).length} own` : ''}</option>)}
+            </select>
+          </Field>
+          <h3>{scope ? `${scope}: rates and factors` : 'Rates and factors'}</h3>
+          {RULES.map((r) => {
+            const own = scope ? banks[scope]?.[r.k] : undefined;
+            const has = own !== undefined && own !== null;
+            return (
+              <Field key={r.k} label={r.label} hint={scope ? (has ? `${scope}'s own figure (default ${defs[r.k] ?? '—'})` : `Uses the default (${defs[r.k] ?? '—'})`) : r.hint}>
+                {scope
+                  ? <input type="number" step={r.step ?? '1'} value={has ? own : ''} placeholder={String(defs[r.k] ?? '')} onChange={(e) => setBank(scope, r.k, e.target.value)} disabled={ro} />
+                  : <input type="number" step={r.step ?? '1'} value={defs[r.k] ?? ''} onChange={(e) => setDef(r.k, e.target.value)} disabled={ro} />}
+              </Field>
+            );
+          })}
           {!ro && (
             <>
               <Field label="Change note" full><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why are the rules changing?" /></Field>
@@ -308,10 +325,49 @@ function RulesSection() {
               </div>
             ))}
           </div>
-          <p className="sub mb-0 mt-3 border-t border-line pt-3">New cases use the published version; existing cases keep the version they were created with. Each bank's report uses its own realizable % automatically.</p>
+          <p className="sub mb-0 mt-3 border-t border-line pt-3">New cases use the published version; existing cases keep the version they were created with. Each bank's report uses its own figures automatically.</p>
+        </Panel>
+        <AreaBasisPanel ro={ro} />
+        <Panel title="Banks with their own figures">
+          {bankList.filter((b) => overrides(b.code).length).length === 0 ? <p className="sub m-0">None: every bank uses the default.</p> : (
+            <div className="grid gap-2 text-[13px]">
+              {bankList.filter((b) => overrides(b.code).length).map((b) => (
+                <button key={b.code} type="button" className="linkbtn text-left" onClick={() => setScope(b.code)}>
+                  <b>{b.short_name ?? b.code}</b>: {overrides(b.code).map(([k, v]) => `${label(k)} ${v}`).join(' · ')}
+                </button>
+              ))}
+            </div>
+          )}
         </Panel>
       </aside>
     </div>
+  );
+}
+
+const BASIS_LABEL: Record<string, string> = { carpet: 'carpet area', bua: 'built-up area', saleable: 'saleable area', measured: 'carpet as measured at site', plot: 'plot area' };
+
+/** Area and unit each bank's rate is quoted on, set from the Valuation tab ("Use this basis by default"). */
+function AreaBasisPanel({ ro }: { ro: boolean }) {
+  const firm = useFirm();
+  const save = useFirmSave();
+  const defs = firm.data?.settings.area_basis_defaults ?? {};
+  const rows = Object.entries(defs);
+  return (
+    <Panel title="Area basis by default">
+      {!rows.length ? <p className="sub m-0">None set: cases start on the profile's area (built-up), per sq.ft. Tick “Use this basis by default” on a case's Valuation tab to set one.</p> : (
+        <div className="grid gap-2 text-[13px]">
+          {rows.map(([k, v]) => {
+            const [bank, type] = k.split(':');
+            return (
+              <div key={k} className="flex items-center justify-between gap-2">
+                <span><b>{bank}</b> {type.replace(/_/g, ' ')}s: per {v.unit === 'sqm' ? 'sq.m.' : 'sq.ft.'} of {BASIS_LABEL[v.basis] ?? v.basis}</span>
+                {!ro && <button className="btn sm ghost" disabled={save.isPending} onClick={() => { const next = { ...defs }; delete next[k]; save.mutate({ settings: { area_basis_defaults: next } }); }}>Remove</button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
   );
 }
 

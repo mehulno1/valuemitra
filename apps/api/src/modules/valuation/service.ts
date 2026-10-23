@@ -13,6 +13,8 @@ import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
 import { readFile, saveFile } from '../../platform/storage.js';
 import { DOCS, requireKind } from '../../lib/sniff.js';
+import { getSettings, setSettings } from '../../platform/settings.js';
+import { inr } from '@vm/shared';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { assertCase } from '../documents/service.js';
@@ -89,6 +91,11 @@ const EntrySchema = z.object({
     price: z.number().describe('Price / consideration in rupees'),
     floor: z.number().int().nullable(), total_floors: z.number().int().nullable(), has_lift: z.boolean().nullable(), building_age: z.number().int().nullable(), bhk: z.string().nullable(),
   })),
+  map: z.object({
+    is_map: z.boolean().describe('The pages are a screenshot of a map app showing a location pin'),
+    lat: z.number().nullable().describe('Latitude of the pin when written on the screen (decimal degrees)'),
+    lng: z.number().nullable().describe('Longitude of the pin when written on the screen (decimal degrees)'),
+  }),
 });
 
 async function readCapture(captureId: number) {
@@ -100,7 +107,7 @@ async function readCapture(captureId: number) {
   const small = await Promise.all(images.map((i) => sharp(i).resize({ width: 1400, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()));
   const ocr = await ocrImages(small);
   const content = small.flatMap((img, i) => [textBlock(`Captured page ${i + 1}:`), imageBlock(img), textBlock(`OCR of page ${i + 1}:\n${ocr[i]?.text.slice(0, 4000) ?? ''}`)]);
-  content.push(textBlock('List every property entry on these pages: registered sales (IGR / Index II search results) and property listings. Skip ads and unrelated entries.'));
+  content.push(textBlock('List every property entry on these pages: registered sales (IGR / Index II search results) and property listings. Skip ads and unrelated entries. If the pages are a map screenshot showing a location pin, say so and read the coordinates when they are written on the screen.'));
   const r = await structured({ system: 'You read captured pages of Indian property registration searches (IGR Maharashtra) and listing sites (99acres, MagicBricks, Housing) for a valuer collecting comparable evidence.', content, schema: EntrySchema, effort: 'medium' });
   const loading = (await caseData(a.id, a.firm_id)).rules.loading_pct ?? 20;
   let n = 0;
@@ -119,9 +126,18 @@ async function readCapture(captureId: number) {
     await db.insertInto('case_comparables').values({ assignment_id: a.id, comparable_id: Number(comp.insertId), capture_id: captureId, adjustments: toJson([]), adjusted_rate: 0, weight: 0, weight_label: 'Low' }).execute();
     n++;
   }
-  await db.updateTable('evidence_captures').set({ status: 'read' }).where('id', '=', captureId).execute();
+  // a map screenshot dropped with the evidence: it prints on the location map page and gives the coordinates
+  const m = r.data.map;
+  const isMap = m.is_map && n === 0;
+  if (m.is_map && m.lat !== null && m.lng !== null && Math.abs(m.lat) <= 90 && Math.abs(m.lng) <= 180) {
+    await writeCandidates(a.id, a.firm_id, [
+      { fieldCode: 'PROP.LAT', value: m.lat.toFixed(6), sourceType: 'evidence', snippet: `Read from the map screenshot${c.source_name ? ` (${c.source_name})` : ''}`, confidence: 85 },
+      { fieldCode: 'PROP.LNG', value: m.lng.toFixed(6), sourceType: 'evidence', snippet: `Read from the map screenshot${c.source_name ? ` (${c.source_name})` : ''}`, confidence: 85 },
+    ]);
+  }
+  await db.updateTable('evidence_captures').set({ status: 'read', ...(isMap ? { source_kind: 'map' as const, in_report: 1 } : {}) }).where('id', '=', captureId).execute();
   await refreshEvidence(a.id, a.firm_id);
-  await audit(systemActor(a.firm_id), { entityType: 'evidence', entityId: captureId, assignmentId: a.id, action: 'evidence.read', summary: `${n} comparable(s) read from the captured page.` });
+  await audit(systemActor(a.firm_id), { entityType: 'evidence', entityId: captureId, assignmentId: a.id, action: 'evidence.read', summary: isMap ? `Location map recognised in the captured page${m.lat !== null ? `; pin at ${m.lat.toFixed(4)}, ${m.lng?.toFixed(4)}` : ''}. Printed on the location map page.` : `${n} comparable(s) read from the captured page.` });
   await publish({ type: 'evidence.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { captureId } });
 }
 
@@ -231,25 +247,96 @@ export async function overrideComparable(actor: Actor, assignmentId: number, ccI
   await publish({ type: 'value.changed', firmId: actor.firmId, entityType: 'assignment', entityId: assignmentId, payload: { evidence: ccId } });
 }
 
-/** The valuer applies a rate; values are computed by the profile's method and the bank's rules. */
-export async function applyValuation(actor: Actor, assignmentId: number, input: { rate: number; reason?: string | null; extras?: Extra[]; landRate?: number | null }) {
+// ---- area basis and rate unit -------------------------------------------------------------------
+export type Basis = 'carpet' | 'bua' | 'saleable' | 'measured' | 'plot';
+export type RateUnit = 'sqft' | 'sqm';
+export const SQM = 10.7639104;
+const BASES: Record<Basis, { label: string; field: string }> = {
+  carpet: { label: 'Carpet area', field: 'AREA.CARPET' },
+  bua: { label: 'Built-up area', field: 'AREA.BUA' },
+  saleable: { label: 'Saleable area', field: 'AREA.SALEABLE' },
+  measured: { label: 'Carpet area as measured at site', field: 'AREA.MEASURED' },
+  plot: { label: 'Plot / land area', field: 'AREA.PLOT' },
+};
+const UNIT_LABEL: Record<RateUnit, string> = { sqft: 'sq.ft.', sqm: 'sq.m.' };
+const DOC_NAME: Record<string, string> = { agreement: 'agreement', index2: 'Index II', oc: 'O.C.', cc: 'C.C.', allotment: 'allotment letter' };
+const isBasis = (x: unknown): x is Basis => typeof x === 'string' && Object.hasOwn(BASES, x);
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** Every area the rate can be quoted on: stated in a document, worked out by the bank's rule, or measured at site. */
+function areaOptions(data: CaseData) {
+  return (Object.keys(BASES) as Basis[]).map((k) => {
+    const r = data.get(BASES[k].field);
+    let sqft = r.state === 'filled' ? Number(r.value) : null;
+    let how: 'stated' | 'rule' | 'site' | 'none' = 'none';
+    let src = r.state === 'not_applicable' && !r.notProvided ? `Not applicable for a ${data.case.property_type.replace(/_/g, ' ')}` : 'Not known';
+    if (k === 'measured' && sqft) {
+      // measured carpet plus balcony; a site measurement is never converted
+      const balcony = Number(data.value('AREA.BALCONY')) || 0;
+      src = `Measured · site sheet ${inr(sqft)}${balcony ? ` + balcony ${inr(balcony)}` : ''} (never converted)`;
+      sqft += balcony;
+      how = 'site';
+    } else if (sqft && r.source === 'derived') {
+      how = 'rule';
+      src = `Worked out · ${r.formula ?? 'as per bank norms'}`;
+    } else if (sqft) {
+      how = 'stated';
+      src = `Stated · ${r.edited ? 'entered by hand' : `${(r.sourceDocType ?? r.source ?? '').replace(/_/g, ' ')}${r.page ? ` p. ${r.page}` : ''}`}`;
+    }
+    return { key: k, label: BASES[k].label, sqft: sqft && sqft > 0 ? sqft : null, how, src };
+  });
+}
+
+/** The area a derived figure was worked out from, for the report's note. */
+function workedOutFrom(data: CaseData) {
+  for (const k of ['carpet', 'bua', 'saleable'] as const) {
+    const r = data.get(BASES[k].field);
+    if (r.state === 'filled' && r.source !== 'derived') return BASES[k].label.toLowerCase();
+  }
+  return null;
+}
+
+/** Can this case choose its basis and unit? Only on a dictionary that has the fields for it. */
+const choosesBasis = (data: CaseData) => !!data.fields.get('VAL.RATE_UNIT');
+
+async function defaultBasis(data: CaseData, firmId: number): Promise<{ basis: Basis; unit: RateUnit; saved: boolean }> {
+  const saved = (await getSettings(firmId)).area_basis_defaults?.[`${data.case.bank_code}:${data.case.property_type}`];
+  if (saved && isBasis(saved.basis)) return { basis: saved.basis, unit: saved.unit === 'sqm' ? 'sqm' : 'sqft', saved: true };
+  const p = data.profile.rate_basis;
+  return { basis: isBasis(p) ? p : 'bua', unit: 'sqft', saved: false };
+}
+
+/** The valuer applies a rate on the chosen area and unit; values are computed by the profile's method and the bank's rules. */
+export async function applyValuation(actor: Actor, assignmentId: number, input: { rate: number; reason?: string | null; extras?: Extra[]; landRate?: number | null; basis?: Basis; unit?: RateUnit; saveDefault?: boolean }) {
   const a = await assertCase(actor.firmId!, assignmentId);
   if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
-  if (!(input.rate >= 100)) throw badRequest('Enter a rate per sq.ft., for example 12800');
+  if (!(input.rate > 0)) throw badRequest('Enter the rate adopted, for example 12800');
   return db.transaction().execute(async (tx) => {
     const data = await caseData(assignmentId, actor.firmId!, tx);
     const method = data.profile.valuation_method ?? 'market_comparison';
-    const basisField = data.profile.rate_basis === 'carpet' ? 'AREA.CARPET' : data.profile.rate_basis === 'plot' ? 'AREA.PLOT' : 'AREA.BUA';
-    const basisArea = Number(data.value(basisField));
-    if (!(basisArea > 0)) throw badRequest('The area for valuation is not known yet');
+    const def = await defaultBasis(data, actor.firmId!);
+    const chooses = choosesBasis(data);
+    const basis: Basis = chooses && input.basis ? input.basis : def.basis;
+    const unit: RateUnit = chooses && input.unit ? input.unit : 'sqft';
+    if (!isBasis(basis)) throw badRequest('Choose the area the rate is quoted on');
+    const opt = areaOptions(data).find((o) => o.key === basis)!;
+    if (!opt.sqft) throw badRequest(`The ${opt.label.toLowerCase()} is not known yet`);
+    const basisArea = unit === 'sqm' ? round2(opt.sqft / SQM) : opt.sqft;
+    const ul = UNIT_LABEL[unit];
     const bua = Number(data.value('AREA.BUA')) || null;
-    const v = computeValues({ method, basisArea, rate: input.rate, extras: input.extras ?? [], bua, plotArea: Number(data.value('AREA.PLOT')) || null, landRate: input.landRate ?? null, buildingAge: (data.value('PHYS.AGE') as number) ?? null }, data.rules);
+    const v = computeValues({ method, basisArea, rate: input.rate, unitLabel: ul, extras: input.extras ?? [], bua, plotArea: Number(data.value('AREA.PLOT')) || null, landRate: input.landRate ?? null, buildingAge: (data.value('PHYS.AGE') as number) ?? null }, data.rules);
+    const rateBua = bua && method === 'market_comparison' ? Math.round((basisArea * input.rate) / bua) : null;
+    const from = opt.how === 'rule' ? workedOutFrom(data) : null;
+    const r0 = data.get(BASES[basis].field);
+    const note = opt.how === 'rule' ? `(worked out from the ${from ?? 'stated area'} as per bank norms)`
+      : opt.how === 'stated' && !r0.edited && r0.sourceDocType ? `as per ${DOC_NAME[r0.sourceDocType] ?? r0.sourceDocType.replace(/_/g, ' ')}` : null;
+    const areaText = `${unit === 'sqm' ? basisArea.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : inr(basisArea)} ${ul} (${opt.label.toLowerCase()})`;
     const proposed = Number(data.value('VAL.PROPOSED_RATE')) || null;
     const asg = await tx.selectFrom('assignments').select(['draft_version']).where('id', '=', assignmentId).executeTakeFirstOrThrow();
     const draft = asg.draft_version + 1;
     await tx.updateTable('valuations').set({ is_current: 0 }).where('assignment_id', '=', assignmentId).execute();
     await tx.insertInto('valuations').values({
-      assignment_id: assignmentId, method, basis: data.profile.rate_basis ?? 'bua', basis_area: basisArea, proposed_rate: proposed,
+      assignment_id: assignmentId, method, basis, rate_unit: unit, basis_area: basisArea, proposed_rate: proposed,
       proposed_lo: Number(data.value('VAL.RANGE_LO')) || null, proposed_hi: Number(data.value('VAL.RANGE_HI')) || null,
       adopted_rate: input.rate, reason: input.reason ?? null, extras_json: toJson(input.extras ?? []), values_json: toJson(v),
       rule_version_id: data.case.rule_version_id!, draft_version: draft, created_by: actor.id!,
@@ -259,9 +346,15 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
     // valuation outputs replace earlier ones
     await tx.updateTable('field_values').set({ is_current: 0, status: 'superseded' }).where('assignment_id', '=', assignmentId).where('source_type', '=', 'valuation').where('is_current', '=', 1).execute();
     await writeCandidates(assignmentId, actor.firmId!, [
-      { fieldCode: 'VAL.RATE', value: input.rate, sourceType: 'valuation', snippet: proposed ? `Evidence-backed rate Rs. ${proposed}` : null },
+      { fieldCode: 'VAL.RATE', value: input.rate, sourceType: 'valuation', snippet: proposed ? `Evidence-backed rate Rs. ${proposed} per sq.ft. built-up` : null },
+      { fieldCode: 'VAL.RATE_UNIT', value: unit, sourceType: 'valuation' },
+      { fieldCode: 'VAL.RATE_TEXT', value: `Rs. ${inr(input.rate)}/- per ${ul}`, sourceType: 'valuation' },
+      { fieldCode: 'VAL.RATE_BUA', value: rateBua, sourceType: 'valuation', snippet: rateBua ? `${basisArea} ${ul} × Rs. ${input.rate} ÷ built-up ${bua} sq.ft.` : null },
       { fieldCode: 'VAL.RATE_REASON', value: input.reason ?? null, sourceType: 'valuation' },
-      { fieldCode: 'VAL.BASIS_AREA', value: basisArea, sourceType: 'valuation', snippet: basisField },
+      { fieldCode: 'VAL.BASIS_AREA', value: basisArea, sourceType: 'valuation', snippet: `${opt.label}: ${opt.src}` },
+      { fieldCode: 'VAL.BASIS_LABEL', value: opt.label, sourceType: 'valuation' },
+      { fieldCode: 'VAL.BASIS_NOTE', value: note, sourceType: 'valuation' },
+      { fieldCode: 'VAL.AREA_TEXT', value: areaText, sourceType: 'valuation' },
       { fieldCode: 'VAL.UNIT_VALUE', value: v.unit, sourceType: 'valuation', snippet },
       { fieldCode: 'VAL.PARKING', value: v.parking, sourceType: 'valuation' },
       { fieldCode: 'VAL.INTERIOR', value: v.interior, sourceType: 'valuation' },
@@ -272,16 +365,24 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
       { fieldCode: 'VAL.INSURABLE', value: v.insurable, sourceType: 'valuation', snippet: `Building cost Rs. ${data.rules.building_cost_per_sqft}/sq.ft. × BUA` },
       { fieldCode: 'VAL.RENT', value: v.rent, sourceType: 'valuation', snippet: `${data.rules.rental_yield_pct}% a year on FMV, nearest Rs. ${data.rules.rent_rounding_step}` },
     ].filter((x) => x.value !== null && x.value !== undefined) as any, tx);
-    if (proposed && Math.abs(input.rate - proposed) / proposed > 0.001) {
+    // the evidence is per sq.ft. built-up: compare like with like
+    const compared = rateBua ?? input.rate;
+    if (proposed && Math.abs(compared - proposed) / proposed > 0.001) {
       await tx.insertInto('feedback_events').values({
         firm_id: actor.firmId!, assignment_id: assignmentId, kind: 'rate.override', field_code: 'VAL.RATE', property_type: data.case.property_type,
         locality: (data.value('PROP.VILLAGE') as string) ?? null, before_json: toJson({ proposed, lo: data.value('VAL.RANGE_LO'), hi: data.value('VAL.RANGE_HI') }),
-        after_json: toJson({ adopted: input.rate }), context_json: toJson({ reason: input.reason ?? null }), user_id: actor.id ?? null,
+        after_json: toJson({ adopted: input.rate, basis, unit, per_sqft_bua: rateBua }), context_json: toJson({ reason: input.reason ?? null }), user_id: actor.id ?? null,
       }).execute();
+    }
+    if (input.saveDefault && chooses) {
+      const key = `${data.case.bank_code}:${data.case.property_type}`;
+      const cur = (await getSettings(actor.firmId!, tx)).area_basis_defaults ?? {};
+      await setSettings(actor.firmId!, { area_basis_defaults: { ...cur, [key]: { basis, unit } } }, actor.id ?? null, tx);
+      await audit(actor, { entityType: 'firm', entityId: actor.firmId!, action: 'settings.area_basis', summary: `${data.case.bank_code} ${data.case.property_type.replace(/_/g, ' ')}s: rate quoted per ${ul} of ${opt.label.toLowerCase()} by default` }, tx);
     }
     await audit(actor, {
       entityType: 'valuation', assignmentId, action: 'valuation.apply',
-      summary: `Valuation applied: Rs. ${input.rate} per sq.ft., FMV Rs. ${v.fmv}.${input.reason ? ' Reason recorded.' : ''} Draft v${draft}.`, reason: input.reason ?? null, after: v,
+      summary: `Valuation applied: Rs. ${input.rate} per ${ul} of ${opt.label.toLowerCase()}, FMV Rs. ${v.fmv}.${input.reason ? ' Reason recorded.' : ''} Draft v${draft}.`, reason: input.reason ?? null, after: v,
     }, tx);
     await publish({ type: 'value.applied', firmId: actor.firmId, entityType: 'assignment', entityId: assignmentId, payload: { rate: input.rate, fmv: v.fmv } }, tx);
     return { values: v, draftVersion: draft };
@@ -293,15 +394,22 @@ export async function valuationView(firmId: number, assignmentId: number) {
   const data = await caseData(assignmentId, firmId);
   const current = await db.selectFrom('valuations').selectAll().where('assignment_id', '=', assignmentId).where('is_current', '=', 1).executeTakeFirst();
   const history = await db.selectFrom('valuations as v').leftJoin('users as u', 'u.id', 'v.created_by')
-    .select(['v.id', 'v.adopted_rate', 'v.proposed_rate', 'v.reason', 'v.draft_version', 'v.created_at', 'v.values_json', 'u.name as by'])
+    .select(['v.id', 'v.adopted_rate', 'v.proposed_rate', 'v.reason', 'v.draft_version', 'v.created_at', 'v.values_json', 'v.basis', 'v.rate_unit', 'u.name as by'])
     .where('v.assignment_id', '=', assignmentId).orderBy('v.id', 'desc').execute();
+  const def = await defaultBasis(data, firmId);
+  const areas = areaOptions(data);
+  const basis = current && isBasis(current.basis) ? current.basis : def.basis;
   return {
     method: data.profile.valuation_method ?? 'market_comparison',
-    basis: data.profile.rate_basis ?? 'bua',
-    basisArea: data.value(data.profile.rate_basis === 'carpet' ? 'AREA.CARPET' : 'AREA.BUA'),
+    choosesBasis: choosesBasis(data),
+    basis, unit: (current?.rate_unit ?? def.unit) as RateUnit,
+    defaultBasis: def,
+    areas,
+    workedOutFrom: workedOutFrom(data),
+    basisArea: areas.find((x) => x.key === basis)?.sqft ?? null,
     proposal: data.get('VAL.PROPOSED_RATE').state === 'filled' ? { rate: data.value('VAL.PROPOSED_RATE'), lo: data.value('VAL.RANGE_LO'), hi: data.value('VAL.RANGE_HI') } : null,
     guideline: data.value('VAL.GUIDELINE'), agreement: data.value('VAL.AGREEMENT'),
-    rules: { realizable_pct: data.rules.realizable_pct, distress_pct: data.rules.distress_pct, gv_variation_pct: data.rules.gv_variation_pct, rate_deviation_pct: data.rules.rate_deviation_pct, building_cost_per_sqft: data.rules.building_cost_per_sqft, rental_yield_pct: data.rules.rental_yield_pct, value_rounding_step: data.rules.value_rounding_step, rent_rounding_step: data.rules.rent_rounding_step },
+    rules: { realizable_pct: data.rules.realizable_pct, distress_pct: data.rules.distress_pct, gv_variation_pct: data.rules.gv_variation_pct, rate_deviation_pct: data.rules.rate_deviation_pct, building_cost_per_sqft: data.rules.building_cost_per_sqft, rental_yield_pct: data.rules.rental_yield_pct, value_rounding_step: data.rules.value_rounding_step, rent_rounding_step: data.rules.rent_rounding_step, loading_pct: data.rules.loading_pct, saleable_factor: data.rules.saleable_factor },
     bua: data.value('AREA.BUA'),
     current: current ? { ...current, values: json(current.values_json, {}), extras: json(current.extras_json, []) } : null,
     justification: data.get('VAL.JUSTIFICATION'),
