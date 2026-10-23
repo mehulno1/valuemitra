@@ -46,6 +46,7 @@ export interface Resolved {
   edited: boolean;
   candidates: Candidate[];
   conflict: { message: string; options: { label: string; value: unknown; display: string; basis?: string; code?: string; candidateId?: number }[] } | null;
+  notProvided?: boolean;       // its documents are marked not provided / not applicable on the checklist
   formula?: string | null;     // derived arithmetic in words, e.g. "Built-up area 465 ÷ (1 + loading % 20 ÷ 100) = 388"
   ruleKeys?: string[];         // bank rule keys the derivation uses
 }
@@ -116,6 +117,8 @@ export const EXPR_FNS: Record<string, (...a: unknown[]) => unknown> = {
     return x ? y.getUTCFullYear() - x.getUTCFullYear() : null;
   },
   date: (d) => { const x = toDate(d); return x ? ddmmyyyy(x) : null; },
+  /** financial year of a date, as ready reckoner years are labelled: 2026-27 */
+  fy: (d) => { const x = toDate(d); return x ? `${financialYear(x).start}-${financialYear(x).short.slice(3)}` : null; },
   rs: (x) => (x === null || x === undefined || x === '' ? null : `Rs. ${inr(Number(x))}/-`),
   sqft: (x) => (x === null || x === undefined || x === '' ? null : `${inr(Number(x))} sq.ft.`),
   words: (x) => (x === null || x === undefined || x === '' || !Number.isFinite(Number(x)) ? null : amountInWords(Number(x))),
@@ -257,6 +260,16 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     return { got, not };
   };
 
+  // document types the checklist settles: received, marked not provided (✕ by a person), or not applicable
+  const docState = new Map<string, 'provided' | 'not_provided' | 'na'>();
+  for (const i of checklist) {
+    const st = i.state === 'y' ? 'provided' : i.state === 'na' ? 'na' : i.overridden ? 'not_provided' : null;
+    if (!st) continue;
+    for (const dt of json<string[]>(i.doc_types, [])) if (docState.get(dt) !== 'provided') docState.set(dt, st);
+  }
+  const DOC_LIKE = (s: string) => !['manual', 'case', 'firm', 'checklist', 'derived', 'wording', 'valuation', 'evidence', 'site_sheet'].includes(s);
+  const closedDoc = (dt: string) => { const st = docState.get(dt); return st === 'not_provided' || st === 'na'; };
+
   const memo = new Map<string, Resolved>();
   const stack = new Set<string>();
 
@@ -268,6 +281,7 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   };
 
   const resolveIdent = (name: string): unknown => {
+    if (name.startsWith('DOCSTATE.')) return docState.get(name.slice(9).toLowerCase()) ?? null;
     if (name.startsWith('RULE.')) return Object.hasOwn(rules, name.slice(5)) ? (rules as any)[name.slice(5)] ?? null : null;
     if (fields.has(name)) return get(name).value;
     if (Object.hasOwn(caseValues, name)) return caseValues[name];
@@ -336,12 +350,24 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
       if (r.value !== null && r.value !== undefined && r.value !== '' && r.display === null) r.display = formatValue(r.type, r.value, f?.unit);
       if (r.value === null || r.value === undefined || r.value === '') {
         r.state = f && !(f.applies.includes('*') || f.applies.includes(c.property_type)) ? 'not_applicable' : 'pending';
+        if (r.state === 'pending' && f && notProvided(f)) { r.state = 'not_applicable'; r.notProvided = true; r.pendingLabel = 'Not provided'; }
       } else r.state = 'filled';
       memo.set(code, r);
       return r;
     } finally {
       stack.delete(code);
     }
+  }
+
+  /** Nothing to wait for: every document it could come from is marked not provided, or what it is worded / derived from is. */
+  function notProvided(f: Field): boolean {
+    const srcs = f.sources.filter((s) => s !== 'manual');
+    if (srcs.length && srcs.every((s) => DOC_LIKE(s) && closedDoc(s))) return true;
+    const exprs = srcs.flatMap((s) => (s === 'wording' ? [wording.fields?.[f.code]] : s === 'derived' ? [f.derivation] : [null]));
+    if (!exprs.length || exprs.some((e) => !e)) return false;
+    const deps = exprs.flatMap((e) => (e as string).match(/[A-Z][A-Z0-9_]*(\.[A-Z0-9_]+)+/g) ?? []).filter((id) => fields.has(id)).map(get);
+    const missing = deps.filter((d) => d.state !== 'filled');
+    return missing.length > 0 && missing.every((d) => d.notProvided);
   }
 
   function setFrom(r: Resolved, f: Field | undefined, cand: Candidate, edited: boolean) {
@@ -370,7 +396,6 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     }
     let pending: string | null = f.pending;
     const docCands: Candidate[] = [];
-    const DOC_LIKE = (s: string) => !['manual', 'case', 'firm', 'checklist', 'derived', 'wording', 'valuation', 'evidence', 'site_sheet'].includes(s);
     for (const src of f.sources) {
       if (src === 'manual') continue;
       // a document higher in the list already gave the value: later documents are only conflict candidates

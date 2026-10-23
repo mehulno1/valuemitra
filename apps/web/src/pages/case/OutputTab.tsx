@@ -189,7 +189,7 @@ export default function OutputTab({ c, go, refresh }: TabProps) {
   );
 }
 
-interface CaseBilling { enabled: boolean; sent: boolean; stage: string; invoices: { id: number; kind: 'tax' | 'proforma'; invoice_no: string; invoice_date: string; total: number; balance: number; paid: number; converted_invoice_id: number | null; cancelled_at: string | null; released_at: string | null }[] }
+interface CaseBilling { enabled: boolean; sent: boolean; stage: string; invoices: { id: number; kind: 'tax' | 'proforma'; invoice_no: string; invoice_date: string; total: number; balance: number; paid: number; converted_invoice_id: number | null; cancelled_at: string | null; released_at: string | null; credit_note_no: string | null }[] }
 
 /** Billing for this case: its invoices, or bill it now (when the firm has billing on). */
 function BillingPanel({ c, refresh }: Pick<TabProps, 'c' | 'refresh'>) {
@@ -207,6 +207,7 @@ function BillingPanel({ c, refresh }: Pick<TabProps, 'c' | 'refresh'>) {
   const live = d.invoices.filter((i) => !i.cancelled_at && !i.released_at && !(i.kind === 'proforma' && i.converted_invoice_id));
   const tax = live.find((i) => i.kind === 'tax');
   const pro = live.find((i) => i.kind === 'proforma');
+  const voided = d.invoices.filter((i) => i.kind === 'tax' && i.released_at);
   const link = (i: CaseBilling['invoices'][number]) => (can('bill') ? <Link className="mono" to={`/billing/invoices/${i.id}`}>{i.invoice_no}</Link> : <span className="mono">{i.invoice_no}</span>);
   return (
     <Panel title="Billing" right={tax ? <span className={`chip c-${tax.balance <= 0 ? 'paid' : 'billed'}`}>{tax.balance <= 0 ? 'Paid' : 'Billed'}</span> : null}>
@@ -219,6 +220,7 @@ function BillingPanel({ c, refresh }: Pick<TabProps, 'c' | 'refresh'>) {
           {can('bill') && d.sent && <div className="btns"><button className="btn" disabled={bill.isPending} onClick={() => bill.mutate()}>Bill this case now</button></div>}
         </div>
       )}
+      {voided.map((i) => <p key={i.id} className="sub mb-0 mt-2">Earlier tax invoice {link(i)} for Rs. {inr(i.total)} was cancelled by credit note {i.credit_note_no ?? ''}.</p>)}
     </Panel>
   );
 }

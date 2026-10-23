@@ -101,6 +101,8 @@ export const RULE_SET = {
     // weighting: source and recency
     source_weights: { index2: 1.0, igr_search: 1.0, own_report: 0.8, listing: 0.5, broker: 0.4, import: 0.7 },
     subject_registration_weight: 1.5,
+    // shown to the valuer as guidance; never part of the evidence-backed rate or the printed range
+    guidance_only_sources: ['own_report'],
   },
   banks: {
     SBI: { realizable_pct: 90 },
@@ -161,7 +163,7 @@ export const CHECK_SET = {
       pass_title: 'Measured area agrees with documents',
       pass_detail: "{{ 'Measured ' + AREA.MEASURED + (present(AREA.BALCONY) ? ' + ' + AREA.BALCONY + ' sq.ft. balcony' : '') + ' vs carpet ' + AREA.CARPET + ' sq.ft. derived from BUA' }}" },
     { code: 'low_confidence', type: 'builtin', builtin: 'low_confidence', severity: 'warn', enabled: true, target: 'ext',
-      title: '{count} value(s) read with low confidence', detail: 'Confirm or correct these on Extracted details before signing.', params: { below: 75 } },
+      title: '{count} value(s) read with low confidence', detail: 'Confirm each value as read, or correct it, before signing.', params: { below: 75 }, acceptable: false },
     { code: 'photo_count', type: 'builtin', builtin: 'photo_count', severity: 'crit', enabled: true, target: 'site',
       title: 'Select between {min} and {max} photos for the report', pass_title: '{count} photos selected for the report' },
     { code: 'photo_names', type: 'builtin', builtin: 'photo_names_visible', severity: 'warn', enabled: true, target: 'site',
@@ -170,11 +172,27 @@ export const CHECK_SET = {
       title: 'Site photo evidence incomplete', pass_title: 'Site visit evidence complete', params: { max_distance_m: 40 } },
     { code: 'docs_missing', type: 'builtin', builtin: 'docs_missing', severity: 'info', enabled: true, target: 'docs',
       title: 'Documents not provided: {list}', detail: 'Listed in Remark 1. Correct the checklist on the Documents tab if any was received.' },
+    { code: 'rr_year', type: 'expr', enabled: true, target: 'mkt',
+      applies: 'present(VAL.RR_YEAR) && present(CASE.REPORT_DATE)',
+      fail: 'VAL.RR_YEAR != fy(CASE.REPORT_DATE)', severity: "'warn'",
+      title: "{{ 'Ready reckoner ' + VAL.RR_YEAR + ' used for a report in ' + fy(CASE.REPORT_DATE) }}",
+      detail: "The rate list has no entry for this village in the report's financial year. Import that year's ready reckoner rates (Data import & export), then refresh evidence." },
     { code: 'old_comparable', type: 'builtin', builtin: 'old_comparables', severity: 'warn', enabled: true, target: 'mkt',
       title: '{count} comparable(s) older than {months} months', detail: 'Keep them, or replace them with newer sales.' },
     { code: 'valuer_registration', type: 'builtin', builtin: 'valuer_registration', severity: 'crit', enabled: true, target: 'rep',
       title: "Valuer's signature or registration missing", detail: 'Upload the signature and seal and enter the IBBI registration in Firm settings.' },
   ],
+  // accepting a warning: pick a reason or write one of at least min_chars characters
+  accept: {
+    min_chars: 15,
+    reasons: [
+      'Checked against the original document',
+      'Confirmed with the bank branch',
+      'Confirmed by the field engineer',
+      'Bank format expects it this way',
+      'Not applicable to this property',
+    ],
+  },
   banks: {},
 };
 
@@ -186,7 +204,8 @@ export const WORDING = {
     'APPR.OC': W('O.C. bearing no. {{DOC.OC.NUMBER}} dated {{DOC.OC.DATE}}, issued by {{DOC.OC.AUTHORITY}}'),
     'APPR.LAYOUT_PLAN': W('Yes, {{DOC.OC.AUTHORITY}}. O.C. available, hence the building is presumed to be constructed as per approved plan.'),
     'APPR.BUILDING_PLAN': W('Yes, {{DOC.OC.AUTHORITY}}. O.C. bearing no. {{DOC.OC.NUMBER}} dated {{DOC.OC.DATE}}, hence presumed as per plan.'),
-    'APPR.CC': W("{{ present(DOC.CC.NUMBER) ? 'C.C. bearing no. ' + DOC.CC.NUMBER + ' dated ' + date(DOC.CC.DATE) : 'Not provided' }}"),
+    // read from the agreement while the C.C. itself is marked not provided: say so, never cite it as seen
+    'APPR.CC': W("{{ present(DOC.CC.NUMBER) ? 'C.C. bearing no. ' + DOC.CC.NUMBER + (present(DOC.CC.DATE) ? ' dated ' + date(DOC.CC.DATE) : '') + (DOCSTATE.CC == 'provided' ? '' : ' (details as per agreement; copy not provided)') : 'Not provided' }}"),
     'PHYS.CONSTRUCTION_STAGE': W("{{ present(DOC.OC.NUMBER) ? 'Completed. Building is completed as per O.C.' : null }}"),
     'PHYS.VIOLATIONS': W("{{ present(DOC.OC.NUMBER) ? 'No (we have verified through O.C.)' : null }}"),
     'DOC.AGREEMENT.SUMMARY': W('Agreement for Sale dated {{DOC.AGREEMENT.DATE}} between {{DOC.AGREEMENT.SELLER}} (Transferor) and {{DOC.AGREEMENT.BUYER}} (Transferee)'),

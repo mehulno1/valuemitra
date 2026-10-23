@@ -157,6 +157,8 @@ export async function acceptValue(actor: Actor, assignmentId: number, code: stri
     property_type: data.case.property_type, before_json: toJson({ value: r.value, confidence: r.confidence }), after_json: toJson({ value: r.value }),
     context_json: toJson({ snippet: r.snippet, page: r.page }), user_id: actor.id ?? null,
   }).execute();
+  await audit(actor, { entityType: 'field_value', entityId: code, assignmentId, action: 'value.confirm', summary: `${r.label} confirmed as read: ${r.display ?? r.value}${r.confidence !== null ? ` (read at ${Math.round(r.confidence)}%)` : ''}.` }, tx);
+  await publish({ type: 'value.changed', firmId: actor.firmId!, entityType: 'assignment', entityId: assignmentId, payload: { code } }, tx);
 }
 
 /** Resolve a conflict by picking one of the offered options. */

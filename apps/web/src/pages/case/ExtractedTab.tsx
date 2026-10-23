@@ -10,7 +10,7 @@ import { caseKey, type TabProps } from './context';
 
 export interface ResolvedField {
   code: string; label: string; group: string; type: string; value: unknown; display: string | null;
-  state: 'filled' | 'pending' | 'not_applicable'; pendingLabel: string | null; source: string | null; sourceDocType: string | null;
+  state: 'filled' | 'pending' | 'not_applicable'; notProvided?: boolean; pendingLabel: string | null; source: string | null; sourceDocType: string | null;
   page: number | null; partId: number | null; snippet: string | null; confidence: number | null; edited: boolean;
   candidates: unknown[]; conflict: { message: string; options: { label: string; display: string }[] } | null;
   formula?: string | null; ruleKeys?: string[];
@@ -155,7 +155,7 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal }: {
             onClick={startEdit}
             onKeyDown={(e) => e.key === 'Enter' && startEdit()}
             title={canEdit ? 'Click to edit' : undefined}
-          >{current || <span className="muted">—</span>}</div>
+          >{current || <span className="muted">{f.notProvided ? 'Not provided' : '—'}</span>}</div>
         )}
         {(src || f.snippet || isVal || (f.edited && canEdit)) && (
           <div className="src">

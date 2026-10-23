@@ -85,8 +85,8 @@ function gridTable(cols: number) {
   const cells = letters
     .map((l, i) =>
       cellXml(
-        para(`${i === 0 ? tr('#rows') : ''}${tr(`%${l}_img`)}`, '<w:jc w:val="center"/><w:spacing w:after="0"/>') +
-          para(run(tag(`${l}_cap`), '<w:sz w:val="18"/>') + (i === cols - 1 ? tr('/rows') : ''), '<w:jc w:val="center"/><w:spacing w:after="120"/>'),
+        para(`${i === 0 ? tr('#rows') : ''}${tr(`%${l}_img`)}`, '<w:spacing w:after="0"/><w:jc w:val="center"/>') +
+          para(run(tag(`${l}_cap`), '<w:sz w:val="18"/>') + (i === cols - 1 ? tr('/rows') : ''), '<w:spacing w:after="120"/><w:jc w:val="center"/>'),
         w,
       ),
     )
@@ -97,9 +97,9 @@ function gridTable(cols: number) {
 function annexXml() {
   return [
     para(tr('#ANNEX_PAGES')),
-    para('<w:r><w:br w:type="page"/></w:r>'),
-    para(run(tag('title'), '<w:b/><w:u w:val="single"/><w:sz w:val="24"/>'), '<w:jc w:val="center"/><w:spacing w:after="120"/>'),
-    para(run(tag('note'), '<w:sz w:val="20"/>'), '<w:jc w:val="center"/><w:spacing w:after="120"/>'),
+    // "page break before" on the title, not a break paragraph: a full page never leaves a blank page behind it
+    para(run(tag('title'), '<w:b/><w:sz w:val="24"/><w:u w:val="single"/>'), '<w:pageBreakBefore/><w:spacing w:after="120"/><w:jc w:val="center"/>'),
+    para(run(tag('note'), '<w:sz w:val="20"/>'), '<w:spacing w:after="120"/><w:jc w:val="center"/>'),
     para(tr('#g3')), gridTable(3), para(tr('/g3')),
     para(tr('#g2')), gridTable(2), para(tr('/g2')),
     para(tr('#g1')), gridTable(1), para(tr('/g1')),
@@ -126,18 +126,18 @@ const NS_DECL = [
 // (an inline `%%` centred image beside condition tags nests a paragraph inside a run: Word refuses it).
 export const HEADER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr ${NS_DECL}>${[
   para(tr('#HAS_LETTERHEAD')),
-  para(tr('%LETTERHEAD'), '<w:jc w:val="center"/><w:spacing w:after="0"/>'),
+  para(tr('%LETTERHEAD'), '<w:spacing w:after="0"/><w:jc w:val="center"/>'),
   para(tr('/HAS_LETTERHEAD')),
   para(tr('^HAS_LETTERHEAD')),
   para(run(tag('FIRM_LINE'), '<w:b/><w:sz w:val="24"/>'), '<w:spacing w:after="0"/>'),
   para(run(tag('FIRM_SUB'), '<w:sz w:val="16"/>'), '<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="4" w:color="111111"/></w:pBdr><w:spacing w:after="120"/>'),
   para(tr('/HAS_LETTERHEAD')),
-  para(`${tr('#IS_DRAFT')}${run(tag('DRAFT_LINE'), '<w:b/><w:color w:val="9A9A9A"/><w:sz w:val="16"/>')}${tr('/IS_DRAFT')}`, '<w:jc w:val="right"/><w:spacing w:after="0"/>'),
+  para(`${tr('#IS_DRAFT')}${run(tag('DRAFT_LINE'), '<w:b/><w:color w:val="9A9A9A"/><w:sz w:val="16"/>')}${tr('/IS_DRAFT')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>'),
 ].join('')}</w:hdr>`;
 
 const FOOTER_PARA = para(
   `${tr('#SIGNED')}${tr('%MINI_SIG')}${run('  ')}${tr('/SIGNED')}${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`,
-  '<w:jc w:val="right"/><w:spacing w:after="0"/>',
+  '<w:spacing w:after="0"/><w:jc w:val="right"/>',
 );
 const FOOTER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PARA}</w:ftr>`;
 const EMPTY_FTR = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}><w:p/></w:ftr>`;

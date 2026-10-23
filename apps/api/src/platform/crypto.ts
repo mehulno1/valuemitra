@@ -19,3 +19,16 @@ export function decrypt(buf: Buffer): string {
 
 export const sha256 = (b: Buffer | string) => crypto.createHash('sha256').update(b).digest('hex');
 export const randomToken = (bytes = 32) => crypto.randomBytes(bytes).toString('base64url');
+
+// no I / l / 1, O / o / 0: a link read out or typed from a phone cannot be mistyped
+const READABLE = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+/** Random token from unambiguous characters (54 symbols, about 5.75 bits each). */
+export function readableToken(length = 32) {
+  let out = '';
+  while (out.length < length) {
+    for (const b of crypto.randomBytes(length)) {
+      if (b < 216 && out.length < length) out += READABLE[b % 54]; // 216 = 4 × 54: no bias
+    }
+  }
+  return out;
+}

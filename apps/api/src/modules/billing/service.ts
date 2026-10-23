@@ -106,7 +106,7 @@ function statusOf(i: { kind: string; invoice_date: Date; converted_invoice_id: n
   return daysSince(i.invoice_date) > dueDays ? 'overdue' : 'unpaid';
 }
 export const STATUS_LABEL: Record<string, string> = {
-  paid: 'Paid', part: 'Part paid', unpaid: 'Unpaid', overdue: 'Overdue', credited: 'Credited',
+  paid: 'Paid', part: 'Part paid', unpaid: 'Unpaid', overdue: 'Overdue', credited: 'Cancelled by credit note',
   converted: 'Converted', cancelled: 'Cancelled', advance: 'Advance received', awaiting: 'Awaiting advance',
 };
 
@@ -447,6 +447,15 @@ export async function closeBalance(actor: Actor, invoiceId: number, c: { kind: '
       summary: c.kind === 'credit_note' ? `Credit note ${noteNo} for Rs. ${inr(amount)} against ${inv.invoice_no}.${release ? ' Cases released to be billed again.' : ''}` : `Rs. ${inr(amount)} written off on ${inv.invoice_no}.`,
       reason: c.reason.trim(),
     }, tx);
+    // each case on the invoice shows it in its own history
+    const cases = await tx.selectFrom('invoice_lines').select('assignment_id').distinct().where('invoice_id', '=', inv.id).where('assignment_id', 'is not', null).execute();
+    for (const l of cases) {
+      await audit(actor, {
+        entityType: 'invoice', entityId: inv.id, assignmentId: l.assignment_id!, action: c.kind === 'credit_note' ? 'invoice.credit_note' : 'invoice.write_off',
+        summary: c.kind === 'credit_note' ? `${inv.invoice_no} ${release ? 'cancelled' : 'reduced'} by credit note ${noteNo} for Rs. ${inr(amount)}.${release ? ' The case can be billed again.' : ''}` : `Rs. ${inr(amount)} written off on ${inv.invoice_no}.`,
+        reason: c.reason.trim(),
+      }, tx);
+    }
     await syncInvoiceCases(inv.id, actor.id ?? null, tx);
     return { id: Number(r.insertId), noteNo };
   });

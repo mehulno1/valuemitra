@@ -41,8 +41,20 @@ Nothing is carried over from the v1 codebase except the MySQL database (which is
 
 Billing decisions: billing is optional per firm (feature flag); a report is billable once signed and sent; batch = one invoice per bank branch for bank-paid cases; place of supply from the branch GSTIN (else its state) decides CGST+SGST vs IGST; totals rounded to the rupee; a case is Paid when every tax invoice covering it is settled (payments + TDS + credit notes + write-offs); a full credit note can release cases to be billed again; WhatsApp opens a prepared message (no sending API).
 
+## Gate A review (Premal, 22 Oct 2026) — plan
+Review: 25 issues (8 high), 4 demo inputs from valuer Manoj Sharma, and AI conversion for bank formats.
+
+| Phase | Scope | State |
+|---|---|---|
+| 1 Sign-off safety | High issues #1–#8 (earlier reports as guidance only, low-confidence confirm/correct, reasons for accepting, server pending count and sign confirmation, no blank pages or empty ready reckoner page, "Not provided" documents, C.C. wording, ready reckoner year check, credit-note visibility) and #10, #19, #20, #23, WhatsApp flag wording | Built and live 23 Oct 2026; Premal to retest |
+| 2 AI format conversion | Upload a blank template or a past report; AI maps each question by meaning to the shared dictionary, creates missing fields (bank-only ones tagged to the bank), finds grids and text sections, clears the earlier case and valuer identity; review screen (matched / new / needs you / cleared), accept-all ≥85%, preview, publish adds site-sheet questions to the engineer checklist. Test file: NKGSB Land & Building | Next (~5–7 days) |
+| 3 Demo inputs | Area basis per case worked out from any stated area by the bank's factors (stated beats worked out, measured never converted), rate per sq.ft. or sq.m., map screenshot found automatically in any picture, per-bank values for every rule (#18) | After phase 2 (~3 days) |
+| 4 Remaining issues | #9 outliers, #11 date checks, #12 parking prefill, #13 name/abbreviation matching, #14 true source, #15 preview final PDF, #16 structured rate reasons, #17 status chip, #21 page numbering, #22 document types, #24 checklist from photos, #25 seen-before message | After phase 3 (~3 days) |
+
+Decisions: earlier reports of the firm never set the rate or the printed range (rule `guidance_only_sources`); low-confidence values are confirmed or corrected, never accepted; a reissued report on a billed case still needs a full credit note first (accounting stays correct), and the cancellation now shows on the case. Shared field list grown by the AI; promotion of a bank-only field to the shared list is confirmed by an admin. Inputs needed from Premal: 2026-27 MMR ready reckoner, consent to store other valuers' reports for testing, more bank templates or past reports.
+
 ## Prototype gaps and how they are resolved
-- **Proposed rate:** weighted median of the adjusted comparables, filtered to the last 6 months (configurable) and 1–2 km.
+- **Proposed rate:** weighted median of the adjusted comparables; the last 6 months preferred (configurable), older ones up to 12 months used with a warning; the firm's earlier reports are guidance only. Distance filter waits for a maps key.
 - **20% guideline variation:** checked in both directions.
 - **Realizable and distress %:** taken from each bank's rule version.
 - **GST:** IGST when the place of supply is in another state (place of supply = the bank branch's GSTIN state, else its state code).

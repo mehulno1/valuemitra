@@ -3,6 +3,8 @@
 // maps and compiles it like any uploaded bank template. Layout follows the ValueMitra prototype.
 // Revision 2: the Format-A body flows from page to page (no fixed page breaks), rows never split
 // across pages, a section heading stays with its first row and signature blocks stay together.
+// Revision 3: annexure pages start with "page break before" on their heading instead of a break
+// paragraph, so a page that ends full never leaves a blank page behind it.
 import {
   AlignmentType, BorderStyle, Document, Packer, PageBreak, Paragraph, Table, TableCell, TableRow, TextRun, WidthType,
 } from 'docx';
@@ -13,10 +15,11 @@ const SZ = 22; // 11 pt
 const t = (text: string, o: { bold?: boolean; size?: number; underline?: boolean; italics?: boolean } = {}) =>
   new TextRun({ text, font: FONT, size: o.size ?? SZ, bold: o.bold, italics: o.italics, underline: o.underline ? {} : undefined });
 
-const p = (text: string | TextRun[], o: { align?: (typeof AlignmentType)[keyof typeof AlignmentType]; bold?: boolean; size?: number; after?: number; underline?: boolean; before?: number; keepNext?: boolean } = {}) =>
+const p = (text: string | TextRun[], o: { align?: (typeof AlignmentType)[keyof typeof AlignmentType]; bold?: boolean; size?: number; after?: number; underline?: boolean; before?: number; keepNext?: boolean; pageBefore?: boolean } = {}) =>
   new Paragraph({
     alignment: o.align,
     keepNext: o.keepNext,
+    pageBreakBefore: o.pageBefore,
     keepLines: true,
     spacing: { after: o.after ?? 80, before: o.before ?? 0 },
     children: typeof text === 'string' ? [t(text, { bold: o.bold, size: o.size, underline: o.underline })] : text,
@@ -234,23 +237,21 @@ export async function buildSbiFormatA(): Promise<Buffer> {
     table([new TableRow({ children: [cell('Remarks of the valuer', { width: 25 }), cell('', { width: 75 })] })]),
     p(''),
     p('Followed by Annexure-III (declaration-cum-undertaking), valuer comment table, Model Code of Conduct, photographs, map, ready reckoner, listings, sale transactions and document pages.', { size: 18 }),
-    pageBreak(),
   );
 
   // ---- Annexure-III declaration ----
   children.push(
-    p('Annexure-III', { align: AlignmentType.RIGHT, bold: true }),
+    p('Annexure-III', { align: AlignmentType.RIGHT, bold: true, pageBefore: true }),
     p('DECLARATION-CUM-UNDERTAKING', { align: AlignmentType.CENTER, bold: true, underline: true, after: 160 }),
     ...DECLARATIONS.map((d, i, all) => p(`${String.fromCharCode(97 + i)})  ${d}`, { after: 40, size: 20, keepNext: i === all.length - 1 })),
     ...sigBlock(),
-    pageBreak(),
   );
 
   // ---- Valuer comment table ----
   const comment = (no: string, label: string, value = '') =>
     tr([cell(no, { width: 6 }), cell(label, { width: 40 }), cell(value, { width: 54 })]);
   children.push(
-    p('VALUER COMMENT', { align: AlignmentType.CENTER, bold: true, underline: true, after: 160 }),
+    p('VALUER COMMENT', { align: AlignmentType.CENTER, bold: true, underline: true, after: 160, pageBefore: true }),
     table([
       tr([cell('Sr. No.', { bold: true, width: 6 }), cell('Particulars', { bold: true, width: 40 }), cell('Valuer comment', { bold: true, width: 54 })]),
       comment('1', 'Background information of the asset being valued'),
@@ -267,12 +268,11 @@ export async function buildSbiFormatA(): Promise<Buffer> {
       comment('12', 'Caveats, limitations and disclaimers', 'None in particular.'),
     ]),
     ...sigBlock(),
-    pageBreak(),
   );
 
   // ---- Model Code of Conduct ----
   children.push(
-    p('Annexure-XIV', { align: AlignmentType.RIGHT, bold: true }),
+    p('Annexure-XIV', { align: AlignmentType.RIGHT, bold: true, pageBefore: true }),
     p('MODEL CODE OF CONDUCT FOR VALUERS', { align: AlignmentType.CENTER, bold: true, underline: true, after: 60 }),
     p('{Adopted in line with Companies (Registered Valuers and Valuation) Rules, 2017}', { align: AlignmentType.CENTER, after: 160, size: 20 }),
     ...CODE_OF_CONDUCT.map((c, i, all) => p(`${i + 1}.  ${c}`, { after: 60, size: 20, keepNext: i === all.length - 1 })),

@@ -183,7 +183,12 @@ export async function recomputeProposal(assignmentId: number, firmId: number, da
     }).where('id', '=', o.id).execute();
   }
   const p = propose(out, data.rules);
-  if (!p) return null;
+  if (!p) {
+    // no evidence left (e.g. only guidance items): drop an earlier proposal so no range prints
+    await tx.updateTable('field_values').set({ is_current: 0, status: 'superseded' }).where('assignment_id', '=', assignmentId)
+      .where('field_code', 'in', ['VAL.PROPOSED_RATE', 'VAL.RANGE_LO', 'VAL.RANGE_HI']).where('source_type', '=', 'evidence').where('is_current', '=', 1).execute();
+    return null;
+  }
   const snippet = `${p.n} comparable(s): weighted median of adjusted rates; range = weighted inter-quartile, at least ±3%`;
   await writeCandidates(assignmentId, firmId, [
     { fieldCode: 'VAL.PROPOSED_RATE', value: p.rate, sourceType: 'evidence', snippet, confidence: Math.min(95, 50 + p.n * 10) },

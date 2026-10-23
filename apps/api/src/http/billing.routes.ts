@@ -78,9 +78,10 @@ export async function billingRoutes(app: FastifyInstance) {
     const rows = await db.selectFrom('invoice_lines as il').innerJoin('invoices as i', 'i.id', 'il.invoice_id').select(['i.id', 'i.kind', 'i.invoice_no', 'i.invoice_date', 'i.total', 'i.converted_invoice_id', 'i.cancelled_at', 'il.released_at'])
       .where('il.assignment_id', '=', id).orderBy('i.id').execute();
     const bal = await bill.balances(rows.map((r) => r.id));
+    const notes = rows.length ? await db.selectFrom('credit_notes').select(['invoice_id', 'note_no']).where('invoice_id', 'in', rows.map((r) => r.id)).where('released_cases', '=', 1).execute() : [];
     return {
       enabled: (await flagsFor(req.auth!.firmId)).billing, sent: !!a.sent_at, stage: a.stage,
-      invoices: rows.map((r) => ({ ...r, invoice_date: bill.ymd(r.invoice_date), balance: bal.get(r.id)?.balance ?? 0, paid: bal.get(r.id)?.paid ?? 0 })),
+      invoices: rows.map((r) => ({ ...r, invoice_date: bill.ymd(r.invoice_date), balance: bal.get(r.id)?.balance ?? 0, paid: bal.get(r.id)?.paid ?? 0, credit_note_no: notes.find((n) => n.invoice_id === r.id)?.note_no ?? null })),
     };
   });
 

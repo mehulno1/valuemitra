@@ -24,6 +24,7 @@ export interface Rules {
   quality_adjustments: { newer_or_lift_pct: number; older_pct: number };
   source_weights: Record<string, number>;
   subject_registration_weight: number;
+  guidance_only_sources?: string[];
   [k: string]: unknown;
 }
 

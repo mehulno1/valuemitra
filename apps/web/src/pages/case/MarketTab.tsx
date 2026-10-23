@@ -26,7 +26,7 @@ interface Evidence {
 
 const n = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const rs = (v: unknown) => (n(v) === null ? '—' : `Rs. ${inr(n(v))}`);
-const SOURCE: Record<string, string> = { index2: 'Index II', igr_search: 'IGR search', listing: 'Listing', own_report: 'Earlier report', manual: 'Manual', valuer_entry: 'Valuer entry' };
+const SOURCE: Record<string, string> = { index2: 'Index II', igr_search: 'IGR search', listing: 'Listing', own_report: 'Earlier report (guidance)', manual: 'Manual', valuer_entry: 'Valuer entry' };
 const KIND: Record<string, string> = { igr: 'IGR search', listing: 'Listing page', other: 'Other evidence', rr: 'Ready reckoner page', map: 'Location map' };
 const PRINT_ONLY = new Set(['rr', 'map']);
 const DEFAULT_SOURCE: Record<string, string> = { igr: 'IGR Maharashtra', listing: '99acres', rr: 'IGR Maharashtra e-ASR', map: 'Google Maps', other: '' };
@@ -128,7 +128,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
       <div className="split">
         <Panel title="Capture comparables">
           <p className="muted mt-0 text-[13px]">
-            Search IGR and the listing sites as usual and capture the result pages (screenshot or PDF). The system reads every entry, <b>keeps the last {ev.rules.window} months within {ev.rules.radius} km</b>, converts each to a rate per sq.ft. built-up and ranks them. Listings are discounted {ev.rules.listingDiscount}% for asking price.
+            Search IGR and the listing sites as usual and capture the result pages (screenshot or PDF). The system reads every entry, <b>prefers the last {ev.rules.window} months</b> (items up to {ev.rules.window * 2} months old are used with a warning), converts each to a rate per sq.ft. built-up and ranks them. Listings are discounted {ev.rules.listingDiscount}% for asking price. The firm's earlier reports are shown as guidance only; they never set the rate or the printed range.
           </p>
           {canEdit ? (
             <div className="grid gap-3">
@@ -219,7 +219,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                       <td className="n"><b>{inr(n(x.adjusted_rate))}</b></td>
                       <td className="whitespace-nowrap">{used ? x.weight_label : <span className="muted">Not used</span>}{x.manual_override ? <div><span className="edited">by valuer</span></div> : null}</td>
                       <td className="min-w-[160px] text-[12.5px]">{!used && x.exclusion_reason ? <div className="text-warn">{x.exclusion_reason}</div> : null}{x.note || x.notes}</td>
-                      {canVal && <td><button className="btn sm" onClick={() => setEdit({ comp: x, included: used, weight: String(Number(x.weight)), reason: '' })}>Adjust</button></td>}
+                      {canVal && <td>{x.source_type !== 'own_report' && <button className="btn sm" onClick={() => setEdit({ comp: x, included: used, weight: String(Number(x.weight)), reason: '' })}>Adjust</button>}</td>}
                     </tr>
                   );
                 })}

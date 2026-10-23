@@ -11,10 +11,11 @@ const CONFIRM: Record<string, string> = {
 };
 
 /** Bump when the built layout changes; the next seed publishes it as a new version (cases keep theirs). */
-const REV = 2;
+const REV = 3;
 const REV_NOTES: Record<number, string> = {
   1: 'Recreated from the ValueMitra prototype report pages',
   2: 'Format-A flows from page to page; rows and signature blocks are kept together',
+  3: 'Annexure pages start on a new page without leaving a blank page; no ready reckoner page without a capture',
 };
 
 export async function seedTemplates() {

@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 21 Oct 2026 (WP11 billing, analytics and CSV imports live; billing switched on for the demo firm). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -61,6 +61,18 @@ Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 p
 - Fixed: text firm settings (place, UPI ID, changed number patterns) were read back as empty.
 - Verified locally: 5 demo cases batch/single/proforma billed, payments with TDS, conversion, credit note release and rebill, stages Billed/Paid, every export generated, PDFs checked visually, imports with preview errors and re-import; 4 GST unit tests (15 total).
 
+## 3b. Gate A review, phase 1 (23 Oct 2026, live)
+
+Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is planned in `PLAN.md` (Gate A review). Phase 1 built:
+- Earlier reports of the firm are guidance only: never in the evidence-backed rate or the printed range (rule `guidance_only_sources`, default `own_report`); a stale proposal is cleared when no evidence is left.
+- Checks: low-confidence values get Confirm as read / Correct (check `acceptable: false`; also the default for cases pinned to older check sets); accepting any warning needs a listed reason or 15+ characters (check set `accept`); confirming a value is audited.
+- Sign-off: pending count from the server with field names; Approve and sign asks for confirmation.
+- SBI Format-A rev 3: annexure pages start with "page break before" (no blank page after a full page); annexure loop the same; pPr/rPr element order fixed for Word; ready reckoner page only when a page was captured.
+- Documents marked ✕ (or n/a) close their fields as "Not provided" (not blocking, out of the legal documents list, printed as "Not provided"); wording can test `DOCSTATE.<TYPE>`; C.C. read from the agreement prints "(details as per agreement; copy not provided)".
+- New check `rr_year` (ready reckoner year vs the report's financial year; expression function `fy()`).
+- Billing: a credit note is written to each case's history; a fully credited invoice reads "Cancelled by credit note"; the Output tab lists it. (Case 0002 on live had a full credit note CN/26-27/0001, so its two invoices were correct.)
+- Small: bank contact is a hint from the branch; visit links use unambiguous characters; link expiry in IST; photos without location read "Location removed (came via WhatsApp)"; Market tab window wording matches the code.
+
 ## 4. Left — by work package
 
 | WP | Left |
@@ -76,7 +88,7 @@ Verified: 11 unit tests (valuation engine reproduces the prototype: Rs. 12,800 p
 | 10 Quick Estimate | Everything |
 | 11 Business | Fill in Billing setup on live (bank account, UPI ID, PAN, invoice note: needs admin or valuer); first live invoice test; validate Tally / Zoho / GSTR-1 files with a sample import (and the SAC code with the CA); verify the SES sender so email works; Quick Estimate conversion KPI in analytics |
 | 12 Privacy | Consent flow for the shared pool |
-| 13 Bank formats | SBI long, BoB, Union Bank, BoI, BoM, NKGSB, Federal, ValueMitra standard (need templates from Premal) |
+| 13 Bank formats | AI format conversion (Gate A review phase 2, next); then SBI long, BoB, Union Bank, BoI, BoM, NKGSB, Federal, ValueMitra standard (need templates from Premal) |
 | 14 Land & bungalow | Everything, tuned with sample cases |
 
 Gates: A built (AI reading live; first real pilot case next) → B all property types → C all banks + months 0–3 learning targets → D second firm by configuration only.

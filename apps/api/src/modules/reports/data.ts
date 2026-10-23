@@ -50,10 +50,11 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
     const code = field_code!;
     const r = data.get(code);
     if (r.type === 'image') continue;
-    const text = r.state === 'filled' ? r.display ?? '' : '';
+    const shown = r.state === 'filled' || r.notProvided;
+    const text = r.state === 'filled' ? r.display ?? '' : r.notProvided ? 'Not provided' : '';
     snapshot[code] = text;
     if (mode === 'preview') {
-      out[code] = r.state === 'filled' ? `${M.start}${code}${M.mid}${text}${M.end}` : `${M.start}${code}${M.pend}${r.pendingLabel ?? 'Pending'}${M.end}`;
+      out[code] = shown ? `${M.start}${code}${M.mid}${text}${M.end}` : `${M.start}${code}${M.pend}${r.pendingLabel ?? 'Pending'}${M.end}`;
     } else out[code] = text;
   }
 
@@ -141,13 +142,12 @@ async function annexPages(data: CaseData, firmId: number, docGrid: number, image
   for (const [i, rows] of chunk(mapRows, 2).entries()) pages.push({ title: i ? 'LOCATION MAP (contd.)' : 'LOCATION MAP', note: i ? '' : mapNote, g1: { rows } });
   if (!mapRows.length && mapNote) pages.push({ title: 'LOCATION MAP', note: mapNote });
 
-  // ready reckoner: the looked-up rate, plus any captured ready reckoner pages
+  // ready reckoner: printed only when a page was captured (the looked-up rate is in the report body)
   const rr = data.get('VAL.RR_RATE_SQM');
   const rrRows = await rowsOf(await captured(['rr'], 'Ready reckoner'));
-  if (rr.state === 'filled' || rrRows.length) {
+  if (rrRows.length) {
     const note = rr.state === 'filled' ? `Rate: Rs. ${inr(Number(rr.value))}/- per sq.m. (Rs. ${inr(Number(data.value('VAL.RR_RATE_SQFT')))}/- per sq.ft.). ${rr.snippet ?? ''}` : '';
     const title = `STAMP DUTY READY RECKONER${data.value('VAL.RR_YEAR') ? ` FOR YEAR ${data.value('VAL.RR_YEAR')}` : ''}`;
-    if (!rrRows.length) pages.push({ title, note });
     for (const [i, rows] of chunk(rrRows, 2).entries()) pages.push({ title: i ? `${title} (contd.)` : title, note: i ? '' : note, g1: { rows } });
   }
 

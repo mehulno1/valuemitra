@@ -98,10 +98,10 @@ export async function caseRoutes(app: FastifyInstance) {
   app.get('/api/assignments/:id/fields', async (req) => {
     const id = idParam(req);
     const data = await caseData(id, req.auth!.firmId);
-    const sections = ((data.profile.sections ?? []) as { title: string; fields: string[] }[]).map((s) => ({ title: s.title, fields: data.all(s.fields).filter((f) => f.state !== 'not_applicable') }));
+    const sections = ((data.profile.sections ?? []) as { title: string; fields: string[] }[]).map((s) => ({ title: s.title, fields: data.all(s.fields).filter((f) => f.state !== 'not_applicable' || f.notProvided) }));
     const inSections = new Set(sections.flatMap((s) => s.fields.map((f) => f.code)));
     const reportCodes = await reportFieldCodes(data.case.template_version_id);
-    const other = data.all(reportCodes.filter((c) => !inSections.has(c))).filter((f) => f.state !== 'not_applicable');
+    const other = data.all(reportCodes.filter((c) => !inSections.has(c))).filter((f) => f.state !== 'not_applicable' || f.notProvided);
     const all = [...sections.flatMap((s) => s.fields), ...other];
     return {
       sections: other.length ? [...sections, { title: 'Other report fields', fields: other }] : sections,

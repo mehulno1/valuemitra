@@ -36,6 +36,17 @@ describe('evidence-backed rate', () => {
   });
 });
 
+describe('earlier reports of the firm', () => {
+  it('are guidance only: never in the rate or the range, even if the valuer includes them', () => {
+    const own = C(9, { sourceType: 'own_report', isAsking: false, areaBua: 465, price: 6975000, override: { included: true } });
+    const out = [...comps, own].map((c) => ({ ...adjustComparable(c, subject, r), sourceType: c.sourceType }));
+    expect(out[5].included).toBe(false);
+    expect(out[5].guidance).toBe(true);
+    expect(propose(out, r)!.rate).toBe(12800);
+    expect(propose([out[5]], r)).toBeNull();
+  });
+});
+
 describe('values', () => {
   it('matches the prototype at Rs. 15,000', () => {
     const v = computeValues({ method: 'market_comparison', basisArea: 465, rate: 15000, extras: [], bua: 465 }, r);

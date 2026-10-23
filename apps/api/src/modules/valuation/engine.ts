@@ -29,6 +29,7 @@ export interface ComparableOut {
   included: boolean;
   exclusionReason: string | null;
   oldFlag: boolean;
+  guidance: boolean;
 }
 
 export interface Subject {
@@ -62,6 +63,9 @@ export function adjustComparable(c: ComparableIn, s: Subject, r: Rules): Compara
   if (ageMonths !== null && ageMonths > window * 2) { included = false; reason = `Older than ${window * 2} months`; }
   if (c.distanceKm !== null && c.distanceKm > r.comparable_radius_km) { included = false; reason = `More than ${r.comparable_radius_km} km away`; }
   if (c.override?.included !== undefined) { included = c.override.included; reason = included ? null : reason ?? 'Excluded by valuer'; }
+  // earlier reports of the firm are guidance for the valuer, never evidence for the rate or the printed range
+  const guidance = !c.isSubject && (r.guidance_only_sources ?? ['own_report']).includes(c.sourceType);
+  if (guidance) { included = false; reason = 'Guidance only: not used for the rate or the range'; }
   const recency = ageMonths === null || ageMonths <= window ? 1 : 0.5;
   const similarity = 1 - Math.min(Math.abs(Math.log(c.areaBua / s.area)), 1) * 0.5;
   let weight = (r.source_weights[c.sourceType] ?? 0.6) * recency * similarity * (c.isSubject ? r.subject_registration_weight : 1);
@@ -70,6 +74,7 @@ export function adjustComparable(c: ComparableIn, s: Subject, r: Rules): Compara
     id: c.id, rate, adjustments, adjustedRate, ageMonths, weight, included, exclusionReason: reason,
     weightLabel: weight >= 0.8 ? 'High' : weight >= 0.4 ? 'Medium' : 'Low',
     oldFlag: ageMonths !== null && ageMonths > window && included,
+    guidance,
   };
 }
 

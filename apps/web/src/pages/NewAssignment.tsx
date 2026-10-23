@@ -53,10 +53,8 @@ export default function NewAssignment() {
     if (!branches.length) { if (f.branchId) set('branchId', 0); return; }
     if (!branches.some((b) => b.id === f.branchId)) set('branchId', branches[0].id);
   }, [branches, f.branchId]);
-  // contact prefilled from branch
-  useEffect(() => {
-    if (branch) set('bankContact', [branch.contact_name, branch.contact_role && `(${branch.contact_role})`].filter(Boolean).join(' '));
-  }, [branch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the branch's contact is only a hint: left empty, the server uses it
+  const branchContact = branch ? [branch.contact_name, branch.contact_role && `(${branch.contact_role})`].filter(Boolean).join(' ') : '';
 
   const ranked = useMemo(() => (meta.data?.engineers ?? []).map((e) => ({ e, s: engineerScore(e.localities, f.localityHint) })).sort((a, b) => b.s - a.s), [meta.data, f.localityHint]);
   const suggested = ranked[0]?.s ? ranked[0].e : null;
@@ -121,7 +119,7 @@ export default function NewAssignment() {
                 {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
               </select>
             </Field>
-            <Field label="Bank contact"><input value={f.bankContact} onChange={(e) => set('bankContact', e.target.value)} placeholder="Mr. Joshi (Credit officer)" /></Field>
+            <Field label="Bank contact" hint="Leave empty to use the branch contact"><input value={f.bankContact} onChange={(e) => set('bankContact', e.target.value)} placeholder={branchContact || 'Name (designation)'} /></Field>
             <Field label="Received via">
               <select value={f.receivedVia} onChange={(e) => set('receivedVia', e.target.value)}>{RECEIVED_VIA.map((v) => <option key={v}>{v}</option>)}</select>
             </Field>

@@ -133,7 +133,7 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
   const checks: { ok: boolean | null; text: string }[] = [];
   if (fresh.length) {
     checks.push(
-      !geo.length ? { ok: false, text: 'No geo-tags found in the photos' }
+      !geo.length ? { ok: null, text: 'Location removed from the photos (usually because they came via WhatsApp)' }
         : far.length ? { ok: false, text: `${far.length} photo${far.length > 1 ? 's' : ''} more than ${GEO_LIMIT_M} m from the map pin` }
           : { ok: true, text: `${untagged ? `${geo.length} of ${fresh.length}` : 'All'} photos geo-tagged within ${GEO_LIMIT_M} m of the map pin` },
     );
@@ -216,7 +216,7 @@ export default function SiteTab({ c, go, refresh, locked }: TabProps) {
                   <span className="ck">{p.selected ? '✓' : ''}</span>
                   <div className="cap">
                     {p.caption ?? p.ai_caption ?? <span className="muted">No caption</span>}
-                    <small>{[p.taken_at ? timeOf(p.taken_at) : 'no time', p.distance_m !== null ? `${p.distance_m} m` : p.lat !== null ? `${Number(p.lat).toFixed(4)}N ${Number(p.lng).toFixed(4)}E` : 'no geo-tag'].join(' · ')}</small>
+                    <small>{!p.taken_at && p.lat === null ? 'Location removed (came via WhatsApp)' : [p.taken_at ? timeOf(p.taken_at) : 'no time', p.distance_m !== null ? `${p.distance_m} m` : p.lat !== null ? `${Number(p.lat).toFixed(4)}N ${Number(p.lng).toFixed(4)}E` : 'no location'].join(' · ')}</small>
                   </div>
                 </button>
               );

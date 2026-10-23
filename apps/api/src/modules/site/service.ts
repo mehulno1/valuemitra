@@ -10,7 +10,7 @@ import { db, json, toJson } from '../../db/index.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { audit, type Actor } from '../../platform/audit.js';
 import { configById } from '../../platform/config.js';
-import { randomToken, sha256 } from '../../platform/crypto.js';
+import { randomToken, readableToken, sha256 } from '../../platform/crypto.js';
 import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
 import { getSettings } from '../../platform/settings.js';
@@ -25,7 +25,7 @@ export async function createVisitLink(actor: Actor, assignmentId: number) {
   const a = await assertCase(actor.firmId!, assignmentId);
   const settings = await getSettings(actor.firmId!);
   const asg = await db.selectFrom('assignments').select(['engineer_id']).where('id', '=', assignmentId).executeTakeFirstOrThrow();
-  const token = randomToken(24);
+  const token = readableToken(32);
   const expires = new Date(Date.now() + settings.engineer_link_hours * 3600_000);
   // a new link replaces older ones
   await db.updateTable('site_visits').set({ revoked_at: new Date() }).where('assignment_id', '=', assignmentId).where('revoked_at', 'is', null).where('status', '!=', 'submitted').execute();
@@ -35,10 +35,10 @@ export async function createVisitLink(actor: Actor, assignmentId: number) {
   const data = await caseData(assignmentId, actor.firmId!);
   const tpl = data.wording.messages?.engineer_link?.body ?? 'Site visit link: {{LINK}}';
   const message = data.wordingText(tpl, { LINK: url, LINK_EXPIRES: expires.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }), 'CASE.ENGINEER_NAME': data.case.engineer_name ?? 'Sir' })
-    ?? data.wordingText(tpl.replace(/\{\{[^}]*PROP\.ADDRESS[^}]*\}\}/g, '{{CASE.LOCALITY_HINT}}'), { LINK: url, LINK_EXPIRES: expires.toLocaleDateString('en-IN') })
+    ?? data.wordingText(tpl.replace(/\{\{[^}]*PROP\.ADDRESS[^}]*\}\}/g, '{{CASE.LOCALITY_HINT}}'), { LINK: url, LINK_EXPIRES: expires.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) })
     ?? `Site visit for ${a.case_no}: ${url}`;
   await db.insertInto('messages').values({ firm_id: actor.firmId!, assignment_id: assignmentId, channel: 'whatsapp', purpose: 'engineer_link', body: message, created_by: actor.id ?? null }).execute();
-  await audit(actor, { entityType: 'site_visit', entityId: Number(r.insertId), assignmentId, action: 'site.link', summary: `Site visit link created${existing ? ' (another visit already submitted)' : ''}; valid till ${expires.toISOString().slice(0, 16).replace('T', ' ')} UTC.` });
+  await audit(actor, { entityType: 'site_visit', entityId: Number(r.insertId), assignmentId, action: 'site.link', summary: `Site visit link created${existing ? ' (another visit already submitted)' : ''}; valid till ${expires.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} IST.` });
   return { url, expiresAt: expires, message };
 }
 

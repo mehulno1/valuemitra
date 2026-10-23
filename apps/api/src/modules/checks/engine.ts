@@ -25,7 +25,10 @@ interface CheckDef {
   applies?: string;
   fail?: string;
   params?: Record<string, unknown>;
+  acceptable?: boolean;             // false: the item can only be resolved, never accepted with a reason
 }
+
+interface CheckSetPayload { checks: CheckDef[]; banks: Record<string, Record<string, Partial<CheckDef>>>; accept?: { min_chars?: number; reasons?: string[] } }
 
 interface Result {
   code: string;
@@ -67,7 +70,10 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
         (r.source === 'document' || r.source === 'site_sheet') && !r.edited && r.confidence !== null && r.confidence < below &&
         r.candidates.every((c) => c.status !== 'accepted') && (codes.has(r.code) || [...codes].some((t) => data.wording.fields?.[t]?.includes(r.code))));
       if (!shaky.length) return null;
-      return { ...base, severity: sev, title: fill(def.title, { count: shaky.length }), detail: `${shaky.map((r) => `${r.label} (${Math.round(r.confidence!)}%)`).join(', ')}. ${def.detail ?? ''}`, actions: { fields: shaky.map((r) => r.code) } };
+      return {
+        ...base, severity: sev, title: fill(def.title, { count: shaky.length }), detail: `${shaky.map((r) => `${r.label} (${Math.round(r.confidence!)}%)`).join(', ')}. ${def.detail ?? ''}`,
+        actions: { fields: shaky.map((r) => r.code), values: shaky.map((r) => ({ code: r.code, label: r.label, display: r.display, confidence: Math.round(r.confidence!), page: r.page, docType: r.sourceDocType })) },
+      };
     }
     case 'pending_fields': {
       const pend = ctx.templateFields.map((c) => data.get(c)).filter((r) => r.state === 'pending');
@@ -98,7 +104,7 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
       const maxD = Number(def.params?.max_distance_m ?? 40);
       const problems: string[] = [];
       const geo = eng.filter((p) => p.lat !== null);
-      if (geo.length < eng.length) problems.push(`${eng.length - geo.length} photo(s) without geo-tag`);
+      if (geo.length < eng.length) problems.push(`${eng.length - geo.length} photo(s) without location (WhatsApp removes it)`);
       const far = geo.filter((p) => (p.distance_m ?? 0) > maxD);
       if (far.length) problems.push(`${far.length} photo(s) more than ${maxD} m from the map pin`);
       const dates = new Set(eng.filter((p) => p.taken_at).map((p) => new Date(p.taken_at).toISOString().slice(0, 10)));
@@ -147,7 +153,7 @@ function exprCheck(def: CheckDef, data: CaseData): Result | null {
 export async function runChecks(assignmentId: number, firmId: number, tx: Tx = db) {
   const data = await caseData(assignmentId, firmId, tx);
   if (data.case.signed_at) return summary(assignmentId, tx);
-  const cfg = data.case.check_version_id ? (await configById<{ checks: CheckDef[]; banks: Record<string, Record<string, Partial<CheckDef>>> }>(data.case.check_version_id, tx)).payload : { checks: [], banks: {} };
+  const cfg = await checkSet(data.case.check_version_id, tx);
   const [site, valuation, photos, comps, templateFields] = await Promise.all([
     tx.selectFrom('site_visits').select('id').where('assignment_id', '=', assignmentId).where('status', '=', 'submitted').executeTakeFirst(),
     tx.selectFrom('valuations').select('id').where('assignment_id', '=', assignmentId).where('is_current', '=', 1).executeTakeFirst(),
@@ -163,7 +169,9 @@ export async function runChecks(assignmentId: number, firmId: number, tx: Tx = d
     if (!def.enabled) continue;
     try {
       const r = def.type === 'builtin' ? await builtin(def, data, ctx, tx) : exprCheck(def, data);
-      if (r) results.push(...(Array.isArray(r) ? r : [r]));
+      const list = r ? (Array.isArray(r) ? r : [r]) : [];
+      if ((def.acceptable ?? def.builtin !== 'low_confidence') === false) for (const x of list) x.actions = { ...((x.actions as object) ?? {}), acceptable: false };
+      results.push(...list);
     } catch (e) {
       results.push({ code: def.code, severity: 'warn', title: `Check "${def.code}" could not run`, detail: (e as Error).message, target: null });
     }
@@ -186,8 +194,14 @@ export async function runChecks(assignmentId: number, firmId: number, tx: Tx = d
   return s;
 }
 
+async function checkSet(versionId: number | null, tx: Tx = db): Promise<CheckSetPayload> {
+  return versionId ? (await configById<CheckSetPayload>(versionId, tx)).payload : { checks: [], banks: {} };
+}
+
 export async function summary(assignmentId: number, tx: Tx = db) {
   const rows = await tx.selectFrom('check_results').selectAll().where('assignment_id', '=', assignmentId).execute();
+  const a = await tx.selectFrom('assignments').select('check_version_id').where('id', '=', assignmentId).executeTakeFirst();
+  const acc = (await checkSet(a?.check_version_id ?? null, tx)).accept ?? {};
   const order = { crit: 0, warn: 1, info: 2, ok: 3 } as Record<string, number>;
   const sorted = rows.sort((a, b) => order[a.severity] - order[b.severity] || (a.status === 'accepted' ? 1 : 0) - (b.status === 'accepted' ? 1 : 0));
   const crit = rows.filter((r) => r.severity === 'crit' && r.status === 'open').length;
@@ -199,18 +213,23 @@ export async function summary(assignmentId: number, tx: Tx = db) {
     ok: rows.filter((r) => r.severity === 'ok').length,
     info: rows.filter((r) => r.severity === 'info').length,
     items: sorted.map((r) => ({ ...r, actions: json(r.actions_json, null), actions_json: undefined })),
+    accept: { minChars: acc.min_chars ?? 15, reasons: acc.reasons ?? [] },
   };
 }
 
 /** Accept a warning with a reason (feeds threshold tuning in the learning system). */
 export async function acceptCheck(actor: Actor, assignmentId: number, checkId: number, reason: string) {
-  if (!reason?.trim()) throw badRequest('Give the reason for accepting this');
-  const a = await db.selectFrom('assignments').select(['id', 'signed_at']).where('id', '=', assignmentId).where('firm_id', '=', actor.firmId!).executeTakeFirst();
+  reason = reason?.trim() ?? '';
+  const a = await db.selectFrom('assignments').select(['id', 'signed_at', 'check_version_id']).where('id', '=', assignmentId).where('firm_id', '=', actor.firmId!).executeTakeFirst();
   if (!a) throw notFound('Assignment');
   if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
   const c = await db.selectFrom('check_results').selectAll().where('id', '=', checkId).where('assignment_id', '=', assignmentId).executeTakeFirst();
   if (!c) throw notFound('Check');
   if (c.severity === 'crit') throw badRequest('A critical item must be resolved, not accepted');
+  if (json<{ acceptable?: boolean } | null>(c.actions_json, null)?.acceptable === false) throw badRequest('This item cannot be accepted. Confirm or correct each value instead.');
+  const acc = (await checkSet(a.check_version_id)).accept ?? {};
+  const min = acc.min_chars ?? 15;
+  if (!(acc.reasons ?? []).includes(reason) && reason.length < min) throw badRequest(`Pick a reason from the list, or write one of at least ${min} characters`);
   await db.updateTable('check_results').set({ status: 'accepted', accepted_reason: reason.trim(), accepted_by: actor.id ?? null, accepted_at: new Date() }).where('id', '=', checkId).execute();
   await db.insertInto('feedback_events').values({ firm_id: actor.firmId!, assignment_id: assignmentId, kind: 'check.override', field_code: c.check_code, before_json: toJson({ severity: c.severity, title: c.title }), after_json: toJson({ accepted: true }), context_json: toJson({ reason }), user_id: actor.id ?? null }).execute();
   await audit(actor, { entityType: 'check', entityId: checkId, assignmentId, action: 'check.accept', summary: `Accepted: ${c.title}`, reason });

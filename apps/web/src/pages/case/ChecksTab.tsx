@@ -1,5 +1,5 @@
 // Checks: what blocks valuer review, what to look at, what passed. Conflicts resolve inline;
-// warnings can be accepted with a reason.
+// warnings can be accepted with a reason; values read with low confidence are confirmed or corrected.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { SEVERITY_LABEL, type Severity } from '@vm/shared';
@@ -12,7 +12,8 @@ interface Item {
   id: number; check_code: string; severity: Severity; title: string; detail: string | null; target_tab: string | null;
   status: 'open' | 'accepted' | 'passed' | 'info'; accepted_reason: string | null; accepted_at?: string | null; actions: any;
 }
-interface Summary { blocked: boolean; crit: number; warn: number; accepted: number; ok: number; info: number; items: Item[] }
+interface Summary { blocked: boolean; crit: number; warn: number; accepted: number; ok: number; info: number; items: Item[]; accept?: { minChars: number; reasons: string[] } }
+interface ShakyValue { code: string; label: string; display: string | null; confidence: number; page: number | null; docType: string | null }
 
 const TAB_KEYS = new Set(TABS.map((t) => t.key));
 
@@ -23,6 +24,7 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
   const q = useQuery({ queryKey: caseKey(c.id, 'checks'), queryFn: () => api.get<Summary>(`/api/assignments/${c.id}/checks`) });
   const [accepting, setAccepting] = useState<Item | null>(null);
   const [reason, setReason] = useState('');
+  const [other, setOther] = useState(false);
   const canEdit = can('edit') && !locked;
 
   const run = useMutation({
@@ -40,11 +42,20 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
     onSuccess: () => { toast('Accepted with reason'); setAccepting(null); setReason(''); refresh(); },
     onError: err,
   });
+  const confirmValue = useMutation({
+    mutationFn: (code: string) => api.post(`/api/assignments/${c.id}/fields/${encodeURIComponent(code)}/accept`),
+    onSuccess: () => { toast('Confirmed as read'); run.mutate(); },
+    onError: err,
+  });
 
   if (q.isLoading) return <Loading />;
   if (!q.data) return <Empty title="Checks could not be loaded" />;
   const s = q.data;
   const warnTotal = s.warn + s.accepted;
+  const minChars = s.accept?.minChars ?? 15;
+  const reasons = s.accept?.reasons ?? [];
+  const reasonOk = reasons.includes(reason) || reason.trim().length >= minChars;
+  const openAccept = (it: Item) => { setAccepting(it); setReason(''); setOther(!reasons.length); };
 
   return (
     <div className="grid gap-4">
@@ -62,6 +73,8 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
         <div className="panel overflow-hidden">
           {s.items.map((it, i) => {
             const conflict = it.actions && typeof it.actions.field === 'string' && Array.isArray(it.actions.options) ? (it.actions as { field: string; options: { label: string; display: string }[] }) : null;
+            const shaky: ShakyValue[] = it.status === 'open' && Array.isArray(it.actions?.values) ? it.actions.values : [];
+            const acceptable = it.actions?.acceptable !== false;
             const target = it.target_tab && TAB_KEYS.has(it.target_tab as TabKey) ? (it.target_tab as TabKey) : null;
             const sevClass = it.status === 'accepted' ? 'ok' : it.severity;
             return (
@@ -80,9 +93,20 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
                       ))}
                     </div>
                   )}
+                  {shaky.length > 0 && (
+                    <div className="mt-2 grid gap-1.5">
+                      {shaky.map((v) => (
+                        <div key={v.code} className="flex flex-wrap items-center gap-2 text-[13px]">
+                          <span className="min-w-[160px]"><b>{v.label}</b>: {v.display ?? '—'} <span className="sub">· {v.confidence}%{v.page ? ` · p. ${v.page}` : ''}</span></span>
+                          {canEdit && <button className="btn sm" disabled={confirmValue.isPending} onClick={() => confirmValue.mutate(v.code)}>Confirm as read</button>}
+                          {canEdit && <button className="btn sm ghost" onClick={() => go('ext')}>Correct</button>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="btns justify-end">
-                  {it.severity === 'warn' && it.status === 'open' && canEdit && <button className="btn sm ghost" onClick={() => { setAccepting(it); setReason(''); }}>Accept</button>}
+                  {it.severity === 'warn' && it.status === 'open' && canEdit && acceptable && <button className="btn sm ghost" onClick={() => openAccept(it)}>Accept</button>}
                   {target && <button className="btn sm" onClick={() => go(target)}>Open</button>}
                 </div>
               </div>
@@ -97,7 +121,7 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
         title="Accept this item"
         actions={<>
           <button className="btn ghost" onClick={() => setAccepting(null)}>Cancel</button>
-          <button className="btn pri" disabled={!reason.trim() || accept.isPending} onClick={() => accepting && accept.mutate({ id: accepting.id, reason: reason.trim() })}>Accept with reason</button>
+          <button className="btn pri" disabled={!reasonOk || accept.isPending} onClick={() => accepting && accept.mutate({ id: accepting.id, reason: reason.trim() })}>Accept with reason</button>
         </>}
       >
         {accepting && (
@@ -105,7 +129,16 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
             <div><b>{accepting.title}</b>{accepting.detail && <div className="sub">{accepting.detail}</div>}</div>
             <div className="field">
               <label>Reason (kept in the audit trail)</label>
-              <textarea rows={3} autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Bank expects the society name board photo" />
+              {reasons.length > 0 && (
+                <div className="grid gap-1.5">
+                  {reasons.map((r) => (
+                    <label key={r} className="flex items-center gap-2 text-[13px] font-normal"><input type="radio" name="vm-accept-reason" checked={!other && reason === r} onChange={() => { setOther(false); setReason(r); }} /> {r}</label>
+                  ))}
+                  <label className="flex items-center gap-2 text-[13px] font-normal"><input type="radio" name="vm-accept-reason" checked={other} onChange={() => { setOther(true); setReason(''); }} /> Other reason</label>
+                </div>
+              )}
+              {other && <textarea className="mt-2" rows={3} autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Bank expects the society name board photo" />}
+              {other && reason.trim().length < minChars && <div className="sub">At least {minChars} characters.</div>}
             </div>
             <p className="sub m-0">If the underlying facts change, the item opens again.</p>
           </div>

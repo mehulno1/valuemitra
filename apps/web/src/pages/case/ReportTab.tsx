@@ -13,6 +13,7 @@ interface Version { id: number; kind: string; draft_version: number; status: str
 interface RepStatus {
   draft_version: number; signed_at: string | null; report_no: string | null; report_rev: number; sent_for_review_at: string | null; stage: string;
   checks: { blocked: boolean; crit: number; warn: number };
+  pending: { code: string; label: string; pendingLabel: string | null }[];
   values: RepValue[]; rules: { realizable_pct: number; distress_pct: number }; versions: Version[];
 }
 interface FieldInfo { code: string; label: string; type: string; value: unknown; display: string | null; state: string }
@@ -75,7 +76,7 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
   const { user, can } = useAuth();
   const toast = useToast();
   const err = useErrorToast();
-  const q = useQuery({ queryKey: caseKey(c.id, 'report'), queryFn: () => api.get<RepStatus>(`/api/assignments/${c.id}/report`) });
+  const q = useQuery({ queryKey: caseKey(c.id, 'report', c.draft_version), queryFn: () => api.get<RepStatus>(`/api/assignments/${c.id}/report`) });
   const fq = useQuery({ queryKey: caseKey(c.id, 'report-fields'), queryFn: () => api.get<{ sections: { title: string; fields: FieldInfo[] }[] }>(`/api/assignments/${c.id}/fields`) });
 
   const host = useRef<HTMLDivElement>(null);
@@ -85,6 +86,7 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
   const [rendering, setRendering] = useState(true);
   const [renderErr, setRenderErr] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
+  const [confirmSign, setConfirmSign] = useState(false);
   const [edit, setEdit] = useState<{ code: string; label: string; value: string; multi: boolean; valTab: boolean } | null>(null);
   const [share, setShare] = useState<{ fileId: number; name: string; message: string } | null>(null);
   const [signErr, setSignErr] = useState<{ message: string; items: { title: string; detail?: string | null; target_tab?: string | null }[] } | null>(null);
@@ -184,8 +186,8 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
   });
   const sign = useMutation({
     mutationFn: () => api.post<{ reportNo: string }>(`/api/assignments/${c.id}/report/sign`),
-    onSuccess: (r) => { setSignErr(null); setShare(null); setEdit(null); toast(`Approved and signed. Report no. ${r.reportNo} issued.`); refresh(); },
-    onError: (e) => { if (e instanceof ApiError && Array.isArray(e.details)) setSignErr({ message: e.message, items: e.details as any[] }); else err(e); },
+    onSuccess: (r) => { setSignErr(null); setShare(null); setEdit(null); setConfirmSign(false); toast(`Approved and signed. Report no. ${r.reportNo} issued.`); refresh(); },
+    onError: (e) => { setConfirmSign(false); if (e instanceof ApiError && Array.isArray(e.details)) setSignErr({ message: e.message, items: e.details as any[] }); else err(e); },
   });
   const doReopen = useMutation({
     mutationFn: (reason: string) => api.post(`/api/assignments/${c.id}/report/reopen`, { reason }),
@@ -209,7 +211,10 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
     [`Distress · ${r.rules.distress_pct}%`, v('VAL.DISTRESS')],
     ['Guideline', v('VAL.GUIDELINE')],
   ];
-  const reasons = [r.checks.crit ? `${r.checks.crit} check(s) to resolve` : null, pending ? `${pending} field(s) pending` : null].filter(Boolean).join(' · ');
+  // the sign gate uses the server's count of pending report fields, recounted on every change (not the rendered preview)
+  const pend = r.pending ?? [];
+  const pendNames = pend.slice(0, 5).map((p) => p.label).join(', ') + (pend.length > 5 ? ` and ${pend.length - 5} more` : '');
+  const reasons = [r.checks.crit ? `${r.checks.crit} check(s) to resolve` : null, pend.length ? `${pend.length} field(s) pending: ${pendNames}` : null].filter(Boolean).join(' · ');
 
   return (
     <div className="grid gap-4">
@@ -244,13 +249,13 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
             ) : isValuer ? (
               <>
                 <div>
-                  <b className="block text-[15px]">{blocked || pending ? 'Cannot sign yet' : 'Ready to sign'}</b>
+                  <b className="block text-[15px]">{blocked || pend.length ? 'Cannot sign yet' : 'Ready to sign'}</b>
                   <div className="sub">
-                    {blocked || pending ? reasons || 'Open items on Checks.' : `${r.checks.warn ? `${r.checks.warn} item(s) flagged to look at on Checks. ` : ''}A report number${r.report_rev ? ` with /R${r.report_rev}` : ''} is issued when you sign.`}
+                    {blocked || pend.length ? reasons || 'Open items on Checks.' : `${r.checks.warn ? `${r.checks.warn} item(s) flagged to look at on Checks. ` : ''}A report number${r.report_rev ? ` with /R${r.report_rev}` : ''} is issued when you sign.`}
                   </div>
                 </div>
                 <div className="btns">
-                  <button className="btn pri" disabled={blocked || sign.isPending || !can('sign')} onClick={() => sign.mutate()}>{sign.isPending ? <span className="dots">Signing</span> : 'Approve and sign'}</button>
+                  <button className="btn pri" disabled={blocked || pend.length > 0 || sign.isPending || !can('sign')} onClick={() => setConfirmSign(true)}>{sign.isPending ? <span className="dots">Signing</span> : 'Approve and sign'}</button>
                   {can('edit') && <button className="btn" disabled={shareDraft.isPending} onClick={() => shareDraft.mutate()}>{shareDraft.isPending ? <span className="dots">Preparing draft</span> : 'Share draft with bank'}</button>}
                   {r.checks.crit > 0 && <button className="btn ghost" onClick={() => go('chk')}>Open checks</button>}
                 </div>
@@ -367,6 +372,23 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
           </div>
         </Panel>
       )}
+
+      <Modal
+        open={confirmSign}
+        onClose={() => setConfirmSign(false)}
+        title="Approve and sign this report?"
+        actions={<>
+          <button className="btn ghost" onClick={() => setConfirmSign(false)}>Cancel</button>
+          <button className="btn pri" disabled={sign.isPending} onClick={() => sign.mutate()}>{sign.isPending ? <span className="dots">Signing</span> : 'Sign and issue'}</button>
+        </>}
+      >
+        <div className="grid gap-2 text-[14px]">
+          <p className="m-0">A report number{r.report_rev ? ` with /R${r.report_rev}` : ''} is issued to <b>{c.bank_name}</b>, your signature and seal are placed, and the report is locked.</p>
+          {fmvV?.display && <p className="m-0">Fair market value: <b>{fmvV.display}</b></p>}
+          {r.checks.warn > 0 && <p className="m-0 text-warn">{r.checks.warn} item(s) are still flagged to look at on Checks.</p>}
+          <p className="sub m-0">Changes after signing need a reopen, which issues a revised number.</p>
+        </div>
+      </Modal>
 
       <Modal
         open={reopen}
