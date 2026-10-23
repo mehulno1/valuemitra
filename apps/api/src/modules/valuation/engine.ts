@@ -13,6 +13,7 @@ export interface ComparableIn {
   hasLift: boolean | null;
   buildingAge: number | null;
   distanceKm: number | null;
+  floor?: number | null;
   override?: { adjustments?: Adjustment[]; weight?: number; included?: boolean } | null;
 }
 
@@ -30,6 +31,8 @@ export interface ComparableOut {
   exclusionReason: string | null;
   oldFlag: boolean;
   guidance: boolean;
+  outlier?: boolean;
+  manual?: boolean;
 }
 
 export interface Subject {
@@ -37,6 +40,16 @@ export interface Subject {
   hasLift: boolean | null;
   buildingAge: number | null;
   valuationDate: Date;
+  floor?: number | null;
+}
+
+/** "3rd Floor", "Ground floor", "7" → floor number; null when not stated. */
+export function floorNo(x: unknown): number | null {
+  if (x === null || x === undefined || x === '') return null;
+  const t = String(x).toLowerCase();
+  if (/ground|\bgr?\b|stilt|podium/.test(t) && !/\d/.test(t)) return 0;
+  const m = t.match(/-?\d+/);
+  return m ? Number(m[0]) : null;
 }
 
 const months = (a: Date, b: Date) => (b.getTime() - a.getTime()) / (30.4375 * 86400_000);
@@ -53,6 +66,13 @@ export function adjustComparable(c: ComparableIn, s: Subject, r: Rules): Compara
     const older = c.buildingAge !== null && s.buildingAge !== null && c.buildingAge - s.buildingAge >= 10;
     if (newer || (c.hasLift && s.hasLift === false)) adj.push({ code: 'quality', label: newer ? 'Newer building' : 'Building with lift', pct: r.quality_adjustments.newer_or_lift_pct });
     else if (older) adj.push({ code: 'quality', label: 'Older building', pct: r.quality_adjustments.older_pct });
+    // higher floors fetch more in a building with a lift (per floor, capped; off when the rule is 0)
+    const per = r.floor_pct_per_floor ?? 0;
+    if (per && c.floor !== null && c.floor !== undefined && s.floor !== null && s.floor !== undefined && c.floor !== s.floor && s.hasLift !== false) {
+      const cap = r.floor_max_pct ?? 5;
+      const pct = Math.max(-cap, Math.min(cap, Math.round((s.floor - c.floor) * per * 10) / 10));
+      if (pct) adj.push({ code: 'floor', label: `Floor ${c.floor} vs ${s.floor}`, pct });
+    }
   }
   const adjustments = c.override?.adjustments ?? adj;
   const adjustedRate = adjustments.reduce((x, a) => x * (1 + a.pct / 100), rate);
@@ -75,7 +95,23 @@ export function adjustComparable(c: ComparableIn, s: Subject, r: Rules): Compara
     weightLabel: weight >= 0.8 ? 'High' : weight >= 0.4 ? 'Medium' : 'Low',
     oldFlag: ageMonths !== null && ageMonths > window && included,
     guidance,
+    manual: c.override?.included !== undefined,
   };
+}
+
+/** Leave out comparables far from the median of the rest (e.g. a luxury tower listing); the valuer can include them again. */
+export function flagOutliers<T extends ComparableOut & { isSubject?: boolean }>(cs: T[], r: Rules): T[] {
+  const lim = (r.outlier_pct ?? 30) / 100;
+  if (!lim) return cs;
+  const inc = cs.filter((c) => c.included && c.weight > 0 && !c.isSubject);
+  if (inc.length < 3) return cs;
+  const med = weightedQuantile(cs.filter((c) => c.included && c.weight > 0).map((c) => ({ v: c.adjustedRate, w: c.weight })), 0.5);
+  return cs.map((c) => {
+    if (!c.included || c.isSubject || c.manual || !med) return c;
+    const off = (c.adjustedRate - med) / med;
+    if (Math.abs(off) <= lim) return c;
+    return { ...c, included: false, outlier: true, exclusionReason: `Outlier: ${Math.round(Math.abs(off) * 100)}% ${off > 0 ? 'above' : 'below'} the median. Include it again if it is truly comparable.` };
+  });
 }
 
 function weightedQuantile(items: { v: number; w: number }[], q: number) {

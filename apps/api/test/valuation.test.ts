@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adjustComparable, computeValues, propose, type ComparableIn } from '../src/modules/valuation/engine';
+import { adjustComparable, computeValues, flagOutliers, floorNo, propose, type ComparableIn } from '../src/modules/valuation/engine';
 import { RULE_SET } from '../src/seed/config';
 import { rulesFor } from '../src/modules/master/rules';
 import { amountInWords, inr } from '@vm/shared';
@@ -88,5 +88,30 @@ describe('area basis', () => {
     const v = computeValues({ method: 'market_comparison', basisArea: 56.67, rate: 150000, unitLabel: 'sq.m.', extras: [], bua: 732 }, r);
     expect(v.lines[0].working).toBe('56.67 sq.m. × Rs. 150000');
     expect(v.unit).toBe(8500500);
+  });
+});
+
+describe('outliers and floors', () => {
+  const sub = { ...subject, hasLift: true, floor: 3 };
+  const base = [12000, 12500, 12800, 13200].map((rate, i) => C(i + 1, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * rate }));
+  it('leaves out a comparable far from the median, unless the valuer included it', () => {
+    const tower = C(9, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * 33333 });
+    const out = flagOutliers([...base, tower].map((c) => ({ ...adjustComparable(c, sub, r), isSubject: false })), r);
+    expect(out.find((x) => x.id === 9)!.included).toBe(false);
+    expect(out.find((x) => x.id === 9)!.exclusionReason).toMatch(/^Outlier/);
+    expect(out.filter((x) => x.included).length).toBe(4);
+    const kept = flagOutliers([...base, { ...tower, override: { included: true } }].map((c) => ({ ...adjustComparable(c, sub, r), isSubject: false })), r);
+    expect(kept.find((x) => x.id === 9)!.included).toBe(true);
+  });
+  it('adjusts for the floor in a lift building, capped', () => {
+    const lower = adjustComparable(C(1, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * 12000, floor: 1 }), sub, r);
+    expect(lower.adjustments.find((a) => a.code === 'floor')?.pct).toBe(1);
+    const far = adjustComparable(C(2, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * 12000, floor: 30 }), sub, r);
+    expect(far.adjustments.find((a) => a.code === 'floor')?.pct).toBe(-5);
+    const noLift = adjustComparable(C(3, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * 12000, floor: 1 }), { ...sub, hasLift: false }, r);
+    expect(noLift.adjustments.some((a) => a.code === 'floor')).toBe(false);
+  });
+  it('reads floor numbers', () => {
+    expect([floorNo('3rd Floor'), floorNo('Ground floor'), floorNo('7'), floorNo(null)]).toEqual([3, 0, 7, null]);
   });
 });

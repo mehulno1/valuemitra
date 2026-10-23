@@ -255,10 +255,10 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
 
         {documents.some((d) => d.status === 'read') && (
           <Panel title="Seen before" right={seen.data?.length ? <span className="chip c-site">{seen.data.length} match{seen.data.length > 1 ? 'es' : ''}</span> : undefined}>
-            <p className="sub mb-2">Matched on survey no., building and society name in the firm's records.</p>
             {!seen.data?.length ? (
-              <div className="muted text-[13px]">No earlier report for this flat, building or society.</div>
-            ) : (
+              <div className="muted text-[13px]">No earlier case of the firm with this survey no., building or society.</div>
+            ) : (<>
+              <p className="sub mb-2">Earlier cases of the firm with the same survey no., building or society:</p>
               <ul className="grid gap-2">
                 {seen.data.map((s) => (
                   <li key={s.assignmentId} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line pb-2 text-[13px] last:border-0">
@@ -272,7 +272,7 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
                   </li>
                 ))}
               </ul>
-            )}
+            </>)}
             <p className="sub mt-2">Used as internal guidance for the rate. Earlier opinions are not cited as evidence in the report.</p>
           </Panel>
         )}

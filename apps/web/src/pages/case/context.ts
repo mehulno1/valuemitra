@@ -11,6 +11,8 @@ export interface CaseHeader {
   purpose: string;
   stage: string;
   stage_label: string;
+  valuation_applied?: boolean;
+  site_received?: boolean;
   created_at: string;
   updated_at: string;
   bank_contact: string | null;

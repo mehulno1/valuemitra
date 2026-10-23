@@ -22,10 +22,30 @@ interface ValView {
   rules: { realizable_pct: number; distress_pct: number; gv_variation_pct: number; rate_deviation_pct: number; building_cost_per_sqft: number; rental_yield_pct: number; value_rounding_step: number; rent_rounding_step: number; loading_pct: number; saleable_factor: number };
   bua: unknown;
   current: { adopted_rate: unknown; reason: string | null; values: Values; extras: Extra[]; draft_version: number; created_at: string; basis: string; rate_unit: Unit } | null;
+  parking: { count: number; text: string | null; source: string | null } | null;
   justification: { display: string | null; state: string; pendingLabel: string | null; edited: boolean };
   history: { id: number; adopted_rate: unknown; proposed_rate: unknown; reason: string | null; draft_version: number; created_at: string; by: string | null; fmv: number }[];
 }
 interface Custom { label: string; qty: string; rate: string }
+interface Factor { k: string; pct: string; note: string }
+
+// why the adopted rate departs from the evidence: each factor with its figure, then any other note
+const FACTORS = ['Floor / view', 'Condition / maintenance', 'Amenities', 'Recent sale nearby', 'Location within the locality', 'Size / layout'];
+const sign = (x: number) => (x > 0 ? `+${x}` : x < 0 ? `−${Math.abs(x)}` : '0');
+const pctOf = (s: string) => { const v = Number(s.replace('−', '-').replace(/[^\d.\-]/g, '')); return Number.isFinite(v) ? v : 0; };
+function composeReason(fs: Factor[], note: string) {
+  const parts = fs.filter((f) => f.k && pctOf(f.pct)).map((f) => `${f.k} ${sign(pctOf(f.pct))}%${f.note.trim() ? ` (${f.note.trim()})` : ''}`);
+  const t = note.trim();
+  return [parts.join('; '), t].filter(Boolean).join(parts.length && t ? '. ' : '') || '';
+}
+function parseReason(r: string | null): { fs: Factor[]; note: string } {
+  if (!r) return { fs: [], note: '' };
+  const fs: Factor[] = [];
+  let rest = r;
+  const re = new RegExp(`^(${FACTORS.map((f) => f.replace(/[/]/g, '\\/')).join('|')}) ([+−-]?[\\d.]+)%(?: \\(([^)]*)\\))?(?:; |\\. |$)`);
+  for (let m = rest.match(re); m; m = rest.match(re)) { fs.push({ k: m[1], pct: m[2].replace('−', '-'), note: m[3] ?? '' }); rest = rest.slice(m[0].length); }
+  return { fs, note: rest };
+}
 
 const n = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const num = (s: string) => { const d = s.replace(/[^\d.]/g, ''); return d ? Number(d) : 0; };
@@ -45,7 +65,9 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const q = useQuery({ queryKey: caseKey(c.id, 'valuation'), queryFn: () => api.get<ValView>(`/api/assignments/${c.id}/valuation`) });
 
   const [rate, setRate] = useState('');
-  const [reason, setReason] = useState('');
+  const [factors, setFactors] = useState<Factor[]>([]);
+  const [note, setNote] = useState('');
+  const reason = composeReason(factors, note);
   const [pkQty, setPkQty] = useState('');
   const [pkRate, setPkRate] = useState('');
   const [interior, setInterior] = useState('');
@@ -71,10 +93,13 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
     // evidence is per sq.ft. built-up: convert it to the chosen area and unit
     const ev = n(d.proposal?.rate) !== null && opt?.sqft && bua0 ? Math.round((n(d.proposal!.rate)! * bua0 / inUnit(opt.sqft, d.unit)) / 100) * 100 : n(d.proposal?.rate);
     setRate(String(n(cur?.adopted_rate) ?? ev ?? ''));
-    setReason(cur?.reason ?? '');
+    const pr = parseReason(cur?.reason ?? null);
+    setFactors(pr.fs);
+    setNote(pr.note);
     const ex = cur?.extras ?? [];
     const pk = ex.find((e) => e.code === 'parking');
-    setPkQty(pk ? String(pk.qty ?? 1) : '');
+    // no valuation yet: the parking count read from the documents
+    setPkQty(pk ? String(pk.qty ?? 1) : !cur && d.parking?.count ? String(d.parking.count) : '');
     setPkRate(pk ? String(pk.rate ?? pk.amount ?? '') : '');
     const it = ex.find((e) => e.code === 'interior');
     setInterior(it ? String(it.amount ?? (it.qty ?? 1) * (it.rate ?? 0)) : '');
@@ -118,6 +143,8 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const diff = prop && rateN ? (rateBua - prop.rate) / prop.rate : 0;
   const differs = !!prop && !!rateN && Math.abs(diff) > 0.001;
   const outside = !!prop && !!rateN && Math.abs(diff) * 100 > r.rate_deviation_pct;
+  const factorSum = factors.reduce((t, f) => t + (f.k ? pctOf(f.pct) : 0), 0);
+  const explained = factors.some((f) => f.k && pctOf(f.pct)) || note.trim().length >= 15;
 
   // live preview with the same rules and rounding steps the server applies
   const extrasTotal = extras.reduce((t, e) => t + (e.amount ?? (e.qty ?? 1) * (e.rate ?? 0)), 0);
@@ -132,7 +159,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const submit = () => {
     if (!(rateN > 0)) return toast(`Enter the rate per ${ul}, for example ${unit === 'sqm' ? '137800' : '12800'}`, 'err');
     if (!area) return toast(`The ${(opt?.label ?? 'area for valuation').toLowerCase()} is not known yet`, 'err');
-    if (outside && !reason.trim()) return toast(`Record the reason: the rate is more than ${r.rate_deviation_pct}% away from the evidence-backed rate`, 'err');
+    if (outside && !explained) return toast(`Record the reason: the rate is more than ${r.rate_deviation_pct}% away from the evidence-backed rate. Add the factors with their figures, or a note of at least 15 characters.`, 'err');
     apply.mutate({ rate: rateN, reason: reason.trim() || null, extras, ...(d.choosesBasis ? { basis, unit, saveDefault } : {}) });
   };
 
@@ -216,21 +243,35 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
               <label>Rate adopted, Rs. per {ul} of {(opt?.label ?? 'built-up area').toLowerCase()}</label>
               <input className="mono" inputMode="numeric" value={rate} disabled={!canApply} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 12800" style={{ fontSize: 18 }} />
               {differs && (
-                <div className={`hint ${outside && !reason.trim() ? 'text-crit' : ''}`}>
-                  Adopted rate is {Math.abs(Math.round(diff * 1000) / 10)}% {diff > 0 ? 'above' : 'below'} the evidence-backed rate{basis !== 'bua' || unit !== 'sqft' ? ` (Rs. ${inr(Math.round(rateBua))} per sq.ft. built-up)` : ''}. {reason.trim() ? 'Reason recorded.' : outside ? 'Record the reason below.' : 'No reason recorded yet.'}
+                <div className={`hint ${outside && !explained ? 'text-crit' : ''}`}>
+                  Adopted rate is {Math.abs(Math.round(diff * 1000) / 10)}% {diff > 0 ? 'above' : 'below'} the evidence-backed rate{basis !== 'bua' || unit !== 'sqft' ? ` (Rs. ${inr(Math.round(rateBua))} per sq.ft. built-up)` : ''}. {explained ? 'Reason recorded.' : outside ? 'Record the reason below.' : 'No reason recorded yet.'}
                 </div>
               )}
             </div>
-            <div className="field">
-              <label>Reason, if different from the evidence-backed rate{outside ? ' (required)' : ' (optional)'}</label>
-              <textarea rows={3} value={reason} disabled={!canApply} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Local broker enquiries put flats in this area at Rs. 14,000 to 16,000 per sq.ft. BUA; listings are in larger buildings." style={outside && !reason.trim() ? { borderColor: 'var(--crit)' } : undefined} />
+            <div className="grid gap-2">
+              <div className="text-[13px] font-semibold">Reason, if different from the evidence-backed rate{outside ? ' (required)' : ' (optional)'}</div>
+              {factors.map((f, i) => (
+                <div key={i} className="grid grid-cols-[1fr_80px_auto] gap-2 sm:grid-cols-[1.2fr_80px_1.4fr_auto]">
+                  <select value={f.k} disabled={!canApply} aria-label="Factor" onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))}>
+                    {FACTORS.map((k) => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                  <input className="mono" inputMode="decimal" value={f.pct} disabled={!canApply} aria-label="Effect on the rate, %" placeholder="+5 %" onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, pct: e.target.value } : x)))} />
+                  <input className="col-span-3 sm:col-span-1" value={f.note} disabled={!canApply} aria-label="Details" placeholder="e.g. 8th floor, open creek view" onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))} />
+                  {canApply && <button className="btn sm ghost row-start-1 col-start-3 sm:col-start-4" aria-label="Remove factor" onClick={() => setFactors(factors.filter((_, j) => j !== i))}>Remove</button>}
+                </div>
+              ))}
+              {canApply && <div><button className="btn sm ghost" onClick={() => setFactors([...factors, { k: FACTORS.find((k) => !factors.some((f) => f.k === k)) ?? FACTORS[0], pct: '', note: '' }])}>Add a factor</button></div>}
+              {differs && factors.length > 0 && (
+                <div className="sub text-[12.5px]">Factors add up to {sign(Math.round(factorSum * 10) / 10)}% against a gap of {sign(Math.round(diff * 1000) / 10)}% from the evidence.</div>
+              )}
+              <textarea rows={2} value={note} disabled={!canApply} onChange={(e) => setNote(e.target.value)} aria-label="Other reason" placeholder="Anything else, e.g. local broker enquiries put flats here at Rs. 14,000 to 16,000 per sq.ft. built-up." style={outside && !explained ? { borderColor: 'var(--crit)' } : undefined} />
             </div>
 
             <div>
               <div className="eyebrow mb-2">Extras</div>
               <div className="grid gap-3">
                 <div className="grid grid-cols-[1fr_1fr] gap-3 sm:grid-cols-[1.4fr_1fr_1fr]">
-                  <div className="col-span-2 self-end text-[13px] font-semibold sm:col-span-1">Car parking</div>
+                  <div className="col-span-2 self-end text-[13px] font-semibold sm:col-span-1">Car parking{d.parking && <div className="sub font-normal">{d.parking.count} as per {(d.parking.source ?? 'documents').replace(/_/g, ' ')}{d.parking.text ? `: ${d.parking.text}` : ''}</div>}</div>
                   <div className="field"><label>Number</label><input className="mono" inputMode="numeric" value={pkQty} disabled={!canApply} onChange={(e) => setPkQty(e.target.value)} placeholder="0" /></div>
                   <div className="field"><label>Rs. each</label><input className="mono" inputMode="numeric" value={pkRate} disabled={!canApply} onChange={(e) => setPkRate(e.target.value)} placeholder="0" /></div>
                 </div>

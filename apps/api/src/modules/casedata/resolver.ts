@@ -45,7 +45,7 @@ export interface Resolved {
   confidence: number | null;
   edited: boolean;
   candidates: Candidate[];
-  conflict: { message: string; options: { label: string; value: unknown; display: string; basis?: string; code?: string; candidateId?: number }[] } | null;
+  conflict: { message: string; minor?: boolean; options: { label: string; value: unknown; display: string; basis?: string; code?: string; candidateId?: number }[] } | null;
   notProvided?: boolean;       // its documents are marked not provided / not applicable on the checklist
   formula?: string | null;     // derived arithmetic in words, e.g. "Built-up area 465 ÷ (1 + loading % 20 ÷ 100) = 388"
   ruleKeys?: string[];         // bank rule keys the derivation uses
@@ -110,6 +110,19 @@ function dms(lat: unknown, lng: unknown): string | null {
   return `${f(a, 'N', 'S')} ${f(b, 'E', 'W')}`;
 }
 
+/** Text compared for conflicts: titles dropped, common abbreviations spelled one way (S.No. = Survey No., (P) = Part). */
+export function sameText(v: unknown): string {
+  return ` ${String(v ?? '').toLowerCase()} `
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(mr|mrs|ms|miss|shri|shree|smt|kum|kumari|dr|m\/s|late)\b/g, ' ')
+    .replace(/\b(s|sr|survey|sy)\s*(no|number)\b/g, ' survey ')
+    .replace(/\b(h|hissa)\s*(no|number)\b/g, ' hissa ')
+    .replace(/\b(c\s*t\s*s|cts)\s*(no|number)?\b/g, ' cts ')
+    .replace(/\(\s*(p|pt|part)\s*\)|\bpt\b/g, ' part ')
+    .replace(/\b(flat|unit|shop|office)\s*(no|number)\b/g, ' $1 ')
+    .replace(/[^a-z0-9ऀ-ॿ]/g, '');
+}
+
 export const EXPR_FNS: Record<string, (...a: unknown[]) => unknown> = {
   year: (d) => toDate(d)?.getUTCFullYear() ?? null,
   years_between: (a, b) => {
@@ -117,6 +130,8 @@ export const EXPR_FNS: Record<string, (...a: unknown[]) => unknown> = {
     const y = toDate(b) ?? new Date();
     return x ? y.getUTCFullYear() - x.getUTCFullYear() : null;
   },
+  /** whole days from a to b (negative when b is earlier) */
+  days_between: (a, b) => { const x = toDate(a); const y = toDate(b); return x && y ? Math.round((y.getTime() - x.getTime()) / 86400_000) : null; },
   date: (d) => { const x = toDate(d); return x ? ddmmyyyy(x) : null; },
   /** financial year of a date, as ready reckoner years are labelled: 2026-27 */
   fy: (d) => { const x = toDate(d); return x ? `${financialYear(x).start}-${financialYear(x).short.slice(3)}` : null; },
@@ -460,7 +475,7 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     }
     // conflicts between documents: same field read differently from two document types
     if (docCands.length > 1 && !r.edited) {
-      const norm = (x: Candidate) => (NUMERIC.has(f.type) ? String(parseRaw(f, x)) : String(x.value ?? '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+      const norm = (x: Candidate) => (NUMERIC.has(f.type) ? String(parseRaw(f, x)) : sameText(x.value));
       const distinct = new Map<string, Candidate>();
       for (const d of docCands) if (!distinct.has(norm(d))) distinct.set(norm(d), d);
       const tol = NUMERIC.has(f.type) ? 0.02 : 0;
@@ -469,8 +484,14 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
         ? vals.some((v) => Math.abs(Number(parseRaw(f, v)) - Number(r.value)) / Math.max(1, Math.abs(Number(r.value))) > tol)
         : vals.length > 1 && f.type !== 'longtext';
       if (differs) {
+        // one reading contains the other (e.g. survey no. with and without the hissa): information, not a conflict to resolve
+        const keys = vals.map(norm).sort((a, b) => b.length - a.length);
+        const minor = !NUMERIC.has(f.type) && keys.slice(1).every((k) => k && keys[0].includes(k));
+        const fuller = minor ? vals.find((v) => norm(v) === keys[0]) : null;
+        if (fuller && !cands.some((x) => x.chosen)) setFrom(r, f, fuller, false);
         r.conflict = {
-          message: `${f.label} reads differently in ${vals.map((v) => v.docType).join(' and ')}`,
+          minor,
+          message: minor ? `${f.label}: ${vals.map((v) => v.docType).join(' and ')} give the same value, one more fully. The fuller reading is used; pick another if needed.` : `${f.label} reads differently in ${vals.map((v) => v.docType).join(' and ')}`,
           options: vals.map((v) => ({ label: v.docType ?? v.sourceType, value: parseRaw(f, v), display: formatValue(f.type, parseRaw(f, v), f.unit) ?? '', candidateId: v.id })),
         };
       }

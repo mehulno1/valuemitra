@@ -173,7 +173,8 @@ export async function readDocument(documentId: number) {
   // 1. sort into documents (a single photo is one document; skip the classification call only if it is clearly one page)
   const { parts } = await classify(a.firm_id, pages, types, await pageImages(pages, weak, 6));
   await db.deleteFrom('document_parts').where('document_id', '=', documentId).execute();
-  const summary: string[] = [];
+  const summary: (string | { title: string; pages: number[] })[] = [];
+  const kycSet = new Set<number>();
   let kycPages = 0;
   for (const p of parts) {
     const t = types.find((x) => x.key === p.doc_type);
@@ -188,6 +189,7 @@ export async function readDocument(documentId: number) {
     const partId = Number(r.insertId);
     if (isKyc) {
       kycPages += sorted.length;
+      for (const x of sorted) kycSet.add(x);
       // KYC is never placed in a report; mark its page images so retention deletes them
       const ids = pages.filter((x) => sorted.includes(x.page_no)).flatMap((x) => [x.image_file_id, x.thumb_file_id]).filter(Boolean) as number[];
       if (ids.length) await db.updateTable('files').set({ is_kyc: 1 }).where('id', 'in', ids).execute();
@@ -202,7 +204,7 @@ export async function readDocument(documentId: number) {
       summary.push(`${p.title} moved to site photos`);
       continue;
     }
-    summary.push(`${p.title} (pp. ${sorted.join(', ')})`);
+    summary.push({ title: p.title, pages: sorted });
     // 2. extract fields from this document
     const partPages = pages.filter((x) => sorted.includes(x.page_no)).map((x, i) => ({ ...x, page_no: i + 1, orig_page: x.page_no }));
     const imgs = await pageImages(partPages, (x) => weak(x) || ['oc', 'index2', 'index2_prev'].includes(p.doc_type), 6);
@@ -213,13 +215,16 @@ export async function readDocument(documentId: number) {
     })));
   }
   if (kycPages) await applyKyc(documentId, a.firm_id);
+  // page numbers as the document list shows them: after KYC pages are taken out of the stored file
+  const renumber = (n: number) => n - [...kycSet].filter((k) => k < n).length;
+  const said = summary.map((x) => (typeof x === 'string' ? x : `${x.title} (${x.pages.length > 1 ? 'pp.' : 'p.'} ${x.pages.map(renumber).join(', ')})`));
   await db.updateTable('documents').set({ status: 'read' }).where('id', '=', documentId).execute();
   await syncChecklist(a.id);
   const actor = systemActor(a.firm_id);
   const docs = parts.filter((p) => !types.find((t) => t.key === p.doc_type)?.is_kyc && p.doc_type !== 'site_photo').length;
   await audit(actor, {
     entityType: 'document', entityId: documentId, assignmentId: a.id, action: 'document.read',
-    summary: `${d.channel ? `Received on ${d.channel}` : 'Uploaded'}: ${pageCount} page(s). Sorted into ${docs} document(s)${kycPages ? `; KYC pages (${kycPages}) kept out of the report` : ''}. ${summary.join('; ')}.`,
+    summary: `${d.channel ? `Received on ${d.channel}` : 'Uploaded'}: ${pageCount} page(s). Sorted into ${docs} document(s)${kycPages ? `; KYC pages (${kycPages}) removed; page numbers below are after removal` : ''}. ${said.join('; ')}.`,
   });
   await publish({ type: 'document.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { documentId } });
 }

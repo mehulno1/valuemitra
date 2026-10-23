@@ -205,7 +205,7 @@ export async function caseRoutes(app: FastifyInstance) {
     return reply.send(docx);
   });
   app.get('/api/assignments/:id/report/draft.pdf', async (req, reply) => {
-    const pdf = await reports.draftPdf(req.auth!.firmId, idParam(req));
+    const pdf = await reports.draftPdf(req.auth!.firmId, idParam(req), { finalLayout: (req.query as any)?.final === '1' });
     reply.header('Content-Type', 'application/pdf').header('Cache-Control', 'no-store');
     return reply.send(pdf);
   });

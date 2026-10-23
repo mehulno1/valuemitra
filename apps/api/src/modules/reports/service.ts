@@ -67,12 +67,13 @@ export async function shareDraft(actor: Actor, assignmentId: number) {
 }
 
 /** Watermarked draft PDF for viewing or printing (not recorded as shared with the bank). */
-export async function draftPdf(firmId: number, assignmentId: number) {
+export async function draftPdf(firmId: number, assignmentId: number, opts: { finalLayout?: boolean } = {}) {
   const a = await db.selectFrom('assignments').select(['signed_at']).where('id', '=', assignmentId).where('firm_id', '=', firmId).executeTakeFirst();
   if (!a) throw notFound('Assignment');
-  const { docx } = await renderReport(assignmentId, firmId, a.signed_at ? 'final' : 'draft');
+  // "Preview final PDF": the pages exactly as they will be issued, marked PREVIEW, so layout is checked before signing
+  const { docx } = await renderReport(assignmentId, firmId, a.signed_at ? 'final' : opts.finalLayout ? 'final_preview' : 'draft');
   const pdf = await docxToPdf(docx);
-  return a.signed_at ? pdf : watermark(pdf);
+  return a.signed_at ? pdf : watermark(pdf, opts.finalLayout ? 'PREVIEW' : 'DRAFT');
 }
 
 export async function sendToValuer(actor: Actor, assignmentId: number) {

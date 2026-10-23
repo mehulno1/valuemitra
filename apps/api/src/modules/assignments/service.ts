@@ -217,7 +217,9 @@ export async function assignmentHeader(firmId: number, id: number) {
     .executeTakeFirst();
   if (!a) throw notFound('Assignment');
   const stages = await db.selectFrom('stage_history').select(['from_stage', 'to_stage', 'created_at']).where('assignment_id', '=', id).orderBy('id').execute();
-  return { ...a, stage_label: stageLabel(a.stage), stages, borrower_name: a.personal_data_removed_at ? '(personal data removed)' : a.borrower_name };
+  const val = await db.selectFrom('valuations').select('id').where('assignment_id', '=', id).where('is_current', '=', 1).executeTakeFirst();
+  const visit = await db.selectFrom('site_visits').select('id').where('assignment_id', '=', id).where('status', '=', 'submitted').executeTakeFirst();
+  return { ...a, stage_label: stageLabel(a.stage), stages, valuation_applied: !!val, site_received: !!visit, borrower_name: a.personal_data_removed_at ? '(personal data removed)' : a.borrower_name };
 }
 
 export async function activity(firmId: number, id: number) {

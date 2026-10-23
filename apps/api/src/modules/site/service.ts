@@ -62,7 +62,7 @@ export async function publicVisitInfo(token: string) {
   const { visit, assignment } = await visitByToken(token);
   const profile = assignment.profile_version_id ? (await configById(assignment.profile_version_id)).payload : {};
   const addr = await db.selectFrom('field_values').select('value_text').where('assignment_id', '=', assignment.id).where('field_code', '=', 'PROP.ADDRESS').where('is_current', '=', 1).orderBy('confidence', 'desc').executeTakeFirst();
-  const photos = await db.selectFrom('site_photos').select(['id', 'created_at']).where('site_visit_id', '=', visit.id).orderBy('id').execute();
+  const photos = await db.selectFrom('site_photos').select(['id', 'created_at', 'ai_caption']).where('site_visit_id', '=', visit.id).orderBy('id').execute();
   const sheet = await db.selectFrom('documents').select(['id', 'created_at']).where('assignment_id', '=', assignment.id).where('role', '=', 'site_sheet').orderBy('id', 'desc').executeTakeFirst();
   const after = (d: Date) => !!visit.submitted_at && d > visit.submitted_at;
   return {
@@ -70,9 +70,31 @@ export async function publicVisitInfo(token: string) {
     address: addr?.value_text ?? assignment.locality_hint, status: visit.status, expiresAt: visit.expires_at,
     prompts: profile.photo_prompts ?? [], minPhotos: profile.min_photos ?? 9, photos: photos.length, sheetUploaded: !!sheet,
     photoIds: photos.map((p) => p.id),
+    // checklist items a photo already shows (from the captions read as photos arrive)
+    covered: coveredPrompts(profile.photo_prompts ?? [], photos.map((p) => p.ai_caption).filter(Boolean) as string[]),
+    reading: photos.some((p) => !p.ai_caption) && !!(await db.selectFrom('jobs').select('id').where('dedupe_key', '=', `photos:${assignment.id}`).where('status', 'in', ['queued', 'running']).executeTakeFirst()),
     // uploads after the visit was submitted; only these need sending again
     newSinceSubmit: photos.filter((p) => after(p.created_at)).length + (sheet && after(sheet.created_at) ? 1 : 0),
   };
+}
+
+const words = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z ]/g, ' ').split(/\s+/).filter((w) => w.length > 2);
+const GENERIC = new Set(['building', 'room', 'view', 'open', 'area', 'site', 'photo', 'front', 'side', 'inside', 'outside', 'flat', 'the', 'with', 'and', 'from', 'unit', 'property']);
+/** Indexes of the photo prompts a caption matches: same words, or one contains the other. */
+export function coveredPrompts(prompts: string[], captions: string[]): number[] {
+  const caps = captions.map(words);
+  return prompts.flatMap((p, i) => {
+    const pw = words(p);
+    if (!pw.length) return [];
+    const hit = caps.some((cw) => {
+      if (!cw.length) return false;
+      const a = cw.join(' '), b = pw.join(' ');
+      if (a.includes(b) || b.includes(a)) return true;
+      // one telling word in common is enough (balcony, kitchen, selfie); generic words do not count
+      return pw.some((w) => !GENERIC.has(w) && cw.includes(w));
+    });
+    return hit ? [i] : [];
+  });
 }
 
 /** Thumbnail of a photo uploaded through this visit link (the token is the credential). */
@@ -203,6 +225,8 @@ export async function engineerUpload(token: string, kind: 'sheet' | 'photos', fi
   if (kind === 'photos') {
     for (const f of files) requireKind(f.buffer, IMAGES, f.name);
     const ids = await addPhotos(assignment.firm_id, assignment.id, visit.id, files, 'engineer');
+    // caption as they arrive, so the engineer's checklist ticks itself
+    await enqueue('site.analyse_photos', { assignmentId: assignment.id }, { firmId: assignment.firm_id, dedupeKey: `photos:${assignment.id}` });
     return { photos: ids.length };
   }
   const mime = requireKind(files[0].buffer, DOCS, files[0].name);

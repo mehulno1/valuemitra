@@ -11,7 +11,8 @@ import { fitImage, type RenderData, type RenderImage } from '../templates/render
 import { fillTemplate, templateKey, versionFieldCodes, versionTemplates } from '../templates/codes.js';
 import { mapImages } from './maps.js';
 
-export type Mode = 'preview' | 'draft' | 'final';
+// final_preview: the final layout before signing (no draft line; the signature is not placed)
+export type Mode = 'preview' | 'draft' | 'final' | 'final_preview';
 
 // markers that let the browser preview find each value:  CODE  value  (pending: )
 export const M = { start: '', mid: '', pend: '', end: '' };
@@ -62,7 +63,7 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
   for (const t of await versionTemplates(data.case.template_version_id, tx)) out[templateKey(t.key)] = fillTemplate(t.template, (c) => String(out[c] ?? ''));
 
   out.SIGNED = signed;
-  out.SIGN_PENDING = mode === 'preview' ? `${M.start}REPORT.SIGNATURE${M.pend}Signature and seal placed at sign-off${M.end}` : '';
+  out.SIGN_PENDING = mode === 'preview' ? `${M.start}REPORT.SIGNATURE${M.pend}Signature and seal placed at sign-off${M.end}` : mode === 'final_preview' ? 'Signature and seal are placed at sign-off' : '';
   if (signed) {
     const full = await composeSignature(firmId, settings.signature_file_id, settings.seal_file_id, 190, 72);
     const mini = await composeSignature(firmId, settings.signature_file_id, settings.seal_file_id, 70, 28);
@@ -80,7 +81,7 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
     out.FIRM_LINE = firm.name;
     out.FIRM_SUB = [data.value('FIRM.VALUER_NAME'), data.value('FIRM.VALUER_QUALS'), 'Govt. Regd. Valuer', firm.address].filter(Boolean).join(' · ');
   }
-  out.IS_DRAFT = !signed;
+  out.IS_DRAFT = !signed && mode !== 'final_preview';
   out.DRAFT_LINE = `DRAFT v${data.case.draft_version} – not for submission`;
 
   out.ANNEX_PAGES = await annexPages(data, firmId, settings.doc_grid, images, tx);

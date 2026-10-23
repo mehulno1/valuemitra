@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 
 interface Visit {
   caseNo: string; firm: string; bank: string; branch: string; engineer: string | null; address: string | null;
-  status: string; expiresAt: string; prompts: string[]; minPhotos: number; photos: number; sheetUploaded: boolean;
+  status: string; expiresAt: string; prompts: string[]; minPhotos: number; photos: number; sheetUploaded: boolean; covered?: number[]; reading?: boolean;
   photoIds: number[]; newSinceSubmit: number;
 }
 
@@ -60,6 +60,12 @@ export default function EngineerVisit() {
     }
   }, [base]);
   useEffect(() => { load(); }, [load]);
+  // photos are being read: check again shortly so the checklist ticks itself
+  useEffect(() => {
+    if (!v?.reading) return;
+    const t = setTimeout(load, 5000);
+    return () => clearTimeout(t);
+  }, [v, load]);
 
   const send = async (kind: 'sheet' | 'photos', files: File[]) => {
     if (!files.length) return;
@@ -175,13 +181,18 @@ export default function EngineerVisit() {
         {!!v.prompts.length && (
           <div className="grid gap-1">
             <div className="eyebrow mt-1">Photo checklist</div>
-            {v.prompts.map((p, i) => (
-              <label key={i} className="flex cursor-pointer items-center gap-3 rounded-md px-1 text-[15px]" style={{ minHeight: 44 }}>
-                <input type="checkbox" className="h-5 w-5" checked={!!checked[i]} onChange={(e) => setChecked((c) => ({ ...c, [i]: e.target.checked }))} />
-                <span style={{ textDecoration: checked[i] ? 'line-through' : undefined, color: checked[i] ? 'var(--muted)' : undefined }}>{p}</span>
-              </label>
-            ))}
-            <span className="sub">Tick as you go. This list is only a reminder.</span>
+            {v.prompts.map((p, i) => {
+              const found = !!v.covered?.includes(i);
+              const on = checked[i] ?? found;
+              return (
+                <label key={i} className="flex cursor-pointer items-center gap-3 rounded-md px-1 text-[15px]" style={{ minHeight: 44 }}>
+                  <input type="checkbox" className="h-5 w-5" checked={on} onChange={(e) => setChecked((c) => ({ ...c, [i]: e.target.checked }))} />
+                  <span style={{ textDecoration: on ? 'line-through' : undefined, color: on ? 'var(--muted)' : undefined }}>{p}</span>
+                  {found && <span className="sub ml-auto text-[12px]">in your photos</span>}
+                </label>
+              );
+            })}
+            <span className="sub">{v.reading ? 'Reading your photos… items they show tick themselves.' : 'Items your photos show tick themselves. Tick the rest as you go; this list is only a reminder.'}</span>
           </div>
         )}
       </section>

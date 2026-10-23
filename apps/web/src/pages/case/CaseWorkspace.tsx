@@ -57,8 +57,8 @@ export default function CaseWorkspace() {
           <div className="progress">
             <span className={`pstep ${total && got >= Math.min(total, 5) ? 'done' : got ? 'live' : ''}`}>Documents {got}/{total}</span>
             <span className={`pstep ${reached('site') ? 'done' : ''}`}>Extraction {reached('site') ? 'done' : 'waiting'}</span>
-            <span className={`pstep ${reached('draft') ? 'done' : reached('site') ? 'live' : ''}`}>Site visit {reached('draft') ? 'received' : 'assigned'}</span>
-            <span className={`pstep ${reached('review') ? 'done' : ''}`}>Valuation {reached('review') ? 'done' : 'waiting'}</span>
+            <span className={`pstep ${c.site_received || reached('draft') ? 'done' : reached('site') ? 'live' : ''}`}>Site visit {c.site_received || reached('draft') ? 'received' : 'assigned'}</span>
+            <span className={`pstep ${c.valuation_applied ? 'done' : ''}`}>Valuation {c.valuation_applied ? 'done' : 'waiting'}</span>
             <span className={`pstep ${c.signed_at ? 'done' : c.draft_version ? 'live' : ''}`}>{c.signed_at ? 'Report final' : c.draft_version ? `Report draft v${c.draft_version}` : 'Report not started'}</span>
             <span className={`pstep ${crit ? '' : 'done'}`}>{status}</span>
           </div>

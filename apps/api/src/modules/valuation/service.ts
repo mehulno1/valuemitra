@@ -18,7 +18,7 @@ import { inr } from '@vm/shared';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { assertCase } from '../documents/service.js';
-import { adjustComparable, computeValues, propose, type Adjustment, type Extra } from './engine.js';
+import { adjustComparable, computeValues, flagOutliers, floorNo, propose, type Adjustment, type Extra } from './engine.js';
 
 const RR_CATEGORY: Record<string, string> = { flat: 'residential', bungalow: 'residential', shop: 'shop', office: 'office', open_land: 'open_land' };
 const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9ऀ-ॿ]/g, '');
@@ -183,15 +183,16 @@ export async function recomputeProposal(assignmentId: number, firmId: number, da
   if (!(area > 0)) return null;
   const rows = await tx.selectFrom('case_comparables as cc').innerJoin('comparables as c', 'c.id', 'cc.comparable_id').selectAll('c').select(['cc.id as cc_id', 'cc.is_subject', 'cc.manual_override', 'cc.adjustments as cc_adj', 'cc.weight as cc_weight', 'cc.included as cc_included', 'cc.note'])
     .where('cc.assignment_id', '=', assignmentId).execute();
-  const subject = { area, hasLift: data.value('PHYS.LIFT') === 'Yes' ? true : data.value('PHYS.LIFT') === 'No' ? false : null, buildingAge: (data.value('PHYS.AGE') as number) ?? null, valuationDate: new Date(String(data.value('CASE.REPORT_DATE'))) };
-  const out = rows.map((r) => {
+  const subject = { area, hasLift: data.value('PHYS.LIFT') === 'Yes' ? true : data.value('PHYS.LIFT') === 'No' ? false : null, buildingAge: (data.value('PHYS.AGE') as number) ?? null, valuationDate: new Date(String(data.value('CASE.REPORT_DATE'))), floor: floorNo(data.value('PHYS.FLOOR')) };
+  const raw = rows.map((r) => {
     const o = adjustComparable({
       id: r.cc_id, isSubject: !!r.is_subject, sourceType: r.source_type, isAsking: !!r.is_asking_price, areaBua: Number(r.area_bua_sqft), price: Number(r.price),
-      txnDate: r.txn_date, hasLift: r.has_lift === null ? null : !!r.has_lift, buildingAge: r.building_age, distanceKm: null,
+      txnDate: r.txn_date, hasLift: r.has_lift === null ? null : !!r.has_lift, buildingAge: r.building_age, distanceKm: null, floor: r.floor_no,
       override: r.manual_override ? { adjustments: json<Adjustment[]>(r.cc_adj, []), weight: Number(r.cc_weight), included: !!r.cc_included } : null,
     }, subject, data!.rules);
     return { ...o, sourceType: r.source_type, isSubject: !!r.is_subject };
   });
+  const out = flagOutliers(raw, data.rules);
   for (const o of out) {
     await tx.updateTable('case_comparables').set({
       adjustments: toJson(o.adjustments), adjusted_rate: Math.round(o.adjustedRate), weight: Math.round(o.weight * 1000) / 1000, weight_label: o.weightLabel,
@@ -413,6 +414,8 @@ export async function valuationView(firmId: number, assignmentId: number) {
     bua: data.value('AREA.BUA'),
     current: current ? { ...current, values: json(current.values_json, {}), extras: json(current.extras_json, []) } : null,
     justification: data.get('VAL.JUSTIFICATION'),
+    // parking read from the agreement or the site sheet, to prefill the extras
+    parking: (() => { const p = data.get('PHYS.PARKING_COUNT'); return p.state === 'filled' ? { count: Number(p.value), text: data.value('PHYS.PARKING_TEXT') ?? null, source: p.sourceDocType ?? p.source } : null; })(),
     history: history.map((h) => ({ ...h, fmv: json<any>(h.values_json, {}).fmv, values_json: undefined })),
   };
 }

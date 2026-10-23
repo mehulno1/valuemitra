@@ -57,7 +57,7 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
       const out: Result[] = [];
       for (const code of codes) {
         const r = data.get(code);
-        if (r.conflict) out.push({ ...base, code: `${def.code}:${code}`, severity: sev, title: fill(def.title, { label: r.label }), detail: r.conflict.message, actions: { field: code, options: r.conflict.options.map((o) => ({ label: o.label, display: o.display })) } });
+        if (r.conflict) out.push({ ...base, code: `${def.code}:${code}`, severity: r.conflict.minor ? 'info' : sev, title: r.conflict.minor ? `${r.label}: one source reads it more fully` : fill(def.title, { label: r.label }), detail: r.conflict.message, actions: { field: code, options: r.conflict.options.map((o) => ({ label: o.label, display: o.display })) } });
       }
       return out;
     }

@@ -87,6 +87,16 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
   const [renderErr, setRenderErr] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
   const [confirmSign, setConfirmSign] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  // the pages exactly as they will be issued (marked PREVIEW): check photo order, letterhead and annexures before signing
+  const previewFinal = () => {
+    setPreviewing(true);
+    const w = window.open('', '_blank');
+    api.binary(`/api/assignments/${c.id}/report/draft.pdf?final=1`)
+      .then((buf) => { const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' })); if (w) w.location.href = url; else window.location.href = url; })
+      .catch((e) => { w?.close(); err(e); })
+      .finally(() => setPreviewing(false));
+  };
   const [edit, setEdit] = useState<{ code: string; label: string; value: string; multi: boolean; valTab: boolean } | null>(null);
   const [share, setShare] = useState<{ fileId: number; name: string; message: string } | null>(null);
   const [signErr, setSignErr] = useState<{ message: string; items: { title: string; detail?: string | null; target_tab?: string | null }[] } | null>(null);
@@ -335,7 +345,10 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
             <button className="btn sm ghost" disabled={rendering} onClick={rerender}>Refresh</button>
             {signed
               ? finals[0]?.pdf_file_id && <button className="btn sm" onClick={() => downloadFile(finals[0].pdf_file_id!, `${r.report_no?.replace(/\//g, '-')}.pdf`).catch(err)}>Download final PDF</button>
-              : <button className="btn sm" onClick={() => api.binary(`/api/assignments/${c.id}/report/draft.pdf`).then((buf) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' })); a.download = `${c.case_no}_DRAFT_v${r.draft_version}.pdf`; a.click(); }).catch(err)}>Download draft PDF</button>}
+              : <>
+                <button className="btn sm" onClick={() => api.binary(`/api/assignments/${c.id}/report/draft.pdf`).then((buf) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' })); a.download = `${c.case_no}_DRAFT_v${r.draft_version}.pdf`; a.click(); }).catch(err)}>Download draft PDF</button>
+                <button className="btn sm" disabled={previewing} onClick={previewFinal}>{previewing ? <span className="dots">Preparing</span> : 'Preview final PDF'}</button>
+              </>}
           </div>
         </div>
         {r.draft_version === 0 && !signed && <p className="sub m-0 px-4 pt-3">The draft fills in as documents are read; everything not yet known shows as pending.</p>}
@@ -386,7 +399,7 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
           <p className="m-0">A report number{r.report_rev ? ` with /R${r.report_rev}` : ''} is issued to <b>{c.bank_name}</b>, your signature and seal are placed, and the report is locked.</p>
           {fmvV?.display && <p className="m-0">Fair market value: <b>{fmvV.display}</b></p>}
           {r.checks.warn > 0 && <p className="m-0 text-warn">{r.checks.warn} item(s) are still flagged to look at on Checks.</p>}
-          <p className="sub m-0">Changes after signing need a reopen, which issues a revised number.</p>
+          <p className="sub m-0">Changes after signing need a reopen, which issues a revised number. <button className="linkbtn" disabled={previewing} onClick={previewFinal}>{previewing ? 'Preparing the preview…' : 'Preview the final PDF first'}</button> to check the pages.</p>
         </div>
       </Modal>
 
