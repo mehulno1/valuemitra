@@ -15,7 +15,10 @@ export interface ResolvedField {
   candidates: unknown[]; conflict: { message: string; options: { label: string; display: string }[] } | null;
   formula?: string | null; ruleKeys?: string[];
 }
-export interface FieldsResp { sections: { title: string; fields: ResolvedField[] }[]; filled: number; total: number; fromDocuments: number; signed: boolean }
+export interface FieldsResp {
+  sections: { title: string; fields: ResolvedField[] }[]; filled: number; total: number; fromDocuments: number; signed: boolean;
+  legal?: { items: { key: string; field: string }[]; skip: string[] };
+}
 
 const RULE_SOURCES = new Set(['derived', 'wording', 'case', 'firm', 'checklist', 'valuation', 'evidence']);
 
@@ -38,6 +41,8 @@ export function sourceLine(f: ResolvedField, docLabel: (k: string) => string): s
 
 export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
   const { can } = useAuth();
+  const toast = useToast();
+  const err = useErrorToast();
   const editable = can('edit') && !locked;
   const canRules = can('set') || can('config');
   const fields = useQuery({ queryKey: caseKey(c.id, 'fields'), queryFn: () => api.get<FieldsResp>(`/api/assignments/${c.id}/fields`) });
@@ -47,6 +52,17 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
   if (fields.isLoading) return <div className="muted p-4"><span className="dots">Loading fields</span></div>;
   if (!fields.data) return <div className="muted p-4">Could not load the fields.</div>;
   const d = fields.data;
+  // documents listed under "Legal documents" in the report: the valuer can leave any of them out
+  const legalKey = new Map((d.legal?.items ?? []).map((x) => [x.field, x.key]));
+  const skip = d.legal?.skip ?? [];
+  const setListed = async (key: string, listed: boolean) => {
+    const next = listed ? skip.filter((k) => k !== key) : [...new Set([...skip, key])];
+    try {
+      await api.put(`/api/assignments/${c.id}/fields/DOC.LEGAL_SKIP`, { value: next.length ? JSON.stringify(next) : null });
+      toast(listed ? 'Listed under Legal documents in the report' : 'Left out of Legal documents in the report');
+      refresh();
+    } catch (e) { err(e); }
+  };
 
   return (
     <div>
@@ -70,7 +86,18 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
         return (
           <section key={s.title} className="panel sec">
             <h2>{s.title}<span>{filled}/{s.fields.length} filled</span></h2>
-            {s.fields.map((f) => <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} canRules={canRules} docLabel={docLabel} refresh={refresh} goVal={() => go('val')} />)}
+            {s.fields.map((f) => {
+              const key = legalKey.get(f.code);
+              const listed = key ? !skip.includes(key) : true;
+              return (
+                <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} canRules={canRules} docLabel={docLabel} refresh={refresh} goVal={() => go('val')}
+                  extra={key && f.state === 'filled' ? (
+                    <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="Listed under Legal documents in the report">
+                      <input type="checkbox" checked={listed} disabled={!editable} onChange={(e) => setListed(key, e.target.checked)} /> In report
+                    </label>
+                  ) : null} />
+              );
+            })}
           </section>
         );
       })}
@@ -78,7 +105,7 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
   );
 }
 
-function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal }: { f: ResolvedField; caseId: number; editable: boolean; canRules: boolean; docLabel: (k: string) => string; refresh: () => void; goVal: () => void }) {
+function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, extra }: { f: ResolvedField; caseId: number; editable: boolean; canRules: boolean; docLabel: (k: string) => string; refresh: () => void; goVal: () => void; extra?: React.ReactNode }) {
   const toast = useToast();
   const err = useErrorToast();
   const [editing, setEditing] = useState(false);
@@ -186,6 +213,7 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal }: {
         )}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
+        {extra}
         {f.edited && <span className="edited">edited</span>}
         {f.state === 'filled' && !f.edited && (rule ? <Conf value={null} /> : f.confidence !== null ? <Conf value={f.confidence} /> : null)}
       </div>

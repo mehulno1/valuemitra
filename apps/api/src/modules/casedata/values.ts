@@ -143,6 +143,11 @@ export async function setManualValue(
     reason: opts.reason ?? null, before: before.display, after: clean,
   }, tx);
   await publish({ type: 'value.changed', firmId, entityType: 'assignment', entityId: assignmentId, payload: { code } }, tx);
+  // a checklist item that depends on this value (e.g. the O.C. on the building status) follows it
+  if (((data.profile.checklist ?? []) as { na_when?: string }[]).some((i) => i.na_when?.includes(code)) && tx === db) {
+    const { syncChecklist } = await import('../documents/reader.js');
+    await syncChecklist(assignmentId);
+  }
 }
 
 /** Accept a machine value as read (feeds the learning system as a positive label). */

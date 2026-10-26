@@ -21,8 +21,11 @@ interface Evidence {
   guideline: unknown; consideration: unknown; area: unknown; registrationDate: unknown;
   proposal: { rate: unknown; lo: unknown; hi: unknown } | null;
   comparables: Comp[]; captures: Capture[];
-  rules: { window: number; radius: number; listingDiscount: number };
+  rules: { window: number; radius: number; listingDiscount: number; outlierPct: number; outlierAction: 'flag' | 'exclude'; step: number };
+  // the area and unit the case quotes its rate on; factor × a rate per sq.ft. built-up = the rate on it
+  view?: { basis: string; unit: 'sqft' | 'sqm'; label: string; unitLabel: string; factor: number | null; proposal: { rate: number; lo: number; hi: number } | null };
 }
+const AREA_WORD: Record<string, string> = { bua: 'built-up', carpet: 'carpet', saleable: 'saleable', plot: 'plot' };
 
 const n = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const rs = (v: unknown) => (n(v) === null ? '—' : `Rs. ${inr(n(v))}`);
@@ -45,7 +48,8 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   const [kind, setKind] = useState<'igr' | 'listing' | 'other' | 'rr' | 'map'>('listing');
   const [source, setSource] = useState('99acres');
   const [url, setUrl] = useState('');
-  const [edit, setEdit] = useState<{ comp: Comp; included: boolean; weight: string; reason: string } | null>(null);
+  const [edit, setEdit] = useState<{ comp: Comp; included: boolean; weight: string; reason: string; area: string; basis: string } | null>(null);
+  const [showHow, setShowHow] = useState(false);
 
   const upload = useMutation({
     mutationFn: (files: File[]) => api.upload(`/api/assignments/${c.id}/evidence`, files, { kind, source: kind === 'igr' ? source || 'IGR Maharashtra' : source, url }),
@@ -54,11 +58,11 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   });
   const refreshEv = useMutation({
     mutationFn: () => api.post(`/api/assignments/${c.id}/evidence/refresh`),
-    onSuccess: (r: any) => { toast(r.proposal ? `Evidence refreshed. Evidence-backed rate Rs. ${inr(r.proposal.rate)} per sq.ft.` : 'Evidence refreshed'); refresh(); },
+    onSuccess: (r: any) => { toast(r.proposal ? `Evidence refreshed. Evidence-backed rate Rs. ${inr(r.proposal.rate)} per sq.ft. built-up.` : 'Evidence refreshed'); refresh(); },
     onError: err,
   });
   const override = useMutation({
-    mutationFn: (b: { cid: number; included?: boolean; weight?: number; reason: string }) => api.patch(`/api/assignments/${c.id}/evidence/${b.cid}`, { included: b.included, weight: b.weight, reason: b.reason }),
+    mutationFn: (b: { cid: number; included?: boolean; weight?: number; reason: string; area?: number; basis?: string }) => api.patch(`/api/assignments/${c.id}/evidence/${b.cid}`, b),
     onSuccess: () => { toast('Comparable updated. Proposal recomputed.'); setEdit(null); refresh(); },
     onError: err,
   });
@@ -76,7 +80,15 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   const agr = n(ev.consideration);
   const comps = ev.comparables;
   const captures = ev.captures;
-  const prop = ev.proposal ? { rate: n(ev.proposal.rate)!, lo: n(ev.proposal.lo) ?? n(ev.proposal.rate)!, hi: n(ev.proposal.hi) ?? n(ev.proposal.rate)! } : null;
+  // everything below reads on the case's area and unit (e.g. per sq.ft. carpet); the engine works per sq.ft. built-up
+  const f = ev.view?.factor ?? 1;
+  const sqm = ev.view?.unit === 'sqm';
+  const per = ev.view ? `per ${ev.view.unitLabel} ${ev.view.label.toLowerCase()}` : 'per sq.ft. built-up';
+  const onBasis = ev.view ? `${ev.view.label.toLowerCase()}, ${ev.view.unitLabel}` : 'built-up, sq.ft.';
+  const rate = (v: unknown) => (n(v) === null ? null : Math.round(n(v)! * f));
+  const areaOf = (v: unknown) => (n(v) === null ? null : n(v)! / f);
+  const fmtArea = (v: number | null) => (v === null ? '—' : sqm ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : inr(Math.round(v)));
+  const prop = ev.view?.proposal ?? (ev.proposal ? { rate: n(ev.proposal.rate)!, lo: n(ev.proposal.lo) ?? n(ev.proposal.rate)!, hi: n(ev.proposal.hi) ?? n(ev.proposal.rate)! } : null);
   const adopted = n(vq.data?.current?.adopted_rate);
   const canEdit = can('edit') && !locked;
   const canVal = can('val') && !locked;
@@ -85,8 +97,13 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   const inc = comps.filter((x) => !!Number(x.included) && Number(x.weight) > 0);
   const anchors = [...inc].sort((a, b) => Number(b.weight) - Number(a.weight)).slice(0, 2);
   const listings = inc.filter((x) => x.source_type === 'listing');
-  const listAvg = listings.length ? Math.round(listings.reduce((t, x) => t + Number(x.adjusted_rate), 0) / listings.length) : null;
-  const describe = (x: Comp) => (x.is_subject ? `this property's own registration (Rs. ${inr(n(x.adjusted_rate))})` : `${SOURCE[x.source_type] ?? x.source_type}${x.source_ref ? ` ${x.source_ref}` : ''} (Rs. ${inr(n(x.adjusted_rate))}${x.adjustments.length ? ' after adjustment' : ''})`);
+  const listAvg = listings.length ? Math.round((listings.reduce((t, x) => t + Number(x.adjusted_rate), 0) / listings.length) * f) : null;
+  const describe = (x: Comp) => (x.is_subject ? `this property's own registration (Rs. ${inr(rate(x.adjusted_rate))})` : `${SOURCE[x.source_type] ?? x.source_type}${x.source_ref ? ` ${x.source_ref}` : ''} (Rs. ${inr(rate(x.adjusted_rate))}${x.adjustments.length ? ' after adjustment' : ''})`);
+  // the weighted median, step by step: sorted adjusted rates, running share of the weight
+  const totalW = inc.reduce((t, x) => t + Number(x.weight), 0);
+  let run = 0;
+  const steps = [...inc].sort((a, b) => Number(a.adjusted_rate) - Number(b.adjusted_rate)).map((x) => { run += Number(x.weight); return { x, share: totalW ? run / totalW : 0 }; });
+  const medianId = steps.find((st) => st.share >= 0.5)?.x.id;
 
   return (
     <div className="grid gap-4">
@@ -107,7 +124,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
             {gv !== null ? (
               <>
                 <div className="v">{rs(gv)}</div>
-                <div className="s">As per Index II{area ? ` · Rs. ${inr(gv / area)} per sq.ft. BUA` : ''}</div>
+                <div className="s">As per Index II{area ? ` · Rs. ${inr(Math.round((gv / area) * f))} ${per}` : ''}</div>
               </>
             ) : <div className="mt-1"><Pending label="Awaiting Index II" /></div>}
           </div>
@@ -116,7 +133,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
             {agr !== null ? (
               <>
                 <div className="v">{rs(agr)}</div>
-                <div className="s">{ev.registrationDate ? fmtDate(String(ev.registrationDate)) : 'Date pending'}{area ? ` · Rs. ${inr(agr / area)} per sq.ft. BUA` : ''}</div>
+                <div className="s">{ev.registrationDate ? fmtDate(String(ev.registrationDate)) : 'Date pending'}{area ? ` · Rs. ${inr(Math.round((agr / area) * f))} ${per}` : ''}</div>
               </>
             ) : <div className="mt-1"><Pending label="Awaiting agreement / Index II" /></div>}
           </div>
@@ -128,7 +145,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
       <div className="split">
         <Panel title="Capture comparables">
           <p className="muted mt-0 text-[13px]">
-            Search IGR and the listing sites as usual and capture the result pages (screenshot or PDF). The system reads every entry, <b>prefers the last {ev.rules.window} months</b> (items up to {ev.rules.window * 2} months old are used with a warning), converts each to a rate per sq.ft. built-up and ranks them. Listings are discounted {ev.rules.listingDiscount}% for asking price. The firm's earlier reports are shown as guidance only; they never set the rate or the printed range.
+            Search IGR and the listing sites as usual and capture the result pages (screenshot or PDF). The system reads every entry, <b>prefers the last {ev.rules.window} months</b> (items up to {ev.rules.window * 2} months old are used with a warning), converts each to a rate {per} (the area this case is valued on) and ranks them. Listings are discounted {ev.rules.listingDiscount}% for asking price. Comparables more than {ev.rules.outlierPct}% from the median are highlighted{ev.rules.outlierAction === 'exclude' ? ' and left out until you include them' : ' and still used; leave one out with Adjust if it is not comparable'}. The firm's earlier reports are shown as guidance only; they never set the rate or the printed range.
           </p>
           {canEdit ? (
             <div className="grid gap-3">
@@ -194,14 +211,14 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
       </div>
 
       {/* comparables */}
-      <Panel title="Comparables" right={<span className="sub">{inc.length} of {comps.length} used · rates per sq.ft. built-up</span>} pad={false}>
+      <Panel title="Comparables" right={<span className="sub">{inc.length} of {comps.length} used · rates {per}</span>} pad={false}>
         {comps.length === 0 ? (
           <p className="sub p-4">No comparables yet. Capture IGR search results or listing pages above; this property's own registration is added automatically once its Index II is read.</p>
         ) : (
           <div className="tablewrap">
             <table className="list">
               <thead>
-                <tr><th>Source</th><th>Property</th><th>Date</th><th className="text-right">BUA</th><th className="text-right">Price</th><th className="text-right">Rate</th><th>Adjustments</th><th className="text-right">Adjusted</th><th>Weight</th><th>Note</th>{canVal && <th />}</tr>
+                <tr><th>Source</th><th>Property</th><th>Date</th><th className="text-right">Area ({onBasis})</th><th className="text-right">Price</th><th className="text-right">Rate</th><th>Adjustments</th><th className="text-right">Adjusted</th><th>Weight</th><th>Note</th>{canVal && <th />}</tr>
               </thead>
               <tbody>
                 {comps.map((x) => {
@@ -211,14 +228,14 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                       <td className="whitespace-nowrap">{SOURCE[x.source_type] ?? x.source_type}{x.is_subject ? ' · this property' : ''}{x.file_id ? <> · <button className="linkbtn" onClick={() => downloadFile(x.file_id!, `comparable-${x.id}`).catch(err)}>page</button></> : null}</td>
                       <td className="min-w-[180px]">{[x.building, x.society].filter(Boolean).join(', ') || x.locality || 'Nearby property'}{x.bhk ? ` · ${x.bhk}` : ''}{x.source_ref ? <div className="sub">{x.source_ref}</div> : null}</td>
                       <td className="whitespace-nowrap">{x.txn_date ? fmtDate(x.txn_date) : '—'}{n(x.age_months) !== null && n(x.age_months)! > ev.rules.window ? <div className="sub text-warn">{Math.round(n(x.age_months)!)} months old</div> : null}</td>
-                      <td className="n">{inr(n(x.area_bua_sqft))}{x.area_basis === 'carpet' ? <div className="sub">carpet {inr(n(x.area_value))}</div> : null}</td>
+                      <td className="n">{fmtArea(areaOf(x.area_bua_sqft))}{x.area_basis !== ev.view?.basis || sqm ? <div className="sub whitespace-nowrap">stated {inr(n(x.area_value))} sq.ft. {AREA_WORD[x.area_basis] ?? x.area_basis}</div> : null}</td>
                       <td className="n">{inr(n(x.price))}{x.is_asking_price ? <div className="sub">asking</div> : null}</td>
-                      <td className="n">{inr(n(x.rate_per_sqft))}</td>
+                      <td className="n">{inr(rate(x.rate_per_sqft))}</td>
                       <td className="min-w-[140px]">{x.adjustments.length ? x.adjustments.map((a) => <div key={a.code + a.label} className="whitespace-nowrap">{a.label} {a.pct > 0 ? '+' : '−'}{Math.abs(a.pct)}%</div>) : <span className="muted">None</span>}</td>
-                      <td className="n"><b>{inr(n(x.adjusted_rate))}</b></td>
+                      <td className="n"><b>{inr(rate(x.adjusted_rate))}</b></td>
                       <td className="whitespace-nowrap">{used ? x.weight_label : <span className="muted">Not used</span>}{x.manual_override ? <div><span className="edited">by valuer</span></div> : null}</td>
-                      <td className="min-w-[160px] text-[12.5px]">{!used && x.exclusion_reason ? <div className="text-warn">{x.exclusion_reason}</div> : null}{x.note || x.notes}</td>
-                      {canVal && <td>{x.source_type !== 'own_report' && <button className="btn sm" onClick={() => setEdit({ comp: x, included: used, weight: String(Number(x.weight)), reason: '' })}>Adjust</button>}</td>}
+                      <td className="min-w-[160px] text-[12.5px]">{x.exclusion_reason ? <div className="text-warn">{x.exclusion_reason}</div> : null}{x.note || x.notes}</td>
+                      {canVal && <td>{x.source_type !== 'own_report' && <button className="btn sm" onClick={() => setEdit({ comp: x, included: used, weight: String(Number(x.weight)), reason: '', area: String(n(x.area_value) ?? ''), basis: x.area_basis })}>Adjust</button>}</td>}
                     </tr>
                   );
                 })}
@@ -231,8 +248,8 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
       {/* plot + proposal */}
       {(comps.length > 0 || prop) && (
         <div className="split">
-          <Panel title="Rates per sq.ft. built-up">
-            <DotPlot comps={comps} prop={prop} adopted={adopted} />
+          <Panel title={`Rates ${per}`}>
+            <DotPlot comps={comps.map((x) => ({ ...x, adjusted_rate: rate(x.adjusted_rate) ?? 0, rate_per_sqft: rate(x.rate_per_sqft) ?? 0 }))} prop={prop} adopted={adopted} label={per} />
             <div className="legend mb-0 mt-2">
               <span><Dot color="var(--ok)" /> Registered sale</span>
               <span><Dot color="var(--muted)" /> Listing / other</span>
@@ -245,13 +262,40 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
               <div className="grid gap-3">
                 <div className="kv">
                   <div className="k">Evidence-backed rate</div>
-                  <div className="v">Rs. {inr(prop.rate)} per sq.ft. built-up</div>
-                  <div className="s">range Rs. {inr(prop.lo)} to {inr(prop.hi)}</div>
+                  <div className="v">Rs. {inr(prop.rate)} {per}</div>
+                  <div className="s">range Rs. {inr(prop.lo)} to {inr(prop.hi)}{ev.view && ev.view.basis !== 'bua' && ev.proposal ? ` · Rs. ${inr(n(ev.proposal.rate))} per sq.ft. built-up` : ''}</div>
                 </div>
                 <p className="m-0 text-[13px]">
                   {anchors.length ? <>Anchored on {anchors.map(describe).join(' and ')}</> : 'Weighted median of the comparables in use'}
-                  {listAvg !== null ? <>; listings average Rs. {inr(listAvg)} after adjustment</> : null}. Weighted median of {inc.length} comparable(s); range is the weighted inter-quartile, at least ±3%.
+                  {listAvg !== null ? <>; listings average Rs. {inr(listAvg)} after adjustment</> : null}.
                 </p>
+                <button type="button" className="linkbtn justify-self-start" onClick={() => setShowHow((x) => !x)}>{showHow ? 'Hide the working' : 'How this rate is worked out'}</button>
+                {showHow && (
+                  <div className="grid gap-2 text-[13px]">
+                    <ol className="m-0 grid gap-1 pl-5">
+                      <li>Each comparable: price ÷ area {per.replace('per ', 'in ')} = rate. Areas stated on another basis are converted by the bank's factors{vq.data?.rules ? ` (built-up = carpet × ${1 + vq.data.rules.loading_pct / 100}; saleable = carpet × ${vq.data.rules.saleable_factor})` : ''}.</li>
+                      <li>Adjustments for asking price, size, floor and building give the adjusted rate.</li>
+                      <li>Weight by source (registered sale above listing), age of the evidence and size; this property's own registration counts most.</li>
+                      <li>Sort the adjusted rates; the rate where the running weight passes half is the weighted median, rounded to Rs. {inr(ev.rules.step)}.</li>
+                      <li>Range: the rates at a quarter and three quarters of the running weight, at least ±3% either side.</li>
+                    </ol>
+                    <div className="tablewrap">
+                      <table className="list">
+                        <thead><tr><th>Comparable</th><th className="text-right">Adjusted rate</th><th className="text-right">Weight</th><th className="text-right">Running weight</th></tr></thead>
+                        <tbody>
+                          {steps.map(({ x, share }) => (
+                            <tr key={x.id} className={x.id === medianId ? 'font-semibold' : undefined}>
+                              <td>{x.is_subject ? 'This property' : `${SOURCE[x.source_type] ?? x.source_type}${x.building ? `, ${x.building}` : ''}`}{x.id === medianId ? <span className="sev ok ml-2">median</span> : null}</td>
+                              <td className="n">{inr(rate(x.adjusted_rate))}</td>
+                              <td className="n">{Number(x.weight).toFixed(2)}</td>
+                              <td className="n">{Math.round(share * 100)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
                 {adopted !== null && Math.abs(adopted - prop.rate) / prop.rate > 0.001 && (
                   <p className="m-0 text-[13px] text-warn">Valuer has adopted Rs. {inr(adopted)} ({adopted > prop.rate ? '+' : '−'}{Math.abs(Math.round(((adopted - prop.rate) / prop.rate) * 1000) / 10)}%).</p>
                 )}
@@ -278,7 +322,12 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
               onClick={() => {
                 const w = Number(edit.weight);
                 if (!(w >= 0 && w <= 3)) return toast('Weight must be between 0 and 3', 'err');
-                override.mutate({ cid: edit.comp.id, included: edit.included, weight: w, reason: edit.reason.trim() });
+                const a = Number(edit.area);
+                const areaChanged = !edit.comp.is_subject && (a !== n(edit.comp.area_value) || edit.basis !== edit.comp.area_basis);
+                if (areaChanged && !(a > 0)) return toast('Enter the area in sq.ft.', 'err');
+                const decided = edit.included !== !!Number(edit.comp.included) || w !== Number(edit.comp.weight);
+                if (!areaChanged && !decided) return setEdit(null);
+                override.mutate({ cid: edit.comp.id, reason: edit.reason.trim(), ...(decided ? { included: edit.included, weight: w } : {}), ...(areaChanged ? { area: a, basis: edit.basis } : {}) });
               }}
             >Save</button>
           </>
@@ -286,7 +335,24 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
       >
         {edit && (
           <div className="grid gap-3">
-            <div className="sub">{SOURCE[edit.comp.source_type] ?? edit.comp.source_type} · {[edit.comp.building, edit.comp.society].filter(Boolean).join(', ') || 'Nearby property'} · adjusted Rs. {inr(n(edit.comp.adjusted_rate))}</div>
+            <div className="sub">{SOURCE[edit.comp.source_type] ?? edit.comp.source_type} · {[edit.comp.building, edit.comp.society].filter(Boolean).join(', ') || 'Nearby property'} · adjusted Rs. {inr(rate(edit.comp.adjusted_rate))} {per}</div>
+            {!edit.comp.is_subject && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="field">
+                  <label>Area as stated, sq.ft.</label>
+                  <input className="mono" inputMode="decimal" value={edit.area} onChange={(e) => setEdit({ ...edit, area: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>The page states</label>
+                  <select value={edit.basis} onChange={(e) => setEdit({ ...edit, basis: e.target.value })}>
+                    <option value="carpet">Carpet area</option>
+                    <option value="bua">Built-up area</option>
+                    <option value="saleable">Saleable / super built-up</option>
+                  </select>
+                </div>
+                <div className="sub col-span-2">Correct this when the page was misread, e.g. a listing's "built-up" that is really super built-up, or the carpet area shown elsewhere on the page.</div>
+              </div>
+            )}
             <label className="flex items-center gap-2"><input type="checkbox" checked={edit.included} onChange={(e) => setEdit({ ...edit, included: e.target.checked })} /> Use this comparable</label>
             <div className="field">
               <label>Weight (0 to 3; High ≥ 0.8, Medium ≥ 0.4)</label>
@@ -316,7 +382,7 @@ const Dot = ({ color, hollow }: { color: string; hollow?: boolean }) => (
   <svg width="10" height="10" aria-hidden><circle cx="5" cy="5" r="4" fill={hollow ? 'none' : color} stroke={color} strokeWidth="1.5" /></svg>
 );
 
-function DotPlot({ comps, prop, adopted }: { comps: Comp[]; prop: { rate: number; lo: number; hi: number } | null; adopted: number | null }) {
+function DotPlot({ comps, prop, adopted, label }: { comps: Comp[]; prop: { rate: number; lo: number; hi: number } | null; adopted: number | null; label: string }) {
   const pts = comps.map((x) => ({ adj: Number(x.adjusted_rate), raw: Number(x.rate_per_sqft), used: !!Number(x.included), sale: x.source_type !== 'listing', subject: !!Number(x.is_subject), id: x.id })).filter((p) => p.adj > 0);
   const vals = [...pts.flatMap((p) => [p.adj, p.raw]), ...(prop ? [prop.lo, prop.hi, prop.rate] : []), ...(adopted ? [adopted] : [])].filter((v) => v > 0);
   if (!vals.length) return <p className="sub">No rates to plot yet.</p>;
@@ -332,7 +398,7 @@ function DotPlot({ comps, prop, adopted }: { comps: Comp[]; prop: { rate: number
   for (let t = Math.ceil(min / tstep) * tstep; t <= max; t += tstep) ticks.push(t);
   const axisY = H - 24;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Comparable rates per sq.ft. built-up" style={{ display: 'block', fontFamily: 'var(--f-body)' }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Comparable rates ${label}`} style={{ display: 'block', fontFamily: 'var(--f-body)' }}>
       {prop && (
         <g>
           <rect x={x(prop.lo)} y={top - 8} width={Math.max(2, x(prop.hi) - x(prop.lo))} height={axisY - top + 8} fill="var(--stamp-soft)" />

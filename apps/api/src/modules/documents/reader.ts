@@ -16,6 +16,8 @@ import { purgeFile, readFile, saveFile } from '../../platform/storage.js';
 import { getSettings } from '../../platform/settings.js';
 import { dictionary } from '../master/dictionary.js';
 import { writeCandidates } from '../casedata/values.js';
+import { caseData, EXPR_FNS, type CaseData } from '../casedata/resolver.js';
+import { evalExpr } from '@vm/shared';
 
 export interface DocType { key: string; label: string; hint: string; in_report: boolean; is_kyc?: boolean }
 
@@ -322,7 +324,8 @@ async function applyKycLocked(conn: Tx, documentId: number, firmId: number) {
 
 registerJob('document.kyc', async ({ documentId, firmId }) => applyKyc(documentId, firmId));
 
-/** Checklist items follow the documents found, unless a person overrode them. */
+/** Checklist items follow the documents found, unless a person overrode them. An item the profile marks
+ * not applicable for this case (e.g. the O.C. while the building is under construction) is set n/a. */
 export async function syncChecklist(assignmentId: number) {
   const items = await db.selectFrom('checklist_items').selectAll().where('assignment_id', '=', assignmentId).execute();
   const parts = await db.selectFrom('document_parts').select(['detected_type', 'corrected_type', 'excluded']).where('assignment_id', '=', assignmentId).execute();
@@ -331,10 +334,19 @@ export async function syncChecklist(assignmentId: number) {
   if (sheet) types.add('site_sheet');
   const photos = await db.selectFrom('site_photos').select('id').where('assignment_id', '=', assignmentId).where('source', '=', 'engineer').limit(1).executeTakeFirst();
   if (photos) types.add('@photos');
+  let data: CaseData | null = null;
+  const notApplicable = async (code: string) => {
+    if (!data) {
+      const a = await db.selectFrom('assignments').select('firm_id').where('id', '=', assignmentId).executeTakeFirstOrThrow();
+      data = await caseData(assignmentId, a.firm_id);
+    }
+    const expr: string | undefined = (data.profile.checklist ?? []).find((i: { code: string }) => i.code === code)?.na_when;
+    return expr ? !!evalExpr(expr, data.resolver, EXPR_FNS) : false;
+  };
   for (const it of items) {
     if (it.is_manual) continue;
     const dt = json<string[]>(it.doc_types, []);
-    const auto = dt.some((x) => types.has(x)) ? 'y' : 'n';
+    const auto = dt.some((x) => types.has(x)) ? 'y' : (await notApplicable(it.item_code)) ? 'na' : 'n';
     if (auto !== it.auto_state || (!it.overridden && it.state !== auto)) {
       await db.updateTable('checklist_items').set({ auto_state: auto, state: it.overridden ? it.state : auto }).where('id', '=', it.id).execute();
     }

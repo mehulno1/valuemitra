@@ -104,6 +104,9 @@ h1, h2, h3, h4 { font-family: var(--f-display); text-wrap: balance; margin: 0; l
 /* forms */
 .field label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
 .field input, .field select, .field textarea, .inp { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+/* a choice list inside a field: the box sits beside its text, not stretched across the row */
+.field input[type='radio'], .field input[type='checkbox'] { width: auto; padding: 0; flex: none; margin: 0; }
+.field label:has(> input[type='radio']), .field label:has(> input[type='checkbox']) { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 400; color: var(--ink); }
 .field .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .form { padding: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; }
 .form .full { grid-column: 1 / -1; }

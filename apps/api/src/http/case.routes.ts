@@ -109,6 +109,8 @@ export async function caseRoutes(app: FastifyInstance) {
       total: all.length,
       fromDocuments: all.filter((f) => f.source === 'document' || f.source === 'site_sheet').length,
       signed: !!data.case.signed_at,
+      // summaries that can be listed under "Legal documents", and those the valuer left out
+      legal: { items: (data.profile.legal_documents ?? []) as { key: string; field: string }[], skip: (data.value('DOC.LEGAL_SKIP') as string[] | null) ?? [] },
     };
   });
   app.put('/api/assignments/:id/fields/:code', { preHandler: can('edit') }, async (req) => {
@@ -165,7 +167,7 @@ export async function caseRoutes(app: FastifyInstance) {
     return { proposal: await val.refreshEvidence(idParam(req), req.auth!.firmId) };
   });
   app.patch('/api/assignments/:id/evidence/:cid', { preHandler: can('val') }, async (req) => {
-    const b = body(req, z.object({ included: z.boolean().optional(), weight: z.number().min(0).max(3).optional(), adjustments: z.array(z.object({ code: z.string(), label: z.string(), pct: z.number() })).optional(), reason: z.string().optional() }));
+    const b = body(req, z.object({ included: z.boolean().optional(), weight: z.number().min(0).max(3).optional(), adjustments: z.array(z.object({ code: z.string(), label: z.string(), pct: z.number() })).optional(), reason: z.string().optional(), area: z.number().positive().max(1e6).optional(), basis: z.enum(['bua', 'carpet', 'saleable']).optional() }));
     await val.overrideComparable(actorOf(req), idParam(req), idParam(req, 'cid'), b);
     return { ok: true };
   });

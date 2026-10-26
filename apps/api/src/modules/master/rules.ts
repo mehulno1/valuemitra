@@ -27,6 +27,7 @@ export interface Rules {
   guidance_only_sources?: string[];
   report_max_days_after_inspection?: number;
   outlier_pct?: number;
+  outlier_action?: 'flag' | 'exclude';
   floor_pct_per_floor?: number;
   floor_max_pct?: number;
   [k: string]: unknown;

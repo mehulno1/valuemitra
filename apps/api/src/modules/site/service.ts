@@ -16,6 +16,8 @@ import { enqueue, registerJob } from '../../platform/jobs.js';
 import { getSettings } from '../../platform/settings.js';
 import { readFile, saveFile } from '../../platform/storage.js';
 import { DOCS, IMAGES, requireKind } from '../../lib/sniff.js';
+import { mapCoords, parseLatLng } from '../../lib/coords.js';
+import { ocrImages } from '../../ai/vision.js';
 import { caseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { extractFields, preparePages, syncChecklist } from '../documents/reader.js';
@@ -143,6 +145,27 @@ export async function addPhotos(firmId: number, assignmentId: number, visitId: n
   return ids;
 }
 
+/** Coordinates written on a map screenshot, read from the full-size picture: OCR first, then the model. */
+async function readMapCoords(fileId: number, firmId: number) {
+  try {
+    const { buffer } = await readFile(fileId, firmId);
+    const img = await sharp(buffer).rotate().resize({ width: 2000, withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+    const [ocr] = await ocrImages([img]);
+    const hit = parseLatLng(ocr?.text);
+    if (hit) return hit;
+    const r = await structured({
+      system: 'You read map app screenshots for a property valuer.',
+      content: [imageBlock(img), textBlock('Copy the coordinates of the pinned place exactly as written on the screen (search box, place card or dropped pin), if any.')],
+      schema: z.object({ coords_text: z.string().nullable().describe('e.g. 19°11\'29.2"N 73°10\'43.6"E or 19.191444, 73.178778; null if none is written') }),
+      effort: 'low',
+    });
+    return parseLatLng(r.data.coords_text);
+  } catch (e) {
+    console.error('[photos] map coordinates unreadable:', (e as Error).message);
+    return null;
+  }
+}
+
 /** Duplicates, distance from the pin, time stamps; then AI captions and selfie / name-board flags. */
 export async function analysePhotos(assignmentId: number) {
   const a = await db.selectFrom('assignments').select(['id', 'firm_id', 'profile_version_id']).where('id', '=', assignmentId).executeTakeFirstOrThrow();
@@ -184,6 +207,7 @@ export async function analysePhotos(assignmentId: number) {
         schema: z.object({ photos: z.array(z.object({
           index: z.number().int(), caption: z.string(), is_selfie: z.boolean().describe('The engineer is visible at the site'), names_visible: z.boolean().describe("A board or list showing residents' or members' names is readable"),
           is_map: z.boolean().describe('A screenshot of a map app showing the location (not a photo of the site)'),
+          map_coords_text: z.string().nullable().describe('Coordinates exactly as written on the map screenshot (search box, pin card), e.g. 19°11\'29.2"N 73°10\'43.6"E, else null'),
           map_lat: z.number().nullable().describe('Latitude written on the map screenshot (decimal degrees), else null'),
           map_lng: z.number().nullable().describe('Longitude written on the map screenshot (decimal degrees), else null'),
         })) }),
@@ -195,10 +219,13 @@ export async function analysePhotos(assignmentId: number) {
         // a map screenshot prints on the location map page, not among the photographs
         const map = x.is_map ? 1 : 0;
         await db.updateTable('site_photos').set({ ai_caption: x.caption.slice(0, 200), caption: p.caption ?? (map ? 'Location map' : x.caption.slice(0, 200)), is_selfie: x.is_selfie ? 1 : 0, names_visible: x.names_visible ? 1 : 0, is_map: map, ...(map ? { selected: 0 } : {}) }).where('id', '=', p.id).execute();
-        if (map && x.map_lat !== null && x.map_lng !== null && Math.abs(x.map_lat) <= 90 && Math.abs(x.map_lng) <= 180) {
+        if (!map) continue;
+        // the caption pass sees thumbnails; the coordinates are small text, so read the full picture when needed
+        const pos = mapCoords(x.map_coords_text, x.map_lat, x.map_lng) ?? (await readMapCoords(p.file_id, a.firm_id));
+        if (pos) {
           await writeCandidates(assignmentId, a.firm_id, [
-            { fieldCode: 'PROP.LAT', value: x.map_lat.toFixed(6), sourceType: 'evidence', snippet: 'Read from the map screenshot among the site photos', confidence: 85 },
-            { fieldCode: 'PROP.LNG', value: x.map_lng.toFixed(6), sourceType: 'evidence', snippet: 'Read from the map screenshot among the site photos', confidence: 85 },
+            { fieldCode: 'PROP.LAT', value: pos.lat.toFixed(6), sourceType: 'evidence', snippet: 'Read from the map screenshot among the site photos', confidence: 85 },
+            { fieldCode: 'PROP.LNG', value: pos.lng.toFixed(6), sourceType: 'evidence', snippet: 'Read from the map screenshot among the site photos', confidence: 85 },
           ]);
         }
       }

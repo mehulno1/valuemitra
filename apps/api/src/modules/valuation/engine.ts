@@ -52,6 +52,14 @@ export function floorNo(x: unknown): number | null {
   return m ? Number(m[0]) : null;
 }
 
+/** A stated area as built-up by the bank's loading and saleable factor (the evidence is compared per sq.ft. built-up). */
+export function toBua(area: number, basis: string, r: Pick<Rules, 'loading_pct' | 'saleable_factor'>): number {
+  const load = 1 + (r.loading_pct ?? 20) / 100;
+  if (basis === 'carpet') return area * load;
+  if (basis === 'saleable') return (area / (r.saleable_factor || 1.4)) * load;
+  return area;
+}
+
 const months = (a: Date, b: Date) => (b.getTime() - a.getTime()) / (30.4375 * 86400_000);
 
 export function adjustComparable(c: ComparableIn, s: Subject, r: Rules): ComparableOut {
@@ -99,7 +107,10 @@ export function adjustComparable(c: ComparableIn, s: Subject, r: Rules): Compara
   };
 }
 
-/** Leave out comparables far from the median of the rest (e.g. a luxury tower listing); the valuer can include them again. */
+/**
+ * Comparables far from the median (e.g. a luxury tower listing). By default they are highlighted and still
+ * used, so the valuer decides; with the rule outlier_action 'exclude' they are left out until included again.
+ */
 export function flagOutliers<T extends ComparableOut & { isSubject?: boolean }>(cs: T[], r: Rules): T[] {
   const lim = (r.outlier_pct ?? 30) / 100;
   if (!lim) return cs;
@@ -110,7 +121,9 @@ export function flagOutliers<T extends ComparableOut & { isSubject?: boolean }>(
     if (!c.included || c.isSubject || c.manual || !med) return c;
     const off = (c.adjustedRate - med) / med;
     if (Math.abs(off) <= lim) return c;
-    return { ...c, included: false, outlier: true, exclusionReason: `Outlier: ${Math.round(Math.abs(off) * 100)}% ${off > 0 ? 'above' : 'below'} the median. Include it again if it is truly comparable.` };
+    const gap = `Outlier: ${Math.round(Math.abs(off) * 100)}% ${off > 0 ? 'above' : 'below'} the median.`;
+    if (r.outlier_action !== 'exclude') return { ...c, outlier: true, exclusionReason: `${gap} Used; leave it out if it is not truly comparable.` };
+    return { ...c, included: false, outlier: true, exclusionReason: `${gap} Include it again if it is truly comparable.` };
   });
 }
 

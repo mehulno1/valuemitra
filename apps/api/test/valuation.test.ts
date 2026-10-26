@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { adjustComparable, computeValues, flagOutliers, floorNo, propose, type ComparableIn } from '../src/modules/valuation/engine';
+import { adjustComparable, computeValues, flagOutliers, floorNo, propose, toBua, type ComparableIn } from '../src/modules/valuation/engine';
+import { parseLatLng, mapCoords } from '../src/lib/coords';
 import { RULE_SET } from '../src/seed/config';
 import { rulesFor } from '../src/modules/master/rules';
 import { amountInWords, inr } from '@vm/shared';
@@ -94,7 +95,17 @@ describe('area basis', () => {
 describe('outliers and floors', () => {
   const sub = { ...subject, hasLift: true, floor: 3 };
   const base = [12000, 12500, 12800, 13200].map((rate, i) => C(i + 1, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * rate }));
-  it('leaves out a comparable far from the median, unless the valuer included it', () => {
+  it('highlights a comparable far from the median and still uses it by default', () => {
+    const tower = C(9, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * 33333 });
+    const out = flagOutliers([...base, tower].map((c) => ({ ...adjustComparable(c, sub, r), isSubject: false })), r);
+    const t = out.find((x) => x.id === 9)!;
+    expect(t.included).toBe(true);
+    expect(t.outlier).toBe(true);
+    expect(t.exclusionReason).toMatch(/^Outlier: \d+% above the median\. Used/);
+    expect(out.filter((x) => x.outlier).length).toBe(1);
+  });
+  it('leaves out an outlier when the bank rule says so, unless the valuer included it', () => {
+    const r = { ...rulesFor(RULE_SET as any, 'SBI'), outlier_action: 'exclude' as const };
     const tower = C(9, { sourceType: 'index2', isAsking: false, areaBua: 465, price: 465 * 33333 });
     const out = flagOutliers([...base, tower].map((c) => ({ ...adjustComparable(c, sub, r), isSubject: false })), r);
     expect(out.find((x) => x.id === 9)!.included).toBe(false);
@@ -113,5 +124,31 @@ describe('outliers and floors', () => {
   });
   it('reads floor numbers', () => {
     expect([floorNo('3rd Floor'), floorNo('Ground floor'), floorNo('7'), floorNo(null)]).toEqual([3, 0, 7, null]);
+  });
+});
+
+describe('stated areas as built-up', () => {
+  it('converts carpet and saleable by the bank factors', () => {
+    expect(toBua(500, 'carpet', r)).toBeCloseTo(600);
+    expect(toBua(700, 'saleable', r)).toBeCloseTo(600);
+    expect(toBua(612, 'bua', r)).toBe(612);
+  });
+});
+
+describe('map coordinates', () => {
+  it('reads Google Maps degrees-minutes-seconds', () => {
+    expect(parseLatLng(`19°11'29.2"N 73°10'43.6"E`)).toEqual({ lat: 19.191444, lng: 73.178778 });
+    expect(parseLatLng('19°11′29.2″N 73°10′43.6″E')).toEqual({ lat: 19.191444, lng: 73.178778 });
+  });
+  it('reads degrees and decimal minutes, south / west, and decimal pairs', () => {
+    expect(parseLatLng(`N 19° 11.487' E 73° 10.727'`)).toEqual({ lat: 19.19145, lng: 73.178783 });
+    expect(parseLatLng(`33°52'10.0"S 151°12'30.0"E`)!.lat).toBeCloseTo(-33.869444, 5);
+    expect(parseLatLng('Dropped pin 19.191923, 73.178782')).toEqual({ lat: 19.191923, lng: 73.178782 });
+  });
+  it('ignores text without coordinates and prefers the text over worked-out numbers', () => {
+    expect(parseLatLng('55RH+MFX, Barkupada Rd, Pale Gaon, Ambernath 421506')).toBeNull();
+    expect(mapCoords(null, 19.19, 73.17)).toEqual({ lat: 19.19, lng: 73.17 });
+    expect(mapCoords(`19°11'29.2"N 73°10'43.6"E`, 1, 2)).toEqual({ lat: 19.191444, lng: 73.178778 });
+    expect(mapCoords(null, null, null)).toBeNull();
   });
 });

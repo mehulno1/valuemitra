@@ -182,6 +182,7 @@ export async function buildSbiFormatA(): Promise<Buffer> {
       row('Plinth Area as per document'),
       row('Carpet Area'),
       row('Saleable Area'),
+      row('Remark'),
       sec('9.', 'Valuation'),
       row('i. Value as per Government Approved Rates'),
       row('ii. In case of variation of 20% or more in the valuation proposed by the valuer and the Guideline value provided in the State Govt. notification, a statement on the need for this variation has to be given'),

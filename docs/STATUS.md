@@ -107,6 +107,22 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - #24 Photos are captioned as the engineer uploads them, and the phone checklist ticks the items they show (`coveredPrompts`).
 - #25 One seen-before message.
 
+## 3f. Premal's retest feedback on VM-2627-0005 (26 Oct 2026, local; not yet deployed)
+- Evidence shown and printed on the case's area basis and unit: Market tab converts every rate (VAL.BASIS_FACTOR,
+  `rateView`), "How this rate is worked out" table; report range VAL.RANGE_TEXT uses VAL.EVIDENCE_LO/HI. Before, a
+  carpet rate printed against a built-up range.
+- Outliers highlighted and still used by default (rule `outlier_action`: flag | exclude). Comparable area/basis can be
+  corrected in Adjust; saleable listings now convert to built-up (`toBua`).
+- Map coordinates: DMS text parsed (`lib/coords.ts`); map photos re-read full size with OCR (thumbnails were too small).
+- Under construction: PHYS.BUILDING_STATUS / WORK_DONE / DEVIATION_SITE from the site sheet; O.C. checklist item
+  `na_when`; plan from DOC.PLAN.* (approved plan or C.C.); pending labels name the real wait.
+- Legal documents: C.C., approved plan, O.C., title report summaries; per-case "In report" toggles (DOC.LEGAL_SKIP).
+- Areas: carpet stated in parts summed (AREA.CARPET_PARTS); SBI Format-A rev 5 prints AREA.*_TEXT lines and "Remark –
+  rate is given on …".
+- Checks accept dialog: radio list aligned (CSS).
+- Open question for Premal: his manual report uses plinth = carpet + 10% and saleable = carpet + 35%; SBI rules here are
+  20% and 1.4. Per-bank rules can be changed in Settings.
+
 ## 4. Left — by work package
 
 | WP | Left |

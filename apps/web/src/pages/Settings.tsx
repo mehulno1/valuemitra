@@ -199,7 +199,7 @@ function NumbersSection() {
 }
 
 // ---- 4. valuation rules (versioned rule set) ---------------------------------------------------------
-const RULES: { k: string; label: string; hint?: string; step?: string }[] = [
+const RULES: { k: string; label: string; hint?: string; step?: string; options?: [string, string][] }[] = [
   { k: 'realizable_pct', label: 'Realizable value, % of FMV', step: '0.5' },
   { k: 'distress_pct', label: 'Distress value, % of FMV' },
   { k: 'loading_pct', label: 'Loading on carpet, %', hint: 'Built-up = carpet × (1 + loading)' },
@@ -212,7 +212,8 @@ const RULES: { k: string; label: string; hint?: string; step?: string }[] = [
   { k: 'comparable_window_months', label: 'Comparables: window, months' },
   { k: 'comparable_radius_km', label: 'Comparables: radius, km', step: '0.1' },
   { k: 'listing_discount_pct', label: 'Listing discount, %', hint: 'Asking prices are reduced by this' },
-  { k: 'outlier_pct', label: 'Comparables: outlier limit, %', hint: 'Left out when further than this from the median; 0 = off' },
+  { k: 'outlier_pct', label: 'Comparables: outlier limit, %', hint: 'Flagged when further than this from the median; 0 = off' },
+  { k: 'outlier_action', label: 'Comparables: outliers', hint: 'Highlighted and still used (the valuer decides), or left out until included again', options: [['flag', 'Highlight, still used'], ['exclude', 'Leave out']] },
   { k: 'floor_pct_per_floor', label: 'Floor adjustment, % per floor', hint: 'Lift buildings only; 0 = off', step: '0.1' },
   { k: 'floor_max_pct', label: 'Floor adjustment cap, %', step: '0.5' },
   { k: 'report_max_days_after_inspection', label: 'Report within, days of inspection', hint: 'A check warns after this' },
@@ -260,11 +261,12 @@ function RulesSection() {
   const defs = p.defaults ?? {};
   const banks = p.banks ?? {};
   const num = (v: string) => (v === '' ? null : Number(v));
-  const setDef = (k: string, v: string) => setP({ ...p, defaults: { ...defs, [k]: num(v) } });
+  const isText = (k: string) => !!RULES.find((r) => r.k === k)?.options;
+  const setDef = (k: string, v: string) => setP({ ...p, defaults: { ...defs, [k]: isText(k) ? v || null : num(v) } });
   // a bank's own figure overrides the default; clearing it goes back to the default
   const setBank = (code: string, k: string, v: string) => {
     const own = { ...(banks[code] ?? {}) };
-    if (v === '') delete own[k]; else own[k] = num(v);
+    if (v === '') delete own[k]; else own[k] = isText(k) ? v : num(v);
     setP({ ...p, banks: { ...banks, [code]: own } });
   };
   const bankList: Bank[] = meta.data?.banks ?? Object.keys(banks).map((code, i) => ({ id: i, code, name: code }));
@@ -290,6 +292,15 @@ function RulesSection() {
           {RULES.map((r) => {
             const own = scope ? banks[scope]?.[r.k] : undefined;
             const has = own !== undefined && own !== null;
+            const optLabel = (v: unknown) => r.options?.find((o) => o[0] === v)?.[1] ?? (v as string) ?? '—';
+            if (r.options) return (
+              <Field key={r.k} label={r.label} hint={scope ? (has ? `${scope}'s own choice (default: ${optLabel(defs[r.k])})` : `Uses the default (${optLabel(defs[r.k])})`) : r.hint}>
+                <select value={scope ? (has ? own : '') : defs[r.k] ?? ''} onChange={(e) => (scope ? setBank(scope, r.k, e.target.value) : setDef(r.k, e.target.value))} disabled={ro}>
+                  {scope && <option value="">Use the default</option>}
+                  {r.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </Field>
+            );
             return (
               <Field key={r.k} label={r.label} hint={scope ? (has ? `${scope}'s own figure (default ${defs[r.k] ?? '—'})` : `Uses the default (${defs[r.k] ?? '—'})`) : r.hint}>
                 {scope

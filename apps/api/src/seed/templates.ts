@@ -13,15 +13,20 @@ const CONFIRM: Record<string, string> = {
 // labels whose field changed since an earlier version (the earlier choice would otherwise carry over)
 const FORCE: Record<string, string> = {
   'Present Value of the Flat | Rate': 'VAL.RATE_TEXT',
+  'Plinth Area as per document': 'AREA.BUA_TEXT',
+  'Carpet Area': 'AREA.CARPET_TEXT',
+  'Saleable Area': 'AREA.SALEABLE_TEXT',
+  'Remark': 'AREA.RATE_REMARK',
 };
 
 /** Bump when the built layout changes; the next seed publishes it as a new version (cases keep theirs). */
-const REV = 4;
+const REV = 5;
 const REV_NOTES: Record<number, string> = {
   1: 'Recreated from the ValueMitra prototype report pages',
   2: 'Format-A flows from page to page; rows and signature blocks are kept together',
   3: 'Annexure pages start on a new page without leaving a blank page; no ready reckoner page without a capture',
   4: 'Valuation table prints the area and unit the rate is quoted on (carpet, built-up, saleable; sq.ft. or sq.m.)',
+  5: 'Area details print how each area was arrived at (carpet in parts, built-up and saleable by the bank factor) and the area the rate is given on',
 };
 
 export async function seedTemplates() {
