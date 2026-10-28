@@ -143,6 +143,18 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 
 Gates: A built (AI reading live; first real pilot case next) → B all property types → C all banks + months 0–3 learning targets → D second firm by configuration only.
 
+## 3g. Premal's retest F4 (format preview with VM-2627-0003/0004, 28 Oct 2026, local; not yet deployed)
+- Bank formats → Preview downloaded the browser's click-to-edit markers (boxes and field codes in Word). It now renders
+  like the issued report (mode `final_preview`, the version's own fields via `buildRenderData(…, versionId)`); fields
+  the case lacks print "[Label: pending for this case]".
+- Floating (page-positioned) tables become ordinary tables (`unfloatTables`, at compile and at render so formats
+  already published are covered): LibreOffice had left page 1 blank and printed the Ref line over item 11. The text
+  Word shows above a page-anchored table moves in front of it.
+- `fillTemplate` drops fixed words the value already starts with ("Survey No. Survey No.", "Rs. Rs.").
+- A single REPORT.REMARK_n beside the whole REPORT.REMARKS list is removed (AI `check()`, prompt, and compile for
+  formats read earlier). Published NKGSB v5 on live keeps its compiled file: patch or re-upload after deploying.
+- Left as is: the bank's own fixed notes after the remarks (scope / encumbrance) overlap firm remarks 7–8.
+
 ## 5. Next actions
 
 1. Internal testing with the team brief; triage feedback (config change vs code change).

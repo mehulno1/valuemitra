@@ -12,7 +12,7 @@ import { registerJob } from '../../platform/jobs.js';
 import { readFile } from '../../platform/storage.js';
 import { docTypes } from '../documents/reader.js';
 import { dictionary, type Field } from '../master/dictionary.js';
-import { templateCodes } from './codes.js';
+import { singleField, templateCodes } from './codes.js';
 import { openDocx } from './docx.js';
 import { detectSlots } from './detect.js';
 import { outline } from './outline.js';
@@ -77,7 +77,7 @@ You get the document as an outline: paragraphs [p12] and table cells [t0r3c2] in
    - When the file is a filled report, a cell's current text is the earlier case's value: never keep it, map the question.
    - Skip header cells, numbering and labels.
 2. paragraphs: running text the format must not print as it is.
-   - earlier_case: anything about the earlier property or case: reference number and date of the earlier report, its remarks, notes and disclaimers specific to that property, the engineer's name and inspection date. Replace with fields (e.g. "Ref: {{CASE.REPORT_NO}} Date: {{CASE.REPORT_DATE}}", "The property was inspected by our Engineer, {{CASE.ENGINEER_NAME}} on {{SITE.INSPECTION_DATE}}.") or with one {{REPORT.REMARKS}} for a block of case remarks; null removes text that has no equivalent.
+   - earlier_case: anything about the earlier property or case: reference number and date of the earlier report, its remarks, notes and disclaimers specific to that property, the engineer's name and inspection date. Replace with fields (e.g. "Ref: {{CASE.REPORT_NO}} Date: {{CASE.REPORT_DATE}}", "The property was inspected by our Engineer, {{CASE.ENGINEER_NAME}} on {{SITE.INSPECTION_DATE}}.") or with one {{REPORT.REMARKS}} for a block of case remarks; null removes text that has no equivalent. {{REPORT.REMARKS}} is the firm's whole numbered list (documents seen, occupancy, locality, area basis, bank-loan purpose only, encumbrances not considered): when it replaces the case remarks, never print a single remark field (REPORT.REMARK_1 to _8) beside it, and include in its range any earlier-case remark that one of those covers.
    - valuer_identity: the earlier valuer's name, qualifications, registration / IBBI number, firm, panel line, place and date under the signature. Replace with this firm's fields ({{FIRM.VALUER_NAME}}, {{FIRM.VALUER_QUALS}}, {{FIRM.VALUER_REG}}, {{FIRM.PLACE}}, {{CASE.REPORT_DATE}} or {{FIRM.VALUER_BLOCK}}).
    - annexure: sections that hold the earlier case's photographs, maps, ready reckoner pages, comparables or document copies. ValueMitra appends its own annexure pages, so remove them (template null), heading included.
    - section_body: a heading such as "Marketability:" or "Rate Analysis:" followed by empty paragraphs (or the earlier case's text): give the body range and the field it prints.
@@ -219,6 +219,14 @@ export function check(d: z.infer<typeof Schema>, ctx: { o: ReturnType<typeof out
       status: body && template ? statusOf(template) : 'clear',
       confidence: Math.max(0, Math.min(100, p.confidence)), note, ask: null, order: o.order.get(`p${a}`) ?? 0,
     });
+  }
+  // the whole remarks list already holds each numbered remark: one printed beside it would repeat it
+  if (rows.some((r) => r.slot_kind === 'para' && singleField(r.template) === 'REPORT.REMARKS')) {
+    for (const r of rows) {
+      if (r.slot_kind !== 'para' || !/^REPORT\.REMARK_\d+$/.test(singleField(r.template) ?? '')) continue;
+      r.template = null; r.location.template = null; r.status = 'clear';
+      r.note = 'Removed: the remarks list printed above already includes this remark.';
+    }
   }
   return { summary: d.summary, rows: rows.sort((x, y) => x.order - y.order), newFields: [...newFields.values()], warnings };
 }

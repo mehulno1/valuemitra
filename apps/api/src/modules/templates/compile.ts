@@ -4,7 +4,7 @@
 // and pinned per assignment; rendering always uses the compiled file, never a re-drawn copy.
 import type { Element as XEl } from '@xmldom/xmldom';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, setParagraphText, tables, W_NS, type DocxParts } from './docx.js';
+import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, setParagraphText, tables, unfloatTables, W_NS, type DocxParts } from './docx.js';
 import { singleField, templateKey } from './codes.js';
 import type { Slot } from './detect.js';
 
@@ -70,6 +70,9 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
       if (t.textContent && /\{\{\s*[A-Z][A-Z0-9_.]+\s*\}\}/.test(t.textContent)) t.textContent = t.textContent.replace(/\{\{\s*[A-Z][A-Z0-9_.]+\s*\}\}/g, '');
     }
   }
+
+  // after every slot is written (slot indices are from the untouched document)
+  unfloatTables(doc);
 
   const body = els(doc, 'w:body')[0];
   const finalSect = children(body, 'w:sectPr')[0];

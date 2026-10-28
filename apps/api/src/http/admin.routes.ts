@@ -182,17 +182,17 @@ export async function adminRoutes(app: FastifyInstance) {
     const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
     if (!v || (v.firm_id !== null && v.firm_id !== req.auth!.firmId)) throw badRequest('Template version not found');
     const { compiled } = await tpl.compileVersion(v.firm_id, idParam(req));
-    // render with this version's mapping: temporarily treat it as the case's template
-    const built = await buildRenderData(assignmentId, req.auth!.firmId, 'preview', db);
+    // a downloaded Word file: the pages as they will be issued (no click-to-edit markers, no signature)
+    const built = await buildRenderData(assignmentId, req.auth!.firmId, 'final_preview', db, idParam(req));
     const { caseData } = await import('../modules/casedata/resolver.js');
     const data = await caseData(assignmentId, req.auth!.firmId);
     // fields the AI proposes exist only once published: show where each will be asked
     const detail = await tpl.versionDetail(req.auth!.firmId, idParam(req));
     const proposed = new Map<string, any>((detail.ai?.new_fields ?? []).map((f: any) => [f.code, f]));
     for (const code of await versionFieldCodes(idParam(req))) {
-      if (code in built.data) continue;
       const f = proposed.get(code);
-      built.data[code] = f && !data.fields.has(code) ? (f.default_text ?? `[New field: ${f.label}${f.sources.includes('site_sheet') ? ' (asked on the site sheet)' : ''}]`) : data.get(code).display ?? '';
+      if (f && !data.fields.has(code)) built.data[code] = f.default_text ?? `[New field: ${f.label}${f.sources.includes('site_sheet') ? ' (asked on the site sheet)' : ''}]`;
+      else if (!built.data[code] && data.fields.get(code)?.type !== 'image') built.data[code] = `[${data.fields.get(code)?.label ?? code}: pending for this case]`;
     }
     for (const t of await versionTemplates(idParam(req))) built.data[templateKey(t.key)] = fillTemplate(t.template, (c) => String(built.data[c] ?? ''));
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');

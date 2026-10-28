@@ -123,6 +123,35 @@ export function setCellText(doc: XDoc, tc: XEl, text: string, fallbackFormatFrom
   tc.appendChild(np);
 }
 
+/**
+ * Floating tables (positioned on the page) become ordinary tables. Word flows the text after such a
+ * table above it; LibreOffice, which makes the PDF, places it elsewhere, leaving blank pages and text
+ * printed over the table. A table fixed to the page or margin keeps Word's order: the paragraphs it is
+ * anchored to (up to the last one with text before the next table) move in front of it.
+ */
+export function unfloatTables(doc: XDoc): boolean {
+  let changed = false;
+  for (const tbl of els(doc, 'w:tbl')) {
+    const tblPr = children(tbl, 'w:tblPr')[0];
+    const pos = tblPr ? children(tblPr, 'w:tblpPr')[0] : undefined;
+    if (!pos) continue;
+    changed = true;
+    tblPr.removeChild(pos);
+    if ((pos.getAttribute('w:vertAnchor') ?? 'margin') === 'text') continue;
+    const after: XEl[] = [];
+    for (let n: any = tbl.nextSibling; n; n = n.nextSibling) {
+      if (n.nodeType !== 1) continue;
+      if (n.nodeName !== 'w:p' || els(n, 'w:sectPr').length) break;
+      after.push(n);
+    }
+    const hasText = (p: XEl) => els(p, 'w:t').some((t) => (t.textContent ?? '').trim()) || els(p, 'w:drawing').length > 0;
+    let last = -1;
+    after.forEach((p, i) => { if (hasText(p)) last = i; });
+    for (const p of after.slice(0, last + 1)) tbl.parentNode!.insertBefore(p, tbl);
+  }
+  return changed;
+}
+
 /** Replace the text of a paragraph range: everything after `afterText` becomes `text` (inline blanks). */
 export function replaceInParagraph(p: XEl, find: string, replacement: string): boolean {
   mergeRuns(p);

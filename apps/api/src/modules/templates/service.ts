@@ -10,7 +10,7 @@ import { activeConfig, publishConfig, saveDraft } from '../../platform/config.js
 import { purgeFile, readFile, saveFile } from '../../platform/storage.js';
 import { dictionary, saveField, type FieldInput } from '../master/dictionary.js';
 import { READY, type NewField } from './aiconvert.js';
-import { templateCodes, versionFieldCodes } from './codes.js';
+import { singleField, templateCodes, versionFieldCodes } from './codes.js';
 import { AUTO_ACCEPT, mappingHistory, matchSlot } from './automap.js';
 import { compileTemplate, type Layout } from './compile.js';
 import { detectSlots, type Slot } from './detect.js';
@@ -263,6 +263,9 @@ export async function compileVersion(firmId: number | null, versionId: number, t
   const maps = (await tx.selectFrom('template_mappings').selectAll().where('template_version_id', '=', versionId).where('ignored', '=', 0).execute())
     .filter((m) => m.field_code || m.slot_kind === 'para' || json<any>(m.location_json, {}).template);
   const fields = await dictionary(firmId ?? 0, tx);
+  // a single remark beside the whole remarks list would print twice (formats read before 28 Oct 2026)
+  const remarksList = maps.some((m) => m.slot_kind === 'para' && singleField(json<any>(m.location_json, {}).template) === 'REPORT.REMARKS');
+  const repeatsRemark = (m: (typeof maps)[number]) => remarksList && m.slot_kind === 'para' && /^REPORT\.REMARK_\d+$/.test(singleField(json<any>(m.location_json, {}).template) ?? '');
   const compiled = compileTemplate(
     buffer,
     maps.map((m) => {
@@ -273,7 +276,7 @@ export async function compileVersion(firmId: number | null, versionId: number, t
           : { key: m.slot_key, kind: m.slot_kind as Slot['kind'], label: m.label_text, context: m.context_text, sample: m.sample_text, location: loc, explicitCode: loc.explicitCode ?? undefined },
         fieldCode: m.field_code,
         fieldType: m.field_code ? fields.get(m.field_code)?.type ?? 'text' : 'text',
-        template: loc.template ?? null,
+        template: repeatsRemark(m) ? null : loc.template ?? null,
       };
     }),
     json(v.layout_json, DEFAULT_LAYOUT),

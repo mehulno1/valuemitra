@@ -5,6 +5,7 @@ import ImageModule from 'docxtemplater-image-module-free';
 import PizZip from 'pizzip';
 import sharp from 'sharp';
 import { CLOSE, HEADER_XML, OPEN } from './compile.js';
+import { openDocx, saveDocx, unfloatTables } from './docx.js';
 
 export interface RenderImage {
   buffer: Buffer;
@@ -28,7 +29,7 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
       return [img.width, img.height];
     },
   });
-  const zip = new PizZip(compiled);
+  const zip = new PizZip(unfloat(compiled));
   upgradeHeaders(zip);
   const doc = new Docxtemplater(zip, {
     delimiters: { start: OPEN, end: CLOSE },
@@ -42,6 +43,12 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
   });
   doc.render(data);
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
+}
+
+/** Formats compiled before 28 Oct 2026 may keep the bank's floating tables (see unfloatTables). */
+function unfloat(compiled: Buffer): Buffer {
+  const parts = openDocx(compiled);
+  return unfloatTables(parts.doc) ? saveDocx(parts) : compiled;
 }
 
 /** Templates compiled before 22 Oct 2026 carry a header that Word refuses (a centred letterhead image

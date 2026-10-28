@@ -39,15 +39,17 @@ async function composeSignature(firmId: number, sigId: number | null, sealId: nu
 
 const chunk = <T,>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
-export async function buildRenderData(assignmentId: number, firmId: number, mode: Mode, tx: Tx = db): Promise<Built> {
+/** `versionId` renders another format than the case's own (Bank formats → Preview). */
+export async function buildRenderData(assignmentId: number, firmId: number, mode: Mode, tx: Tx = db, versionId?: number): Promise<Built> {
   const data = await caseData(assignmentId, firmId, tx);
+  const tplVersion = versionId ?? data.case.template_version_id;
   const settings = await getSettings(firmId, tx);
   const images = new Map<string, RenderImage>();
   const out: RenderData = {};
   const snapshot: Record<string, unknown> = {};
   const signed = mode === 'final';
 
-  for (const code of await versionFieldCodes(data.case.template_version_id, tx)) {
+  for (const code of await versionFieldCodes(tplVersion, tx)) {
     const r = data.get(code);
     if (r.type === 'image') continue;
     const shown = r.state === 'filled' || r.notProvided;
@@ -60,7 +62,7 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
 
   // signature and seal: full at signing blocks, short on every page footer
   // cells and paragraphs that print several fields with fixed words between them
-  for (const t of await versionTemplates(data.case.template_version_id, tx)) out[templateKey(t.key)] = fillTemplate(t.template, (c) => String(out[c] ?? ''));
+  for (const t of await versionTemplates(tplVersion, tx)) out[templateKey(t.key)] = fillTemplate(t.template, (c) => String(out[c] ?? ''));
 
   out.SIGNED = signed;
   out.SIGN_PENDING = mode === 'preview' ? `${M.start}REPORT.SIGNATURE${M.pend}Signature and seal placed at sign-off${M.end}` : mode === 'final_preview' ? 'Signature and seal are placed at sign-off' : '';
