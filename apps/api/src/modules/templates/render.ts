@@ -3,6 +3,7 @@
 import Docxtemplater from 'docxtemplater';
 import ImageModule from 'docxtemplater-image-module-free';
 import PizZip from 'pizzip';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import sharp from 'sharp';
 import { CLOSE, HEADER_XML, OPEN } from './compile.js';
 import { openDocx, saveDocx, unfloatTables } from './docx.js';
@@ -31,6 +32,7 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
   });
   const zip = new PizZip(unfloat(compiled));
   upgradeHeaders(zip);
+  keepBrokenLinesShort(zip);
   const doc = new Docxtemplater(zip, {
     delimiters: { start: OPEN, end: CLOSE },
     paragraphLoop: true,
@@ -49,6 +51,25 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
 function unfloat(compiled: Buffer): Buffer {
   const parts = openDocx(compiled);
   return unfloatTables(parts.doc) ? saveDocx(parts) : compiled;
+}
+
+// CT_Compat is a sequence: these come before doNotExpandShiftReturn
+const COMPAT_BEFORE = ['useSingleBorderforContiguousCells', 'wpJustification', 'noTabHangInd', 'noLineBreaksAfter', 'noLineBreaksBefore', 'spaceForUL', 'balanceSingleByteDoubleByteWidth', 'doNotLeaveBackslashAlone', 'ulTrailSpace'];
+
+/** A justified paragraph with line breaks (the valuer block, remarks) would stretch each short line
+ *  across the page in LibreOffice and older Word modes; the compatibility option keeps them as typed. */
+function keepBrokenLinesShort(zip: PizZip) {
+  const xml = zip.file('word/settings.xml')?.asText();
+  if (!xml || xml.includes('doNotExpandShiftReturn')) return;
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const root = doc.documentElement!;
+  const W = root.lookupNamespaceURI('w') ?? 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  let compat = Array.from(root.childNodes as any).find((n: any) => n.nodeName === 'w:compat') as any;
+  if (!compat) return; // without a compat block the bank's file is not from a Word that needs it
+  const opt = doc.createElementNS(W, 'w:doNotExpandShiftReturn');
+  const next = Array.from(compat.childNodes as any).find((n: any) => n.nodeType === 1 && !COMPAT_BEFORE.includes(String(n.nodeName).replace(/^w:/, ''))) as any;
+  compat.insertBefore(opt, next ?? null);
+  zip.file('word/settings.xml', new XMLSerializer().serializeToString(doc));
 }
 
 /** Templates compiled before 22 Oct 2026 carry a header that Word refuses (a centred letterhead image

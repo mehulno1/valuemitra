@@ -4,7 +4,7 @@
 // and pinned per assignment; rendering always uses the compiled file, never a re-drawn copy.
 import type { Element as XEl } from '@xmldom/xmldom';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, setParagraphText, tables, unfloatTables, W_NS, type DocxParts } from './docx.js';
+import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, setParagraphText, tables, textOf, unfloatTables, W_NS, type DocxParts } from './docx.js';
 import { singleField, templateKey } from './codes.js';
 import type { Slot } from './detect.js';
 
@@ -73,6 +73,7 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
 
   // after every slot is written (slot indices are from the untouched document)
   unfloatTables(doc);
+  addSignatureSlot(doc, mappings.filter((m) => m.slot.kind === 'para' && /\{\{\s*FIRM\.VALUER_(NAME|BLOCK)\s*\}\}/.test(m.template ?? '')).map(tagsFor));
 
   const body = els(doc, 'w:body')[0];
   const finalSect = children(body, 'w:sectPr')[0];
@@ -116,6 +117,8 @@ function rewriteRange(doc: any, ps: XEl[], from: number, to: number, text: strin
   } else targets = ps.slice(from, to + 1).filter(Boolean);
   targets.forEach((n, i) => {
     if (i === 0 && text !== null) {
+      // the earlier valuer's highlight (text they filled in) would mark this case's value
+      els(n as any, 'w:highlight').forEach((h) => h.parentNode?.removeChild(h));
       if (single) {
         const pPr = children(n as any, 'w:pPr')[0];
         if (pPr) {
@@ -132,6 +135,30 @@ function rewriteRange(doc: any, ps: XEl[], from: number, to: number, text: strin
     }
     n.parentNode?.removeChild(n);
   });
+}
+
+/**
+ * A format read from a filled report keeps empty lines where the earlier valuer signed. When it has no
+ * signature slot, one goes above the valuer's block (the tags in `blockTags`), replacing those lines and
+ * kept on the same page as the block. Returns whether it was added.
+ */
+export function addSignatureSlot(doc: any, blockTags: string[]): boolean {
+  if (!blockTags.length) return false;
+  const ps = paragraphs(doc);
+  if (ps.some((p) => textOf(p).includes(tag('%REPORT.SIGNATURE')))) return false;
+  const block = ps.find((p) => blockTags.some((t) => textOf(p).includes(t)));
+  if (!block) return false;
+  const empty = (n: any) => n?.nodeType === 1 && n.nodeName === 'w:p' && !textOf(n).trim() && !els(n, 'w:drawing').length && !els(n, 'w:sectPr').length;
+  for (let k = 0, n: any = block.previousSibling; k < 6 && n; k++) {
+    while (n && n.nodeType !== 1) n = n.previousSibling;
+    if (!empty(n)) break;
+    const prev = n.previousSibling;
+    n.parentNode.removeChild(n);
+    n = prev;
+  }
+  const sig = new DOMParser().parseFromString(`<root xmlns:w="${W_NS}">${para(imageSlot('REPORT.SIGNATURE').split(/(?=⟪)/).map((t) => run(t)).join(''), '<w:keepNext/><w:spacing w:before="240" w:after="0"/>')}</root>`, 'text/xml').documentElement!.firstChild;
+  block.parentNode!.insertBefore((doc as any).importNode(sig, true), block);
+  return true;
 }
 
 /** Images no longer referenced (an earlier case's photos and maps) leave the package entirely. */

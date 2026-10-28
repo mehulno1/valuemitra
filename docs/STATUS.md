@@ -107,7 +107,7 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - #24 Photos are captioned as the engineer uploads them, and the phone checklist ticks the items they show (`coveredPrompts`).
 - #25 One seen-before message.
 
-## 3f. Premal's retest feedback on VM-2627-0005 (26 Oct 2026, local; not yet deployed)
+## 3f. Premal's retest feedback on VM-2627-0005 (26 Oct 2026, live since 28 Oct)
 - Evidence shown and printed on the case's area basis and unit: Market tab converts every rate (VAL.BASIS_FACTOR,
   `rateView`), "How this rate is worked out" table; report range VAL.RANGE_TEXT uses VAL.EVIDENCE_LO/HI. Before, a
   carpet rate printed against a built-up range.
@@ -143,7 +143,7 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 
 Gates: A built (AI reading live; first real pilot case next) → B all property types → C all banks + months 0–3 learning targets → D second firm by configuration only.
 
-## 3g. Premal's retest F4 (format preview with VM-2627-0003/0004, 28 Oct 2026, local; not yet deployed)
+## 3g. Premal's retest F4 (format preview with VM-2627-0003/0004, 28 Oct 2026, live)
 - Bank formats → Preview downloaded the browser's click-to-edit markers (boxes and field codes in Word). It now renders
   like the issued report (mode `final_preview`, the version's own fields via `buildRenderData(…, versionId)`); fields
   the case lacks print "[Label: pending for this case]".
@@ -152,7 +152,12 @@ Gates: A built (AI reading live; first real pilot case next) → B all property 
   Word shows above a page-anchored table moves in front of it.
 - `fillTemplate` drops fixed words the value already starts with ("Survey No. Survey No.", "Rs. Rs.").
 - A single REPORT.REMARK_n beside the whole REPORT.REMARKS list is removed (AI `check()`, prompt, and compile for
-  formats read earlier). Published NKGSB v5 on live keeps its compiled file: patch or re-upload after deploying.
+  formats read earlier).
+- Signature: a format with no signature slot gets one above the valuer block (`addSignatureSlot`, replacing the
+  earlier signature's empty lines, kept on the block's page). Highlights on rewritten text are removed. Justified
+  paragraphs with line breaks no longer stretch (`w:doNotExpandShiftReturn` at render).
+- Deployed 28 Oct 2026; live NKGSB v5 patched with `scripts/dev/fix-v5-remark.ts` and `fix-v5-sig.ts` (old compiled
+  files kept, ids in the audit rows).
 - Left as is: the bank's own fixed notes after the remarks (scope / encumbrance) overlap firm remarks 7–8.
 
 ## 5. Next actions
