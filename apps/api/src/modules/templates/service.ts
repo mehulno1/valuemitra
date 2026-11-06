@@ -8,6 +8,7 @@ import { aiConfigured } from '../../ai/claude.js';
 import { enqueue } from '../../platform/jobs.js';
 import { activeConfig, publishConfig, saveDraft } from '../../platform/config.js';
 import { purgeFile, readFile, saveFile } from '../../platform/storage.js';
+import { getSettings } from '../../platform/settings.js';
 import { dictionary, saveField, type FieldInput } from '../master/dictionary.js';
 import { READY, type NewField } from './aiconvert.js';
 import { singleField, templateCodes, versionFieldCodes } from './codes.js';
@@ -257,6 +258,13 @@ export async function setLayout(actor: Actor, versionId: number, layout: Partial
   await tx.updateTable('template_versions').set({ layout_json: toJson({ ...json(v.layout_json, DEFAULT_LAYOUT), ...layout }) }).where('id', '=', versionId).execute();
 }
 
+/** A format's layout, with the firm's Report layout defaults for what the format leaves open (A2, A3). */
+async function layoutWithDefaults(firmId: number | null, l: Layout): Promise<Layout> {
+  if (firmId === null) return l;
+  const s = await getSettings(firmId);
+  return { ...l, letterhead: l.letterhead ?? s.letterhead_on ?? 'all', footer_sig: l.footer_sig ?? s.footer_sig ?? true };
+}
+
 /** Compile the draft (used for preview and on publish). */
 export async function compileVersion(firmId: number | null, versionId: number, tx: Tx = db) {
   const v = await tx.selectFrom('template_versions').selectAll().where('id', '=', versionId).executeTakeFirstOrThrow();
@@ -282,7 +290,7 @@ export async function compileVersion(firmId: number | null, versionId: number, t
         template: repeatsRemark(m) ? null : loc.template ?? null,
       };
     }),
-    json(v.layout_json, DEFAULT_LAYOUT),
+    await layoutWithDefaults(firmId, json(v.layout_json, DEFAULT_LAYOUT)),
   );
   return { compiled, mappedFields: await versionFieldCodes(versionId, tx) };
 }

@@ -163,16 +163,17 @@ export default function NewAssignment() {
           <Panel title="IDs for this case">
             <div className="grid gap-4">
               <div>
-                <div className="eyebrow">Case ID · given now</div>
-                <div className="mono mt-1 text-[20px] font-semibold">{preview.data?.caseNo ?? '…'}</div>
+                <div className="eyebrow">Case ID · given on save</div>
+                <div className="mono mt-1 text-[20px] font-semibold text-muted">{preview.data?.caseNo ? `${preview.data.caseNo.replace(/\d+$/, '')}…` : '…'}</div>
+                <div className="sub mt-1">The running number is reserved when you create the case, so two people creating cases at once never get the same ID. The real ID shows after saving.</div>
                 {caseParts.length >= 3 && (
-                  <div className="sub mt-1">{caseParts[0]} = system · {caseParts[1]} = FY {preview.data?.fy} · {caseParts.slice(2).join('-')} = running no.</div>
+                  <div className="sub mt-1">{caseParts[0]} = system · {caseParts[1]} = FY {preview.data?.fy} · last part = running no.</div>
                 )}
               </div>
               <div>
                 <div className="eyebrow">Report no. · given at valuer sign-off</div>
                 <div className="mono mt-1 text-[15px] font-semibold break-all">{preview.data?.reportNo ?? '…'}</div>
-                {reportParts.length >= 5 && <div className="sub mt-1">firm / bank / branch / FY / report serial</div>}
+                {reportParts.length >= 5 ? <div className="sub mt-1">firm / bank / branch / FY / report serial</div> : <div className="sub mt-1">The serial shown is the next free one; it is fixed only at sign-off.</div>}
               </div>
               <div className="sub grid gap-1.5 border-t border-line pt-3">
                 <p className="m-0">Gaps in case IDs are fine: a cancelled case keeps its number.</p>

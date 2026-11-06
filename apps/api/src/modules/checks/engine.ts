@@ -88,7 +88,8 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
     case 'photo_count': {
       if (!ctx.site) return null;
       const n = ctx.photos.filter((p) => p.selected).length;
-      const min = ctx.profile.min_photos ?? 9;
+      // the firm's minimum (Report layout) wins over the property profile's
+      const min = (await getSettings(ctx.firmId, tx)).min_photos ?? ctx.profile.min_photos ?? 9;
       const max = ctx.profile.max_photos ?? 18;
       return n >= min && n <= max ? { ...base, severity: 'ok', title: fill(def.pass_title ?? '{count} photos selected', { count: n }), detail: null } : { ...base, severity: sev, title: fill(def.title, { min, max }), detail: `${n} selected now.` };
     }

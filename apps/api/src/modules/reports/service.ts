@@ -86,8 +86,13 @@ export async function sendToValuer(actor: Actor, assignmentId: number) {
 
 /** Valuer approves and signs. The report number is issued here, from one gap-free series per FY. */
 export async function signReport(actor: Actor & { role?: string }, assignmentId: number) {
-  if (actor.role !== 'valuer') throw forbidden('Only a registered valuer can sign');
   const firmId = actor.firmId!;
+  // the Report Checker of the case may sign when the firm allows it (the report prints whoever signs)
+  if (actor.role !== 'valuer') {
+    const ok = actor.role === 'checker' && (await getSettings(firmId)).checker_may_sign
+      && !!(await db.selectFrom('assignments').select('id').where('id', '=', assignmentId).where('firm_id', '=', firmId).where('checker_id', '=', actor.id!).executeTakeFirst());
+    if (!ok) throw forbidden('Only a registered valuer can sign');
+  }
   const res = await db.transaction().execute(async (tx) => {
     const a = await tx.selectFrom('assignments as a').innerJoin('banks as b', 'b.id', 'a.bank_id').innerJoin('bank_branches as br', 'br.id', 'a.branch_id')
       .selectAll('a').select(['b.code as bank_code', 'br.code as branch_code']).where('a.id', '=', assignmentId).where('a.firm_id', '=', firmId).forUpdate().executeTakeFirst();

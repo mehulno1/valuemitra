@@ -2,14 +2,14 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { STAGES } from '@vm/shared';
+import { HOLDER_LABEL, HOLDERS, STAGES } from '@vm/shared';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Loading, MessageBox, PageHead, StageChip, ago, useErrorToast } from '@/components/ui';
 
 interface Row {
   id: number; case_no: string; borrower_name: string | null; property: string | null; bank_code: string; bank_short: string; branch_name: string;
-  stage: string; stage_label: string; docs_got: number; docs_total: number; updated_at: string; engineer_name: string | null; report_no: string | null;
+  stage: string; stage_label: string; holder?: string; maker_name?: string | null; checker_name?: string | null; docs_got: number; docs_total: number; updated_at: string; engineer_name: string | null; report_no: string | null;
 }
 interface Alert { severity: 'crit' | 'warn' | 'info'; assignmentId: number; caseNo: string; title: string; detail: string; action: string; purpose: string }
 
@@ -24,13 +24,15 @@ export default function Board() {
   const nav = useNavigate();
   const onErr = useErrorToast();
   const [stage, setStage] = useState<string>('');
+  const [holder, setHolder] = useState<string>('');
+  const [mine, setMine] = useState(false);
   const [search, setSearch] = useState('');
   const q = useDebounced(search.trim());
   const [msg, setMsg] = useState<{ title: string; text: string; subject?: string | null } | null>(null);
 
   const board = useQuery({
-    queryKey: ['board', stage, q],
-    queryFn: () => api.get<{ rows: Row[]; counts: Record<string, number> }>(`/api/assignments?stage=${encodeURIComponent(stage)}&q=${encodeURIComponent(q)}`),
+    queryKey: ['board', stage, q, holder, mine],
+    queryFn: () => api.get<{ rows: Row[]; counts: Record<string, number>; holders?: Record<string, number> }>(`/api/assignments?stage=${encodeURIComponent(stage)}&q=${encodeURIComponent(q)}&holder=${holder}&mine=${mine ? 1 : ''}`),
     placeholderData: (p) => p,
   });
   const alerts = useQuery({ queryKey: ['alerts'], queryFn: () => api.get<Alert[]>('/api/assignments/alerts'), refetchInterval: 60_000 });
@@ -69,7 +71,15 @@ export default function Board() {
         ))}
       </div>
 
-      <p className="sub -mt-2 mb-3">Click a stage to show only its cases; click it again to show all.</p>
+      <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by who has the case">
+        {HOLDERS.map((h) => (
+          <button key={h} className={`btn sm ${holder === h ? 'pri' : 'ghost'}`} aria-pressed={holder === h} onClick={() => setHolder(holder === h ? '' : h)}>
+            {HOLDER_LABEL[h]} <span className="mono">{board.data?.holders?.[h] ?? 0}</span>
+          </button>
+        ))}
+        <label className="ml-2 flex items-center gap-1.5 text-[13px]"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> My cases</label>
+      </div>
+      <p className="sub -mt-1 mb-3">Click a stage or a step to show only its cases; click it again to show all. "My cases": the cases you have now, or make or check.</p>
 
       {alerts.data && !alerts.data.length && (
         <p className="sub mb-4">No overdue cases. An alert appears here when a case waits too long: documents over 4 h, site visit over 6 h, valuer review over 4 h, signed but not dispatched over 2 h.</p>
@@ -102,7 +112,7 @@ export default function Board() {
           <div className="tablewrap">
             <table className="list click">
               <thead>
-                <tr><th>Case ID</th><th>Borrower &amp; property</th><th>Bank · branch</th><th>Stage</th><th>Documents</th><th>Updated</th></tr>
+                <tr><th>Case ID</th><th>Borrower &amp; property</th><th>Bank · branch</th><th>Stage</th><th>With</th><th>Documents</th><th>Updated</th></tr>
               </thead>
               <tbody>
                 {rows.map((r) => {
@@ -113,13 +123,14 @@ export default function Board() {
                       <td><b className="font-semibold">{r.borrower_name || <span className="muted">Borrower not entered</span>}</b><div className="sub">{r.property || '—'}</div></td>
                       <td>{r.bank_short || r.bank_code}<div className="sub">{r.branch_name}</div></td>
                       <td><StageChip stage={r.stage} /></td>
+                      <td className="sub">{r.report_no ? '—' : HOLDER_LABEL[(r.holder ?? 'coordinator') as keyof typeof HOLDER_LABEL]?.replace('With ', '')}{(r.maker_name || r.checker_name) && <div className="sub">{[r.maker_name && `RM ${r.maker_name}`, r.checker_name && `RC ${r.checker_name}`].filter(Boolean).join(' · ')}</div>}</td>
                       <td><span className="mono">{r.docs_got}/{r.docs_total}</span><div className="bar"><i style={{ width: `${pct}%` }} /></div></td>
                       <td className="sub whitespace-nowrap">{ago(r.updated_at)}</td>
                     </tr>
                   );
                 })}
                 {!rows.length && (
-                  <tr><td colSpan={6} className="muted">
+                  <tr><td colSpan={7} className="muted">
                     {stage ? 'No assignments at this stage.' : q ? 'No assignments match your search.' : total === 0 ? 'No assignments yet. Start with "+ New assignment".' : 'No assignments.'}
                   </td></tr>
                 )}

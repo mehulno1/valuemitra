@@ -1,3 +1,4 @@
+import * as wf from '../modules/workflow/handover.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { PROPERTY_TYPES } from '@vm/shared';
@@ -22,7 +23,7 @@ export async function caseRoutes(app: FastifyInstance) {
   // ---- board and intake ----
   app.get('/api/assignments', async (req) => {
     const q = req.query as any;
-    return asg.board(req.auth!.firmId, { stage: q.stage || undefined, q: q.q || undefined });
+    return asg.board(req.auth!.firmId, { stage: q.stage || undefined, q: q.q || undefined, holder: q.holder || undefined, mine: q.mine === '1' ? { id: req.auth!.userId, role: req.auth!.role } : undefined });
   });
   app.get('/api/assignments/alerts', async (req) => asg.alerts(req.auth!.firmId));
   app.get('/api/assignments/id-preview', async (req) => {
@@ -212,7 +213,23 @@ export async function caseRoutes(app: FastifyInstance) {
     return reply.send(pdf);
   });
   app.post('/api/assignments/:id/report/share-draft', { preHandler: can('edit') }, async (req) => reports.shareDraft(actorOf(req), idParam(req)));
-  app.post('/api/assignments/:id/report/send-to-valuer', { preHandler: can('edit') }, async (req) => { await reports.sendToValuer(actorOf(req), idParam(req)); return { ok: true }; });
+  app.post('/api/assignments/:id/report/send-to-valuer', { preHandler: can('edit') }, async (req) => { await wf.handOver({ ...actorOf(req), role: req.auth!.role }, idParam(req), 'valuer', null); return { ok: true }; });
+  // ---- workflow: report maker / checker (A1, B5) ----
+  app.post('/api/assignments/:id/people', { preHandler: can('assign') }, async (req) => {
+    const b = body(req, z.object({ makerId: z.number().int().nullish(), checkerId: z.number().int().nullish() }));
+    await wf.assignPeople({ ...actorOf(req), role: req.auth!.role }, idParam(req), { ...(b.makerId !== undefined ? { makerId: b.makerId } : {}), ...(b.checkerId !== undefined ? { checkerId: b.checkerId } : {}) });
+    return { ok: true };
+  });
+  app.post('/api/assignments/:id/handover', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ to: z.enum(['maker', 'checker', 'valuer']), note: z.string().max(1000).nullish() }));
+    await wf.handOver({ ...actorOf(req), role: req.auth!.role }, idParam(req), b.to, b.note?.trim() || null);
+    return { ok: true };
+  });
+  app.post('/api/assignments/:id/send-back', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ to: z.enum(['coordinator', 'maker', 'checker']), reason: z.string().max(1000) }));
+    await wf.sendBack({ ...actorOf(req), role: req.auth!.role }, idParam(req), b.to, b.reason);
+    return { ok: true };
+  });
   app.post('/api/assignments/:id/report/sign', { preHandler: can('sign') }, async (req) => reports.signReport({ ...actorOf(req), role: req.auth!.role }, idParam(req)));
   app.post('/api/assignments/:id/report/reopen', { preHandler: can('sign') }, async (req) => {
     const b = body(req, z.object({ reason: z.string() }));

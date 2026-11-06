@@ -181,6 +181,7 @@ export interface CaseRecord {
   created_at: Date;
   report_no: string | null;
   signed_at: Date | null;
+  signed_by?: number | null;
   locality_hint: string | null;
   engineer_name: string | null;
   bank_ref_no: string | null;
@@ -200,7 +201,7 @@ export async function loadCase(assignmentId: number, firmId: number, tx: Tx = db
     .leftJoin('engineers as e', 'e.id', 'a.engineer_id')
     .select([
       'a.id', 'a.firm_id', 'a.case_no', 'a.stage', 'a.property_type', 'a.borrower_name', 'a.bank_contact', 'a.purpose',
-      'a.created_at', 'a.report_no', 'a.signed_at', 'a.locality_hint', 'a.bank_ref_no', 'a.draft_version',
+      'a.created_at', 'a.report_no', 'a.signed_at', 'a.signed_by', 'a.locality_hint', 'a.bank_ref_no', 'a.draft_version',
       'a.rule_version_id', 'a.profile_version_id', 'a.check_version_id', 'a.wording_version_id', 'a.template_version_id',
       'b.code as bank_code', 'b.name as bank_name', 'br.code as branch_code', 'br.name as branch_name', 'e.name as engineer_name',
     ])
@@ -230,7 +231,10 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   const [fields, firm, valuer, settings, values, checklist, visit] = await Promise.all([
     dictionary(firmId, tx),
     tx.selectFrom('firms').selectAll().where('id', '=', firmId).executeTakeFirstOrThrow(),
-    tx.selectFrom('users').select(['name', 'qualifications', 'ibbi_reg_no']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst(),
+    // whoever signed (a Report Checker may sign); before signing, the firm's valuer
+    c.signed_by
+      ? tx.selectFrom('users').select(['name', 'qualifications', 'ibbi_reg_no']).where('id', '=', c.signed_by).where('firm_id', '=', firmId).executeTakeFirst()
+      : tx.selectFrom('users').select(['name', 'qualifications', 'ibbi_reg_no']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst(),
     getSettings(firmId, tx),
     tx.selectFrom('field_values').selectAll().where('assignment_id', '=', assignmentId).where('is_current', '=', 1).orderBy('id', 'asc').execute(),
     tx.selectFrom('checklist_items').selectAll().where('assignment_id', '=', assignmentId).orderBy('sort_order').execute(),

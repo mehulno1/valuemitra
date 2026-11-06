@@ -86,31 +86,37 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
   out.IS_DRAFT = !signed && mode !== 'final_preview';
   out.DRAFT_LINE = `DRAFT v${data.case.draft_version} – not for submission`;
 
-  out.ANNEX_PAGES = await annexPages(data, firmId, settings.doc_grid, images, tx);
+  out.ANNEX_PAGES = await annexPages(data, firmId, settings, images, tx);
   snapshot.annex = (out.ANNEX_PAGES as any[]).map((p) => ({ title: p.title, images: [...JSON.stringify(p).matchAll(/"([a-z]_img)":"([^"]+)"/g)].length }));
   return { data: out, images, snapshot };
 }
 
-async function annexPages(data: CaseData, firmId: number, docGrid: number, images: Map<string, RenderImage>, tx: Tx) {
+async function annexPages(data: CaseData, firmId: number, settings: { doc_grid: number; photo_grid?: number; evidence_per_page?: number; docs_at_end?: boolean }, images: Map<string, RenderImage>, tx: Tx) {
+  const docGrid = settings.doc_grid;
+  // photos per page (A10): 9 = 3×3, 6 = 3×2, 4 = 2×2; evidence 1 or 2 per page
+  const photoPer = [4, 6, 9].includes(Number(settings.photo_grid)) ? Number(settings.photo_grid) : 9;
+  const photoCols = photoPer === 4 ? 2 : 3;
+  const evPer = Number(settings.evidence_per_page) === 1 ? 1 : 2;
   const pages: any[] = [];
   let n = 0;
   const add = async (buf: Buffer, w: number, h: number) => { const k = `ax${n++}`; images.set(k, await fitImage(buf, w, h)); return k; };
 
-  // photographs: 9 per page, 3 × 3
+  // photographs: the firm's photos per page
   const photos = await tx.selectFrom('site_photos').selectAll().where('assignment_id', '=', data.case.id).where('selected', '=', 1).orderBy('sort_order').orderBy('id').execute();
-  const photoPages = chunk(photos, 9);
+  const photoPages = chunk(photos, photoPer);
+  const pbox = photoPer === 4 ? [300, 380] : photoPer === 6 ? [200, 380] : [200, 250];
   for (const [i, pg] of photoPages.entries()) {
     const rows = [];
-    for (const r of chunk(pg, 3)) {
+    for (const r of chunk(pg, photoCols)) {
       const row: Record<string, string> = {};
       for (const [j, p] of r.entries()) {
         const l = 'abc'[j];
-        row[`${l}_img`] = await add((await readFile(p.file_id, firmId, tx)).buffer, 200, 250);
+        row[`${l}_img`] = await add((await readFile(p.file_id, firmId, tx)).buffer, pbox[0], pbox[1]);
         row[`${l}_cap`] = p.caption ?? '';
       }
       rows.push(row);
     }
-    pages.push({ title: i === 0 ? 'PHOTOGRAPHS' : 'PHOTOGRAPHS (contd.)', note: '', g3: { rows } });
+    pages.push({ title: i === 0 ? 'PHOTOGRAPHS' : 'PHOTOGRAPHS (contd.)', note: '', [`g${photoCols}`]: { rows } });
   }
 
   // captured evidence pages ticked for the report: ready reckoner and map screenshots print on their
@@ -161,12 +167,13 @@ async function annexPages(data: CaseData, firmId: number, docGrid: number, image
 
   for (const kind of ['listing', 'igr'] as const) {
     const imgs = await captured(kind === 'igr' ? ['igr', 'other'] : ['listing'], kind === 'igr' ? 'IGR search' : 'Listing');
-    for (const [i, pg] of chunk(imgs, 2).entries()) {
+    for (const [i, pg] of chunk(imgs, evPer).entries()) {
       pages.push({ title: `${kind === 'igr' ? 'SALE TRANSACTIONS' : 'PROPERTY LISTING'}${i ? ' (contd.)' : ''}`, note: '', g1: { rows: await rowsOf(pg) } });
     }
   }
 
   // document pages, grid per firm setting (9 = 3×3, 4 = 2×2, 1 = full page)
+  if (settings.docs_at_end === false) return pages;
   const parts = await tx.selectFrom('document_parts').selectAll().where('assignment_id', '=', data.case.id).where('excluded', '=', 0).orderBy('document_id').orderBy('page_from').execute();
   const docImgs: { fileId: number; cap: string }[] = [];
   for (const p of parts) {

@@ -31,9 +31,14 @@ export async function updateFirm(actor: Actor, patch: { name?: string; address?:
   if (patch.settings) {
     const s = patch.settings;
     if (s.doc_grid !== undefined && ![9, 4, 1].includes(Number(s.doc_grid))) throw badRequest('Document pages per page: 9, 4 or 1');
+    if (s.photo_grid !== undefined && ![4, 6, 9].includes(Number(s.photo_grid))) throw badRequest('Photos per page: 4, 6 or 9');
+    if (s.evidence_per_page !== undefined && ![1, 2].includes(Number(s.evidence_per_page))) throw badRequest('Evidence per page: 1 or 2');
+    if (s.min_photos !== undefined && !(Number.isInteger(Number(s.min_photos)) && Number(s.min_photos) >= 1 && Number(s.min_photos) <= 30)) throw badRequest('Minimum photos: 1 to 30');
+    if (s.letterhead_on !== undefined && !['all', 'cover', 'page2', 'none'].includes(String(s.letterhead_on))) throw badRequest('Letterhead: every page, cover, page 2 or none');
     if (s.retention_years !== undefined && ![3, 5, 7, 10].includes(Number(s.retention_years))) throw badRequest('Retention: 3, 5, 7 or 10 years');
     const allowed = Object.fromEntries(Object.entries(s).filter(([k]) => k in DEFAULT_SETTINGS && !k.endsWith('_file_id')));
     await setSettings(firmId, allowed, actor.id ?? null);
+    if (s.checker_may_sign !== undefined) await syncCheckerSign(actor, !!s.checker_may_sign);
   }
   const fy = financialYear().short;
   if (patch.nextCase !== undefined) {
@@ -102,6 +107,33 @@ export async function setPermission(actor: Actor, userId: number, perm: Permissi
   else await db.deleteFrom('user_permissions').where('user_id', '=', userId).where('perm', '=', perm).execute();
   invalidatePerms(userId);
   await audit(actor, { entityType: 'user', entityId: userId, action: 'user.permission', summary: `${u.name}: ${PERMISSIONS[perm]} ${on ? 'granted' : 'removed'}` });
+}
+
+/** The admin changes a user's role (A1). Permissions become the new role's defaults; signing only where the role may sign. */
+export async function setUserRole(actor: Actor, userId: number, role: Role) {
+  if (!ROLES.includes(role)) throw badRequest('Unknown role');
+  const u = await db.selectFrom('users').select(['id', 'role', 'name', 'firm_id']).where('id', '=', userId).executeTakeFirst();
+  if (!u || u.firm_id !== actor.firmId) throw notFound('User');
+  if (u.role === role) return;
+  if (userId === actor.id && u.role === 'admin') throw badRequest('You cannot change your own admin role');
+  await db.transaction().execute(async (tx) => {
+    await tx.updateTable('users').set({ role }).where('id', '=', userId).execute();
+    await tx.deleteFrom('user_permissions').where('user_id', '=', userId).execute();
+    await grantDefaultPermissions(userId, role, tx);
+    if (role === 'checker' && (await getSettings(actor.firmId!, tx)).checker_may_sign) await tx.insertInto('user_permissions').values({ user_id: userId, perm: 'sign', granted_by: actor.id ?? null }).onDuplicateKeyUpdate({ granted_by: actor.id ?? null }).execute();
+    await audit(actor, { entityType: 'user', entityId: userId, action: 'user.role', summary: `${u.name}: role ${u.role} → ${role}; permissions reset to the role's defaults`, before: { role: u.role }, after: { role } }, tx);
+  });
+  invalidatePerms(userId);
+}
+
+/** "Report Checker may sign" on or off: every Report Checker gets or loses the sign permission. */
+async function syncCheckerSign(actor: Actor, on: boolean) {
+  const checkers = await db.selectFrom('users').select('id').where('firm_id', '=', actor.firmId!).where('role', '=', 'checker').execute();
+  for (const c of checkers) {
+    if (on) await db.insertInto('user_permissions').values({ user_id: c.id, perm: 'sign', granted_by: actor.id ?? null }).onDuplicateKeyUpdate({ granted_by: actor.id ?? null }).execute();
+    else await db.deleteFrom('user_permissions').where('user_id', '=', c.id).where('perm', '=', 'sign').execute();
+    invalidatePerms(c.id);
+  }
 }
 
 export async function setUserStatus(actor: Actor, userId: number, status: 'active' | 'disabled') {

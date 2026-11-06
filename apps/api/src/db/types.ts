@@ -33,6 +33,7 @@ export interface Assignments {
   case_no: string;
   case_seq: number;
   check_version_id: number | null;
+  checker_id: number | null;
   created_at: Generated<Date>;
   created_by: number;
   draft_version: Generated<number>;
@@ -40,8 +41,11 @@ export interface Assignments {
   fee: Decimal | null;
   firm_id: number;
   fy: string;
+  handed_at: Date | null;
+  holder: Generated<"checker" | "coordinator" | "maker" | "valuer">;
   id: Generated<number>;
   locality_hint: string | null;
+  maker_id: number | null;
   personal_data_removed_at: Date | null;
   profile_version_id: number | null;
   property_type: string;
@@ -781,7 +785,7 @@ export interface Users {
   password_hash: string;
   phone: string | null;
   qualifications: string | null;
-  role: "accounts" | "admin" | "coordinator" | "valuer";
+  role: "accounts" | "admin" | "checker" | "coordinator" | "maker" | "valuer";
   status: Generated<"active" | "disabled">;
   totp_enabled: Generated<number>;
   totp_secret_enc: Buffer | null;

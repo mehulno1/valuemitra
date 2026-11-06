@@ -14,10 +14,12 @@ export const STAGES = [
 export type Stage = (typeof STAGES)[number]['key'];
 export const stageLabel = (k: string) => STAGES.find((s) => s.key === k)?.label ?? k;
 
-export const ROLES = ['coordinator', 'valuer', 'accounts', 'admin'] as const;
+export const ROLES = ['coordinator', 'maker', 'checker', 'valuer', 'accounts', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 export const ROLE_LABEL: Record<Role, string> = {
   coordinator: 'Coordinator',
+  maker: 'Report Maker',
+  checker: 'Report Checker',
   valuer: 'Valuer',
   accounts: 'Accounts',
   admin: 'Admin',
@@ -32,18 +34,27 @@ export const PERMISSIONS = {
   exp: 'Export data',
   set: 'Settings',
   config: 'Master data & templates',
+  assign: 'Assign report maker / checker',
+  case_rules: 'Change bank defaults on a case',
 } as const;
 export type Permission = keyof typeof PERMISSIONS;
 
 export const DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
-  coordinator: ['create', 'edit', 'exp'],
-  valuer: ['create', 'edit', 'val', 'sign', 'bill', 'exp', 'set', 'config'],
+  coordinator: ['create', 'edit', 'exp', 'assign'],
+  maker: ['create', 'edit', 'val'],
+  checker: ['create', 'edit', 'val', 'case_rules'],
+  valuer: ['create', 'edit', 'val', 'sign', 'bill', 'exp', 'set', 'config', 'assign', 'case_rules'],
   accounts: ['bill', 'exp'],
   admin: ['create', 'edit', 'exp', 'set', 'config', 'bill'],
 };
 
-/** Only a registered valuer can ever hold the sign permission. */
-export const canHoldPermission = (role: Role, p: Permission) => p !== 'sign' || role === 'valuer';
+/** Only a registered valuer can sign; a Report Checker too when the firm allows it ("Report Checker may sign"). */
+export const canHoldPermission = (role: Role, p: Permission) => p !== 'sign' || role === 'valuer' || role === 'checker';
+
+/** Who has the case now: coordinator → Report Maker → Report Checker → valuer (send-backs go the other way). */
+export const HOLDERS = ['coordinator', 'maker', 'checker', 'valuer'] as const;
+export type Holder = (typeof HOLDERS)[number];
+export const HOLDER_LABEL: Record<Holder, string> = { coordinator: 'With coordinator', maker: 'With report maker', checker: 'With report checker', valuer: 'With valuer' };
 
 export const PROPERTY_TYPES = [
   { key: 'flat', label: 'Flat' },

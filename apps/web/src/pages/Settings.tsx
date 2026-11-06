@@ -398,13 +398,39 @@ function LayoutSection() {
     <Panel title="Report layout">
       {ro && <ReadOnlyNote />}
       <div className="form" style={{ padding: 0 }}>
-        <Field label="Site photos per page"><select disabled><option>9 (3×3)</option></select></Field>
-        <Field label="Document pages per page" hint="Copies of documents attached at the end of the report">
+        <Field label="Letterhead" hint="Firm default; a bank format can set its own">
+          <select value={(s as any).letterhead_on ?? 'all'} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { letterhead_on: e.target.value } })}>
+            <option value="all">Every page</option><option value="cover">Cover page only</option><option value="page2">Page 2 only</option><option value="none">Nowhere (pre-printed paper)</option>
+          </select>
+        </Field>
+        <Field label="Stamp and short signature in the footer">
+          <select value={(s as any).footer_sig === false ? 'sign' : 'all'} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { footer_sig: e.target.value === 'all' } })}>
+            <option value="all">On every page</option><option value="sign">Only where the valuer signs</option>
+          </select>
+        </Field>
+        <Field label="Site photos per page">
+          <select value={s.photo_grid} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { photo_grid: Number(e.target.value) } })}>
+            <option value={9}>9 (3×3)</option><option value={6}>6 (3×2)</option><option value={4}>4 (2×2)</option>
+          </select>
+        </Field>
+        <Field label="Minimum photos in a report" hint="The property profile's maximum still applies">
+          <input type="number" min={1} max={30} defaultValue={(s as any).min_photos ?? 9} disabled={ro || save.isPending} onBlur={(e) => Number(e.target.value) !== (s as any).min_photos && save.mutate({ settings: { min_photos: Number(e.target.value) } })} />
+        </Field>
+        <Field label="Document pages per page">
           <select value={s.doc_grid} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { doc_grid: Number(e.target.value) } })}>
             <option value={9}>9 (3×3)</option><option value={4}>4 (2×2)</option><option value={1}>1 (full page)</option>
           </select>
         </Field>
-        <Field label="Listings and evidence per page"><select disabled><option>2 (one above the other)</option></select></Field>
+        <Field label="Copies of documents attached at the end">
+          <select value={(s as any).docs_at_end === false ? 'no' : 'yes'} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { docs_at_end: e.target.value === 'yes' } })}>
+            <option value="yes">Yes</option><option value="no">No</option>
+          </select>
+        </Field>
+        <Field label="Listings and evidence per page">
+          <select value={s.evidence_per_page} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { evidence_per_page: Number(e.target.value) } })}>
+            <option value={2}>2 (one above the other)</option><option value={1}>1 (full page)</option>
+          </select>
+        </Field>
         <Field label="Engineer visit link valid for, hours">
           <select value={s.engineer_link_hours} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { engineer_link_hours: Number(e.target.value) } })}>
             {[24, 48, 72, 120, 168].map((h) => <option key={h} value={h}>{h} h</option>)}
@@ -539,6 +565,13 @@ function UsersSection() {
     onSuccess: (d) => { qc.setQueryData(['users'], d); toast('Permission updated'); },
     onError: onErr,
   });
+  const role = useMutation({
+    mutationFn: ({ id, r }: { id: number; r: Role }) => api.put(`/api/users/${id}/role`, { role: r }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); toast('Role changed; permissions follow the new role'); },
+    onError: onErr,
+  });
+  const firm = useFirm();
+  const saveFirm = useFirmSave();
   const status = useMutation({
     mutationFn: ({ id, s }: { id: number; s: 'active' | 'disabled' }) => api.put(`/api/users/${id}/status`, { status: s }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); toast('User updated'); },
@@ -563,13 +596,17 @@ function UsersSection() {
             {users.data.users.map((u) => (
               <tr key={u.id} style={u.status === 'disabled' ? { opacity: 0.55 } : undefined}>
                 <td><b className="font-semibold">{u.name}</b><div className="sub">{u.email}</div><div className="sub">{u.totp_enabled ? '2FA on' : '2FA not set up'}{u.last_login_at ? ` · last in ${ago(u.last_login_at)}` : ''}</div></td>
-                <td>{ROLE_LABEL[u.role] ?? u.role}</td>
+                <td>{ro || u.id === me?.id ? (ROLE_LABEL[u.role] ?? u.role) : (
+                  <select value={u.role} disabled={role.isPending} aria-label={`${u.name}: role`} onChange={(e) => window.confirm(`Change ${u.name} to ${ROLE_LABEL[e.target.value as Role]}? Permissions reset to that role's defaults.`) && role.mutate({ id: u.id, r: e.target.value as Role })}>
+                    {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                  </select>
+                )}</td>
                 {permKeys.map((p) => {
                   const allowed = canHoldPermission(u.role, p);
                   return (
                     <td key={p} className="text-center">
                       <input type="checkbox" className="h-4 w-4" aria-label={`${u.name}: ${users.data.permissions[p]}`} checked={u.perms.includes(p)}
-                        disabled={ro || !allowed || perm.isPending || u.status === 'disabled'} title={!allowed ? 'Only a registered valuer can sign' : undefined}
+                        disabled={ro || !allowed || perm.isPending || u.status === 'disabled'} title={!allowed ? 'Only a valuer (or a report checker, if allowed) can sign' : undefined}
                         onChange={(e) => perm.mutate({ id: u.id, p, on: e.target.checked })} />
                     </td>
                   );
@@ -584,7 +621,10 @@ function UsersSection() {
           </tbody>
         </table>
       </div>
-      <p className="sub mx-4 my-3">Signing is limited to users with the Valuer role. Admins manage settings and master data but never sign.</p>
+      <div className="mx-4 my-3 grid gap-2">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={!!(firm.data?.settings as any)?.checker_may_sign} disabled={ro || saveFirm.isPending} onChange={(e) => saveFirm.mutate({ settings: { checker_may_sign: e.target.checked } }, { onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }) })} /> Report Checker may sign (the checker of a case sees Approve and sign; the report prints whoever signs)</label>
+        <p className="sub m-0">Workflow: coordinator → Report Maker → Report Checker → valuer. The coordinator assigns the maker and checker on each case. A Report Checker can also make a case; nobody checks a case they made. Admins manage settings and master data but never sign.</p>
+      </div>
       <Modal open={!!add} onClose={() => setAdd(null)} title="Add user"
         actions={<><button className="btn" onClick={() => setAdd(null)}>Cancel</button><button className="btn pri" disabled={!add?.name || !add?.email || (add?.password.length ?? 0) < 10 || create.isPending} onClick={() => create.mutate()}>Add user</button></>}>
         {add && (

@@ -8,8 +8,8 @@ export interface FirmSettings {
   signature_file_id: number | null;
   seal_file_id: number | null;
   doc_grid: 9 | 4 | 1;
-  photo_grid: 9;
-  evidence_per_page: 2;
+  photo_grid: 4 | 6 | 9;
+  evidence_per_page: 1 | 2;
   retention_years: number;
   kyc_policy: 'never' | 'delete_30' | 'delete_90';
   engineer_link_hours: number;
@@ -28,6 +28,12 @@ export interface FirmSettings {
   engineer_fee: number;           // default fee per visit when the engineer has none
   tally_ledgers: { sales: string; cgst: string; sgst: string; igst: string; round_off: string; bank: string; tds: string };
   area_basis_defaults: Record<string, { basis: string; unit: 'sqft' | 'sqm' }>;   // "SBI:flat" → area and unit the rate is quoted on
+  checker_may_sign: boolean;      // a Report Checker sees Approve and sign (the report prints whoever signs)
+  // report layout, firm default (a bank format may override): letterhead, footer stamp, annexure grids
+  letterhead_on: 'all' | 'cover' | 'page2' | 'none';
+  footer_sig: boolean;
+  docs_at_end: boolean;           // copies of documents attached at the end of the report
+  min_photos: number;             // photos the report needs at least (the profile's maximum still applies)
 }
 
 export const DEFAULT_SETTINGS: FirmSettings = {
@@ -57,6 +63,11 @@ export const DEFAULT_SETTINGS: FirmSettings = {
   engineer_fee: 800,
   tally_ledgers: { sales: 'Valuation Fees', cgst: 'Output CGST', sgst: 'Output SGST', igst: 'Output IGST', round_off: 'Round Off', bank: 'Bank Account', tds: 'TDS Receivable' },
   area_basis_defaults: {},
+  checker_may_sign: false,
+  letterhead_on: 'all',
+  footer_sig: true,
+  docs_at_end: true,
+  min_photos: 9,
 };
 
 function decoded(v: string): unknown {

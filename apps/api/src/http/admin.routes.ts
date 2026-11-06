@@ -37,6 +37,8 @@ export async function adminRoutes(app: FastifyInstance) {
     branches: await firm.branches(req.auth!.firmId),
     engineers: await firm.engineers(req.auth!.firmId),
     flags: await flagsFor(req.auth!.firmId),
+    // people a case can be assigned to (report maker / checker dropdowns)
+    team: await db.selectFrom('users').select(['id', 'name', 'role']).where('firm_id', '=', req.auth!.firmId).where('status', '=', 'active').where('role', 'in', ['maker', 'checker', 'valuer', 'coordinator']).orderBy('name').execute(),
   }));
 
   // ---- firm settings ----
@@ -68,6 +70,11 @@ export async function adminRoutes(app: FastifyInstance) {
     const { on } = body(req, z.object({ on: z.boolean() }));
     await firm.setPermission(actorOf(req), idParam(req), (req.params as any).perm, on);
     return firm.listUsers(req.auth!.firmId);
+  });
+  app.put('/api/users/:id/role', { preHandler: requirePerm('set') }, async (req) => {
+    const b = body(req, z.object({ role: z.string() }));
+    await firm.setUserRole(actorOf(req), idParam(req), b.role as any);
+    return { ok: true };
   });
   app.put('/api/users/:id/status', { preHandler: requirePerm('set') }, async (req) => {
     const { status } = body(req, z.object({ status: z.enum(['active', 'disabled']) }));

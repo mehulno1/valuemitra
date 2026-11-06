@@ -4,6 +4,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } fr
 import { PROPERTY_TYPES } from '@vm/shared';
 import { Loading, StageChip } from '@/components/ui';
 import { api } from '@/lib/api';
+import WorkflowBar from './WorkflowBar';
 import { caseKey, TABS, useCaseRefresh, type CaseHeader, type TabKey } from './context';
 
 const Documents = lazy(() => import('./DocumentsTab'));
@@ -62,6 +63,7 @@ export default function CaseWorkspace() {
             <span className={`pstep ${c.signed_at ? 'done' : c.draft_version ? 'live' : ''}`}>{c.signed_at ? 'Report final' : c.draft_version ? `Report draft v${c.draft_version}` : 'Report not started'}</span>
             <span className={`pstep ${crit ? '' : 'done'}`}>{status}</span>
           </div>
+          <WorkflowBar c={c} refresh={refresh} />
         </div>
         <div className="grid justify-items-end gap-2">
           <StageChip stage={c.stage} />

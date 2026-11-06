@@ -131,7 +131,7 @@ export async function recomputeStage(assignmentId: number, actorId: number | nul
   return stage;
 }
 
-export async function board(firmId: number, opts: { stage?: string; q?: string; limit?: number } = {}) {
+export async function board(firmId: number, opts: { stage?: string; q?: string; limit?: number; holder?: string; mine?: { id: number; role: string } } = {}) {
   let q = db
     .selectFrom('assignments as a')
     .innerJoin('banks as b', 'b.id', 'a.bank_id')
@@ -139,12 +139,20 @@ export async function board(firmId: number, opts: { stage?: string; q?: string; 
     .leftJoin('engineers as e', 'e.id', 'a.engineer_id')
     .select([
       'a.id', 'a.case_no', 'a.borrower_name', 'a.property_type', 'a.locality_hint', 'a.stage', 'a.stage_changed_at', 'a.updated_at', 'a.created_at',
-      'a.report_no', 'a.draft_version', 'a.personal_data_removed_at', 'b.code as bank_code', 'b.short_name as bank_short', 'br.name as branch_name', 'br.code as branch_code', 'e.name as engineer_name',
+      'a.report_no', 'a.draft_version', 'a.personal_data_removed_at', 'a.holder', 'a.maker_id', 'a.checker_id', 'b.code as bank_code', 'b.short_name as bank_short', 'br.name as branch_name', 'br.code as branch_code', 'e.name as engineer_name',
     ])
     .where('a.firm_id', '=', firmId)
     .orderBy('a.updated_at', 'desc')
     .limit(opts.limit ?? 200);
   if (opts.stage) q = q.where('a.stage', '=', opts.stage);
+  if (opts.holder) q = q.where('a.holder', '=', opts.holder as any).where('a.signed_at', 'is', null);
+  // "My cases": what this person has now (or made / checks), by role
+  if (opts.mine) {
+    const m = opts.mine;
+    q = q.where((eb) => (m.role === 'valuer' ? eb('a.holder', '=', 'valuer')
+      : m.role === 'coordinator' ? eb('a.holder', '=', 'coordinator')
+      : eb.or([eb('a.maker_id', '=', m.id), eb('a.checker_id', '=', m.id)])));
+  }
   if (opts.q) q = q.where((eb) => eb.or([eb('a.case_no', 'like', `%${opts.q}%`), eb('a.borrower_name', 'like', `%${opts.q}%`), eb('a.locality_hint', 'like', `%${opts.q}%`)]));
   const rows = await q.execute();
   const ids = rows.map((r) => r.id);
@@ -159,6 +167,8 @@ export async function board(firmId: number, opts: { stage?: string; q?: string; 
   const addr = new Map<number, string>();
   for (const a of address) if (!addr.has(a.assignment_id) && a.value_text) addr.set(a.assignment_id, a.value_text);
   const counts = await db.selectFrom('assignments').select((eb) => ['stage', eb.fn.countAll<number>().as('n')]).where('firm_id', '=', firmId).groupBy('stage').execute();
+  const holders = await db.selectFrom('assignments').select((eb) => ['holder', eb.fn.countAll<number>().as('n')]).where('firm_id', '=', firmId).where('signed_at', 'is', null).groupBy('holder').execute();
+  const people = new Map((await db.selectFrom('users').select(['id', 'name']).where('firm_id', '=', firmId).execute()).map((u) => [u.id, u.name]));
   return {
     rows: rows.map((r) => ({
       ...r,
@@ -167,8 +177,11 @@ export async function board(firmId: number, opts: { stage?: string; q?: string; 
       property: addr.get(r.id) ?? r.locality_hint,
       docs_got: Number(dc.get(r.id)?.got ?? 0),
       docs_total: Number(dc.get(r.id)?.total ?? 0),
+      maker_name: r.maker_id ? people.get(r.maker_id) ?? null : null,
+      checker_name: r.checker_id ? people.get(r.checker_id) ?? null : null,
     })),
     counts: Object.fromEntries(counts.map((c) => [c.stage, Number(c.n)])),
+    holders: Object.fromEntries(holders.map((c) => [c.holder, Number(c.n)])),
   };
 }
 
@@ -209,7 +222,7 @@ export async function assignmentHeader(firmId: number, id: number) {
     .select([
       'a.id', 'a.case_no', 'a.borrower_name', 'a.property_type', 'a.locality_hint', 'a.purpose', 'a.stage', 'a.created_at', 'a.updated_at', 'a.bank_contact',
       'a.received_via', 'a.bank_ref_no', 'a.engineer_id', 'a.report_no', 'a.report_rev', 'a.signed_at', 'a.sent_at', 'a.sent_for_review_at', 'a.draft_version',
-      'a.personal_data_removed_at', 'a.bank_id', 'a.branch_id', 'a.fee',
+      'a.personal_data_removed_at', 'a.bank_id', 'a.branch_id', 'a.fee', 'a.holder', 'a.maker_id', 'a.checker_id', 'a.handed_at',
       'b.code as bank_code', 'b.name as bank_name', 'br.code as branch_code', 'br.name as branch_name', 'br.contact_email', 'e.name as engineer_name', 'e.phone as engineer_phone',
       't.name as template_name', 'tv.version as template_version',
     ])
@@ -220,7 +233,9 @@ export async function assignmentHeader(firmId: number, id: number) {
   const stages = await db.selectFrom('stage_history').select(['from_stage', 'to_stage', 'created_at']).where('assignment_id', '=', id).orderBy('id').execute();
   const val = await db.selectFrom('valuations').select('id').where('assignment_id', '=', id).where('is_current', '=', 1).executeTakeFirst();
   const visit = await db.selectFrom('site_visits').select('id').where('assignment_id', '=', id).where('status', '=', 'submitted').executeTakeFirst();
-  return { ...a, stage_label: stageLabel(a.stage), stages, valuation_applied: !!val, site_received: !!visit, borrower_name: a.personal_data_removed_at ? '(personal data removed)' : a.borrower_name };
+  const names = new Map((await db.selectFrom('users').select(['id', 'name']).where('id', 'in', [a.maker_id ?? 0, a.checker_id ?? 0]).execute()).map((u) => [u.id, u.name]));
+  const settings = await getSettings(firmId);
+  return { ...a, maker_name: a.maker_id ? names.get(a.maker_id) ?? null : null, checker_name: a.checker_id ? names.get(a.checker_id) ?? null : null, checker_may_sign: !!settings.checker_may_sign, stage_label: stageLabel(a.stage), stages, valuation_applied: !!val, site_received: !!visit, borrower_name: a.personal_data_removed_at ? '(personal data removed)' : a.borrower_name };
 }
 
 export async function activity(firmId: number, id: number) {

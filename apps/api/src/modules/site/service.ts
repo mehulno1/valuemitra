@@ -70,7 +70,7 @@ export async function publicVisitInfo(token: string) {
   return {
     caseNo: assignment.case_no, firm: assignment.firm, bank: assignment.bank, branch: assignment.branch, engineer: assignment.engineer,
     address: addr?.value_text ?? assignment.locality_hint, status: visit.status, expiresAt: visit.expires_at,
-    prompts: profile.photo_prompts ?? [], minPhotos: profile.min_photos ?? 9, photos: photos.length, sheetUploaded: !!sheet,
+    prompts: profile.photo_prompts ?? [], minPhotos: (await getSettings(assignment.firm_id)).min_photos ?? profile.min_photos ?? 9, photos: photos.length, sheetUploaded: !!sheet,
     photoIds: photos.map((p) => p.id),
     // checklist items a photo already shows (from the captions read as photos arrive)
     covered: coveredPrompts(profile.photo_prompts ?? [], photos.map((p) => p.ai_caption).filter(Boolean) as string[]),
@@ -308,7 +308,7 @@ export async function listPhotos(firmId: number, assignmentId: number) {
     source: lat.edited ? 'manual' : lat.source, snippet: lat.snippet,
     mapPhotos: photos.filter((p) => p.is_map).length, mapPages: Number(mapPages?.n ?? 0),
   };
-  return { visit: visit ?? null, photos, location, minPhotos: profile.min_photos ?? 9, maxPhotos: profile.max_photos ?? 18, prompts: profile.photo_prompts ?? [] };
+  return { visit: visit ?? null, photos, location, minPhotos: (await getSettings(firmId)).min_photos ?? profile.min_photos ?? 9, maxPhotos: profile.max_photos ?? 18, prompts: profile.photo_prompts ?? [] };
 }
 
 export async function updatePhoto(actor: Actor, assignmentId: number, photoId: number, patch: { selected?: boolean; caption?: string }) {
@@ -318,8 +318,8 @@ export async function updatePhoto(actor: Actor, assignmentId: number, photoId: n
   if (!p) throw notFound('Photo');
   const asg = await db.selectFrom('assignments').select('profile_version_id').where('id', '=', assignmentId).executeTakeFirstOrThrow();
   const profile = asg.profile_version_id ? (await configById(asg.profile_version_id)).payload : {};
-  const min = profile.min_photos ?? 9;
-  const max = profile.max_photos ?? 18;
+  const min = (await getSettings(actor.firmId!)).min_photos ?? profile.min_photos ?? 9;
+  const max = Math.max(profile.max_photos ?? 18, min);
   if (patch.selected !== undefined && !!p.selected !== patch.selected) {
     const n = Number((await db.selectFrom('site_photos').select((eb) => eb.fn.countAll<number>().as('n')).where('assignment_id', '=', assignmentId).where('selected', '=', 1).executeTakeFirst())?.n ?? 0);
     if (patch.selected && n >= max) throw badRequest(`Up to ${max} photos fit on two pages`);

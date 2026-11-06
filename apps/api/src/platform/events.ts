@@ -6,6 +6,8 @@ import { db, toJson, type Tx } from '../db/index.js';
 export type EventType =
   | 'assignment.created'
   | 'assignment.stage_changed'
+  | 'assignment.handover'
+  | 'assignment.send_back'
   | 'document.received'
   | 'document.read'
   | 'value.changed'

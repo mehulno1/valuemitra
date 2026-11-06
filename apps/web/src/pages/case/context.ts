@@ -36,6 +36,13 @@ export interface CaseHeader {
   template_version: number | null;
   personal_data_removed_at: string | null;
   stages: { from_stage: string | null; to_stage: string; created_at: string }[];
+  holder?: 'coordinator' | 'maker' | 'checker' | 'valuer';
+  maker_id?: number | null;
+  checker_id?: number | null;
+  maker_name?: string | null;
+  checker_name?: string | null;
+  handed_at?: string | null;
+  checker_may_sign?: boolean;
 }
 
 export interface TabProps {
