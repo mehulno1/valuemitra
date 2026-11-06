@@ -154,6 +154,37 @@ Review doc: `~/Downloads/ValueMitra — Review of Universal's 05 Nov Demo Feedba
   insurance still building cost × BUA (A7 band table not built); evidence range is computed from the comparables.
 - Not done yet: A1 roles/workflow, A2/A3 firm default, A6–A11, B1–B6, PropTrace.
 
+## 3i. Rest of the Universal review (06 Nov 2026, live)
+- A1/B5 workflow: roles `maker` (Report Maker) and `checker` (Report Checker); `assignments.maker_id/checker_id/holder/
+  handed_at` (migration 0011). Case header: assign RM/RC (permission `assign`), "Send to …" with a note, "Send back"
+  with a reason (`modules/workflow/handover.ts`). Each hand-over runs its own checks: maker = documents read, site visit
+  in; checker = valuation applied, no open crit on docs/ext/site/mkt/val; valuer = all but `rep`. Board: filter by
+  holder, "My cases", RM/RC column. Users: admin changes roles (permissions reset to the role's defaults). Firm setting
+  `checker_may_sign` grants/removes `sign` for checkers; the report prints whoever signed (`signed_by`).
+- A11: New assignment shows "Case ID given on save" (the number was already reserved in the create transaction).
+- A2/A3/A10 firm defaults (Settings → Report layout): letterhead every page / cover / page 2 / none, footer stamp,
+  photos per page 4/6/9, minimum photos, documents at the end, evidence 1/2 per page. A format's own layout wins;
+  the default applies to formats compiled after the change.
+- A6/A7/A8: per-case defaults (`assignments.rules_json`, migration 0012, permission `case_rules`): realizable %,
+  distress %, loading %, saleable factor, insurance rate, with a reason; an applied valuation is redone. Insurance by
+  upper floors (`insurance_bands` in the rule set, `upper_floors()` reads "Stilt + 1st to 16th", podiums excluded):
+  samples now give 18,75,000 (FC) and 25,02,000 (UC) exactly. RERA project, RERA carpet, "Not applicable" wording.
+- A9: ready reckoner screenshots are read by job `evidence.check` (year, zone, flat rate/sq.m.); with no value in
+  Index II, guideline = rate × carpet sq.m. × `rr_area_factor` (1.1), source "As per IGR ready reckoner …, zone …";
+  firm master kept in VAL.RR_MASTER_SQM, check `rr_mismatch`.
+- B6: print-only pages are checked for what they show; a wrong one is left out and flagged (`suggested_kind`),
+  Market tab offers "Move to …" / "Keep as is"; check `capture_kind`. Page type "Index II search (PropTrace)".
+- B2: a chosen conflict keeps every reading with "Use this" (switchable until signing; no longer counted open).
+- B3/C5: building status "Partly occupied"; change a case's format in the header; check `format_fit` suggests the
+  Under Construction format. B4: a document summary that is only a status prints "<name>: not provided".
+- Format upload: standard sections (photos, map, ready reckoner, listings) shown as one line with Undo; no confidence
+  figures; the AI prompt asks plain questions with 2–3 choices.
+- Seed merges new platform rules, checklist items and site questions into firms' own published versions
+  (`mergeIntoFirmVersions`). Universal's firm rule set v5 is a draft, so the platform rule set applies there.
+- Still open: C3 on live (firm code UCVLLP and next serial — waiting for the number), PropTrace licence/API, go-live
+  security (own passwords, 2FA, real admin address), Universal's users are still all coordinators (set RM/RC roles in
+  Users & permissions).
+
 ## 4. Left — by work package
 
 | WP | Left |
