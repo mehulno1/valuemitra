@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, local). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -123,7 +123,7 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - Open question for Premal: his manual report uses plinth = carpet + 10% and saleable = carpet + 35%; SBI rules here are
   20% and 1.4. Per-bank rules can be changed in Settings.
 
-## 3h. Universal's 05 Nov demo review: C1–C3, A4, SBI Under Construction (06 Nov 2026, local; not yet deployed)
+## 3h. Universal's 05 Nov demo review: C1–C3, A4, SBI Under Construction (06 Nov 2026, live)
 
 Review doc: `~/Downloads/ValueMitra — Review of Universal's 05 Nov Demo Feedback.docx` (P1/P2 list, workflow, mock).
 - C1 surviving sample figures: publishing a firm format lists every case-like figure (dates, amounts, areas, long
@@ -141,8 +141,11 @@ Review doc: `~/Downloads/ValueMitra — Review of Universal's 05 Nov Demo Feedba
   %, loading %, saleable factor, building cost, `fmv_rounding_step`; overlay the firm's bank rules in the resolver.
 - 70 new platform fields (approvals as printed, C.C. floors, RERA, boundaries per documents, rooms, stage/% done,
   present value, comparables `EVID.COMP1..4.*` from the case's included comparables, etc.); doc type `rera_cert`.
-  Live has firm copies of 23 of these codes (from the AI-converted Flat-Completed v1); they override the platform
-  ones until removed.
+  Live: Universal's 22 firm copies of these codes (from the AI-converted Flat-Completed v1) were removed so the
+  platform versions apply (audit row `dictionary.platform`); SBI.ASSUMPTIONS stays firm-only.
+- Live formats: "SBI - Flat Completed" v2 (#10, replaces the AI-converted v1) and "SBI - Flat Under Construction" v1
+  (#11), letterhead on page 2, no footer signature, rules as above; figures 2014, 2015, 2011 kept as fixed text.
+  Smoke render with VM-2627-0002: 20 pages each (with its annexures), 17/21 fields empty for that case.
 - A4 + SBI UC: `scripts/dev/fmt-apply.mts` turns a bank file into a clean tagged format (spec JSON: tag map + paragraph
   ops; unfloat, grid rebuilt from cell widths, rows kept whole, padding → page breaks, signature slots, annexure
   marker). Specs and outputs: `~/Downloads/ValueMitra previews 06 Nov/`. `scripts/dev/t-fmt-sbi.mts` loads both,
