@@ -5,7 +5,7 @@ import { badRequest, notFound } from '../../lib/errors.js';
 import { audit, type Actor } from '../../platform/audit.js';
 import { activeConfig } from '../../platform/config.js';
 import { publish } from '../../platform/events.js';
-import { nextNumber, peekNumber } from '../../platform/sequences.js';
+import { nextNumber, peekNumber, reportSeries } from '../../platform/sequences.js';
 import { getSettings } from '../../platform/settings.js';
 import { pickTemplateVersion } from '../templates/service.js';
 
@@ -20,6 +20,7 @@ export interface NewAssignment {
   localityHint?: string | null;
   purpose?: string | null;
   engineerId?: number | null;
+  templateId?: number | null;     // a published format the coordinator chose; else the suggested one
 }
 
 export async function idPreview(firmId: number, bankId?: number, branchId?: number) {
@@ -27,7 +28,7 @@ export async function idPreview(firmId: number, bankId?: number, branchId?: numb
   const settings = await getSettings(firmId);
   const firm = await db.selectFrom('firms').select('code').where('id', '=', firmId).executeTakeFirstOrThrow();
   const nextCase = await peekNumber(db, firmId, 'case', fy.short);
-  const nextReport = await peekNumber(db, firmId, 'report', fy.short);
+  const nextReport = await peekNumber(db, firmId, 'report', reportSeries(settings.report_pattern, fy.short));
   let bank = 'BANK';
   let branch = 'BRANCH';
   if (bankId) bank = (await db.selectFrom('banks').select('code').where('id', '=', bankId).executeTakeFirst())?.code ?? bank;
@@ -48,8 +49,8 @@ export async function createAssignment(actor: Actor, input: NewAssignment, tx: T
     if (!e) throw badRequest('Unknown field engineer');
   }
   // pin every configuration this case will use
-  const tpl = await pickTemplateVersion(firmId, input.bankId, branch.code, input.propertyType, tx);
-  if (!tpl) throw badRequest('No published report format for this bank and property type. Add one under Bank formats.');
+  const tpl = await pickTemplateVersion(firmId, input.bankId, branch.code, input.propertyType, tx, new Date(), input.templateId);
+  if (!tpl) throw badRequest(input.templateId ? 'That report format is not published for this bank, branch and property type' : 'No published report format for this bank and property type. Add one under Bank formats.');
   const profile = await activeConfig('profile', input.propertyType, firmId, tx);
   if (!profile) throw badRequest(`No property profile for "${input.propertyType}" yet`);
   const rules = await activeConfig('rule_set', 'firm', firmId, tx);

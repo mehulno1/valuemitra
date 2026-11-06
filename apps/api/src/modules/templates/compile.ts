@@ -4,7 +4,7 @@
 // and pinned per assignment; rendering always uses the compiled file, never a re-drawn copy.
 import type { Element as XEl } from '@xmldom/xmldom';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { children, els, openDocx, paragraphs, replaceInParagraph, saveDocx, setCellText, setParagraphText, tables, textOf, unfloatTables, W_NS, type DocxParts } from './docx.js';
+import { children, els, openDocx, paragraphs, replaceInParagraph, replaceKeepingRuns, saveDocx, setCellText, setParagraphText, tables, textOf, unfloatTables, W_NS, type DocxParts } from './docx.js';
 import { singleField, templateKey } from './codes.js';
 import type { Slot } from './detect.js';
 
@@ -31,6 +31,10 @@ function tagsFor(m: CompileMapping): string {
 export interface Layout {
   cover_first_page: boolean;   // page 1 is a cover: letterhead but no page number / short signature
   annexures: boolean;          // append ValueMitra annexure pages
+  /** where the letterhead prints: every page (header), the cover only, at the top of page 2 only, or nowhere */
+  letterhead?: 'all' | 'cover' | 'page2' | 'none';
+  /** short signature and seal in the footer of every page (else only at the signing blocks) */
+  footer_sig?: boolean;
 }
 
 const imageSlot = (code: string) =>
@@ -48,7 +52,8 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
     if (slot.kind !== 'placeholder' && slot.kind !== 'inline') continue;
     const p = ps[slot.location.p!];
     if (!p) continue;
-    replaceInParagraph(p, slot.location.find!, tagsFor(m));
+    if (slot.kind === 'placeholder') replaceKeepingRuns(doc, p, slot.location.find!, tagsFor(m));
+    else replaceInParagraph(p, slot.location.find!, tagsFor(m));
   }
   for (const m of mappings) {
     const slot = m.slot as Slot;
@@ -64,11 +69,13 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
     const { p, p_to } = (m.slot as { location: { p: number; p_to: number } }).location;
     rewriteRange(doc, ps, p, p_to, m.template ? tagsFor(m) : null, !!singleField(m.template));
   }
-  // unmapped placeholders would print literally; blank them
+  // the annexure pages go where the format marks them ({{REPORT.ANNEXURES}} on its own line), else at the end
+  const marker = layout.annexures ? paragraphs(doc).find((p) => /\{\{\s*REPORT\.ANNEXURES\s*\}\}/.test(textOf(p))) ?? null : null;
+  // unmapped placeholders would print literally (a tag must never print, C2); blank them
+  const ANY_TAG = /\{\{\s*[A-Za-z][A-Za-z0-9_.]*\s*\}\}/g;
   for (const p of paragraphs(doc)) {
-    for (const t of els(p, 'w:t')) {
-      if (t.textContent && /\{\{\s*[A-Z][A-Z0-9_.]+\s*\}\}/.test(t.textContent)) t.textContent = t.textContent.replace(/\{\{\s*[A-Z][A-Z0-9_.]+\s*\}\}/g, '');
-    }
+    if (p === marker) continue;
+    for (let guard = 0, m: RegExpMatchArray | null; guard < 50 && (m = textOf(p).replace(/\n/g, '').match(ANY_TAG)); guard++) if (!replaceKeepingRuns(doc, p, m[0], '')) break;
   }
 
   // after every slot is written (slot indices are from the untouched document)
@@ -86,13 +93,27 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
       n = prev;
     }
     const frag = new DOMParser().parseFromString(`<root xmlns:w="${W_NS}">${annexXml()}</root>`, 'text/xml');
+    // at the marker: the marker's own page break goes (each annexure title starts a page itself)
+    let before: any = finalSect ?? null;
+    if (marker && marker.parentNode === body) {
+      before = marker;
+      for (let n: any = marker.previousSibling; n; ) {
+        const prev = n.previousSibling;
+        const onlyBreak = n.nodeType === 1 && n.nodeName === 'w:p' && !textOf(n).trim() && !els(n, 'w:drawing').length && !els(n, 'w:sectPr').length;
+        if (onlyBreak) body.removeChild(n);
+        else if (n.nodeType === 1) break;
+        n = prev;
+      }
+    }
     for (const n of Array.from(frag.documentElement!.childNodes as any) as any[]) {
       const imported = (doc as any).importNode(n, true);
-      if (finalSect) body.insertBefore(imported, finalSect);
+      if (before) body.insertBefore(imported, before);
       else body.appendChild(imported);
     }
+    if (marker && marker.parentNode === body && !els(marker, 'w:sectPr').length) body.removeChild(marker);
   }
 
+  if (layout.letterhead === 'page2') letterheadOnPage2(doc);
   addHeaderFooter(parts, layout);
   dropUnusedImages(parts);
   scrubAuthor(parts);
@@ -250,12 +271,43 @@ export const HEADER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"
   para(`${tr('#IS_DRAFT')}${run(tag('DRAFT_LINE'), '<w:b/><w:color w:val="9A9A9A"/><w:sz w:val="16"/>')}${tr('/IS_DRAFT')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>'),
 ].join('')}</w:hdr>`;
 
+/** Header with only the draft marker (the letterhead prints elsewhere, or not at all). */
+export const HEADER_DRAFT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr ${NS_DECL}>${
+  para(`${tr('#IS_DRAFT')}${run(tag('DRAFT_LINE'), '<w:b/><w:color w:val="9A9A9A"/><w:sz w:val="16"/>')}${tr('/IS_DRAFT')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>')
+}</w:hdr>`;
+
+/** The letterhead at the top of the second page (Universal's reports: page 1 is the cover, page 2 the
+ *  bank's form on letterhead). Page 2 starts after the first page break of the body. */
+function letterheadOnPage2(doc: any) {
+  const body = els(doc, 'w:body')[0];
+  let at: any = null;
+  for (const n of Array.from(body.childNodes as any) as any[]) {
+    if (n.nodeType !== 1) continue;
+    if (n.nodeName === 'w:p' && els(n, 'w:br').some((b) => b.getAttribute('w:type') === 'page')) { at = n.nextSibling; break; }
+    if (n.nodeName === 'w:p' && els(n, 'w:pageBreakBefore').length) { at = n; break; }
+  }
+  if (!at) return;
+  const xml = [
+    para(tr('#HAS_LETTERHEAD')),
+    para(tr('%LETTERHEAD'), '<w:spacing w:after="0"/><w:jc w:val="center"/>'),
+    para(tr('/HAS_LETTERHEAD')),
+  ].join('');
+  // page 2 opened by "page break before": that paragraph keeps its text, the break moves in front of the
+  // letterhead as a break of its own (a condition paragraph may be dropped at render, so it cannot carry it)
+  const breakFirst = at.nodeName === 'w:p' && els(at, 'w:pageBreakBefore').length > 0;
+  if (breakFirst) els(at, 'w:pageBreakBefore').forEach((x: any) => x.parentNode.removeChild(x));
+  const frag = new DOMParser().parseFromString(`<root xmlns:w="${W_NS}">${breakFirst ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : ''}${xml}</root>`, 'text/xml');
+  for (const n of Array.from(frag.documentElement!.childNodes as any) as any[]) body.insertBefore(doc.importNode(n, true), at);
+}
+
 const FOOTER_PARA = para(
   `${tr('#SIGNED')}${tr('%MINI_SIG')}${run('  ')}${tr('/SIGNED')}${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`,
   '<w:spacing w:after="0"/><w:jc w:val="right"/>',
 );
 const FOOTER_SIG_PARA = para(`${tr('#SIGNED')}${tr('%MINI_SIG')}${tr('/SIGNED')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>');
 const FOOTER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PARA}</w:ftr>`;
+const FOOTER_PAGE_PARA = para(`${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`, '<w:spacing w:after="0"/><w:jc w:val="right"/>');
+const FOOTER_PAGE_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PAGE_PARA}</w:ftr>`;
 const EMPTY_FTR = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}><w:p/></w:ftr>`;
 
 function addHeaderFooter(parts: ReturnType<typeof openDocx>, layout: Layout) {
@@ -290,11 +342,13 @@ function addHeaderFooter(parts: ReturnType<typeof openDocx>, layout: Layout) {
       e.setAttribute('r:id', id);
       sp.insertBefore(e, sp.firstChild);
     };
-    if (!hasHeader) ref('w:headerReference', 'default', addPart(`header90${i}.xml`, HEADER_XML, 'header'));
-    if (!hasFooter) ref('w:footerReference', 'default', addPart(`footer90${i}.xml`, FOOTER_XML, 'footer'));
-    else appendToExistingFooter(parts, rels, sp);
+    const lh = layout.letterhead ?? 'all';
+    const sig = layout.footer_sig !== false;
+    if (!hasHeader) ref('w:headerReference', 'default', addPart(`header90${i}.xml`, lh === 'all' ? HEADER_XML : HEADER_DRAFT_XML, 'header'));
+    if (!hasFooter) ref('w:footerReference', 'default', addPart(`footer90${i}.xml`, sig ? FOOTER_XML : FOOTER_PAGE_XML, 'footer'));
+    else if (sig) appendToExistingFooter(parts, rels, sp);
     if (layout.cover_first_page && i === 0) {
-      ref('w:headerReference', 'first', addPart(`header99.xml`, HEADER_XML, 'header'));
+      ref('w:headerReference', 'first', addPart(`header99.xml`, lh === 'all' || lh === 'cover' ? HEADER_XML : HEADER_DRAFT_XML, 'header'));
       ref('w:footerReference', 'first', addPart(`footer99.xml`, EMPTY_FTR, 'footer'));
       if (!children(sp, 'w:titlePg').length) {
         const tp = doc.createElementNS(W_NS, 'w:titlePg');

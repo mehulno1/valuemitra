@@ -7,7 +7,7 @@ import { docxToPdf, watermark } from '../../lib/pdf.js';
 import { audit, systemActor, type Actor } from '../../platform/audit.js';
 import { publish } from '../../platform/events.js';
 import { enqueue, registerJob } from '../../platform/jobs.js';
-import { nextNumber } from '../../platform/sequences.js';
+import { nextNumber, reportSeries } from '../../platform/sequences.js';
 import { sendMail } from '../../platform/mail.js';
 import { getSettings } from '../../platform/settings.js';
 import { readFile, saveFile } from '../../platform/storage.js';
@@ -99,7 +99,7 @@ export async function signReport(actor: Actor & { role?: string }, assignmentId:
     const firm = await tx.selectFrom('firms').select('code').where('id', '=', firmId).executeTakeFirstOrThrow();
     // a reissue keeps the original serial and FY and adds /R1, /R2 ...
     const fy = a.report_fy ?? financialYear().short;
-    const seq = a.report_seq ?? (await nextNumber(tx, firmId, 'report', fy));
+    const seq = a.report_seq ?? (await nextNumber(tx, firmId, 'report', reportSeries(settings.report_pattern, fy)));
     const base = fillPattern(settings.report_pattern, { FIRM: firm.code, BANK: a.bank_code, BRANCH: a.branch_code, FY: fy, N: pad(seq) });
     const reportNo = a.report_rev > 0 ? `${base}/R${a.report_rev}` : base;
     const now = new Date();

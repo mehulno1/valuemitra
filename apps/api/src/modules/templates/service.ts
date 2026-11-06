@@ -14,6 +14,7 @@ import { singleField, templateCodes, versionFieldCodes } from './codes.js';
 import { AUTO_ACCEPT, mappingHistory, matchSlot } from './automap.js';
 import { compileTemplate, type Layout } from './compile.js';
 import { detectSlots, type Slot } from './detect.js';
+import { fixedNumbers } from './fixednumbers.js';
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const DEFAULT_LAYOUT: Layout = { cover_first_page: true, annexures: true };
@@ -22,7 +23,7 @@ export async function listTemplates(firmId: number) {
   const rows = await db
     .selectFrom('report_templates as t')
     .leftJoin('banks as b', 'b.id', 't.bank_id')
-    .select(['t.id', 't.code', 't.name', 't.property_types', 't.branch_scope', 't.status', 't.firm_id', 'b.code as bank_code', 'b.name as bank_name'])
+    .select(['t.id', 't.code', 't.name', 't.property_types', 't.branch_scope', 't.status', 't.firm_id', 't.rules_json', 'b.code as bank_code', 'b.name as bank_name'])
     .where((eb) => eb.or([eb('t.firm_id', 'is', null), eb('t.firm_id', '=', firmId)]))
     .orderBy('b.code')
     .execute();
@@ -43,6 +44,7 @@ export async function listTemplates(firmId: number) {
     ...r,
     property_types: json(r.property_types, []),
     branch_scope: json(r.branch_scope, ['*']),
+    rules: json<Record<string, number>>(r.rules_json, {}),
     versions: versions.filter((v) => v.template_id === r.id).map((v) => ({
       ...v,
       slots: Number(c.get(v.id)?.slots ?? 0),
@@ -137,7 +139,7 @@ export async function versionDetail(firmId: number, versionId: number) {
     .selectFrom('template_versions as v')
     .innerJoin('report_templates as t', 't.id', 'v.template_id')
     .leftJoin('banks as b', 'b.id', 't.bank_id')
-    .select(['v.id', 'v.version', 'v.status', 'v.effective_from', 'v.published_at', 'v.layout_json', 'v.source_file_id', 'v.compiled_file_id', 'v.change_note', 'v.ai_status', 'v.ai_json', 'v.ai_error',
+    .select(['v.id', 'v.version', 'v.status', 'v.effective_from', 'v.published_at', 'v.layout_json', 't.rules_json', 'v.source_file_id', 'v.compiled_file_id', 'v.change_note', 'v.ai_status', 'v.ai_json', 'v.ai_error',
       't.id as template_id', 't.name', 't.code', 't.firm_id', 't.property_types', 'b.code as bank_code', 'b.name as bank_name'])
     .where('v.id', '=', versionId)
     .executeTakeFirst();
@@ -148,6 +150,7 @@ export async function versionDetail(firmId: number, versionId: number) {
   return {
     ...v,
     layout: json(v.layout_json, DEFAULT_LAYOUT),
+    rules: json<Record<string, number>>(v.rules_json, {}),
     property_types: json(v.property_types, []),
     ai: json<any>(v.ai_json, null),
     ai_json: undefined,
@@ -317,10 +320,52 @@ async function createProposedFields(actor: Actor, v: { ai_json: unknown; propert
   return made;
 }
 
+/** Rules a format brings (realizable / distress %, area factors): they overlay the firm's rules for the bank
+ *  on every case that uses the format. A blank value removes the format's own figure. */
+export const FORMAT_RULE_KEYS = ['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'building_cost_per_sqft', 'fmv_rounding_step'] as const;
+export async function setFormatRules(actor: Actor, templateId: number, patch: Record<string, number | null>, tx: Tx = db) {
+  const t = await tx.selectFrom('report_templates').select(['id', 'firm_id', 'name', 'rules_json']).where('id', '=', templateId).executeTakeFirst();
+  if (!t || t.firm_id === null || t.firm_id !== actor.firmId) throw notFound('Format');
+  const cur: Record<string, number> = json(t.rules_json, {});
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(FORMAT_RULE_KEYS as readonly string[]).includes(k)) throw badRequest(`Unknown rule ${k}`);
+    if (v === null) delete cur[k];
+    else if (!(Number.isFinite(v) && v >= 0 && v <= (k === 'building_cost_per_sqft' || k === 'fmv_rounding_step' ? 100000 : k === 'saleable_factor' ? 3 : 100))) throw badRequest(`${k}: out of range`);
+    else cur[k] = v;
+  }
+  await tx.updateTable('report_templates').set({ rules_json: toJson(cur) }).where('id', '=', templateId).execute();
+  await audit(actor, { entityType: 'template', entityId: templateId, action: 'template.rules', summary: `${t.name}: format rules ${Object.entries(cur).map(([k, v]) => `${k} ${v}`).join(', ') || 'cleared'}`, before: json(t.rules_json, {}), after: cur }, tx);
+  return cur;
+}
+
+/** Figures left as fixed text in a draft (C1), each with whether the admin has kept it as the bank's own text.
+ *  Figures kept in the format's previous published version stay kept. */
+export async function fixedNumberList(firmId: number | null, versionId: number, tx: Tx = db) {
+  const v = await tx.selectFrom('template_versions').select(['template_id', 'fixed_ok_json']).where('id', '=', versionId).executeTakeFirstOrThrow();
+  const prev = await tx.selectFrom('template_versions').select('fixed_ok_json').where('template_id', '=', v.template_id).where('id', '!=', versionId).where('status', 'in', ['published', 'retired']).orderBy('version', 'desc').executeTakeFirst();
+  const ok = new Set([...json<string[]>(v.fixed_ok_json, []), ...json<string[]>(prev?.fixed_ok_json, [])]);
+  const { compiled } = await compileVersion(firmId, versionId, tx);
+  return fixedNumbers(compiled).map((n) => ({ ...n, ok: ok.has(n.value) }));
+}
+
+/** The admin keeps figures as fixed text (the bank's own wording, a statute, the firm's registration). */
+export async function keepFixedNumbers(actor: Actor, versionId: number, values: string[], tx: Tx = db) {
+  const v = await assertDraft(actor.firmId, versionId, tx);
+  const cur = new Set(json<string[]>((await tx.selectFrom('template_versions').select('fixed_ok_json').where('id', '=', versionId).executeTakeFirstOrThrow()).fixed_ok_json, []));
+  for (const x of values) cur.add(String(x).slice(0, 80));
+  await tx.updateTable('template_versions').set({ fixed_ok_json: toJson([...cur]) }).where('id', '=', versionId).execute();
+  await audit(actor, { entityType: 'template_version', entityId: versionId, action: 'template.fixed_ok', summary: `${v.name} v${v.version}: kept as fixed text: ${values.join(', ')}` }, tx);
+}
+
 export async function publishVersion(actor: Actor, versionId: number, effectiveFrom: string | null, tx: Tx = db) {
   const v = await assertDraft(actor.firmId, versionId, tx);
   const open = await tx.selectFrom('template_mappings').select((eb) => eb.fn.countAll<number>().as('n')).where('template_version_id', '=', versionId).where('confirmed_at', 'is', null).executeTakeFirst();
   if (Number(open?.n ?? 0) > 0) throw badRequest(`${open!.n} field(s) still need you before publishing`);
+  // a firm's format may come from a filled report: no figure of that case may survive as fixed text (C1)
+  if (v.firm_id !== null) {
+    const left = (await fixedNumberList(v.firm_id, versionId, tx)).filter((n) => !n.ok);
+    if (left.length) throw badRequest(`${left.length} figure(s) are still fixed text in the format: ${left.slice(0, 8).map((n) => n.value).join(', ')}${left.length > 8 ? ', …' : ''}. Map each to a field, or keep it as the bank's own text, before publishing.`);
+  }
   const bank = await tx.selectFrom('report_templates as t').leftJoin('banks as b', 'b.id', 't.bank_id').select('b.code').where('t.id', '=', v.template_id).executeTakeFirst();
   const made = await createProposedFields(actor, v, versionId, bank?.code ?? null, tx);
   const { compiled } = await compileVersion(v.firm_id, versionId, tx);
@@ -348,7 +393,7 @@ export async function discardDraftVersion(actor: Actor, versionId: number, tx: T
 }
 
 /** The version a new case uses: the published version of the format for this bank, branch and property type. */
-export async function pickTemplateVersion(firmId: number, bankId: number, branchCode: string, propertyType: string, tx: Tx = db, asOf = new Date()) {
+export async function pickTemplateVersion(firmId: number, bankId: number, branchCode: string, propertyType: string, tx: Tx = db, asOf = new Date(), templateId?: number | null) {
   const rows = await tx
     .selectFrom('template_versions as v')
     .innerJoin('report_templates as t', 't.id', 'v.template_id')
@@ -371,6 +416,8 @@ export async function pickTemplateVersion(firmId: number, bankId: number, branch
     const sb = json<string[]>(b.branch_scope, ['*']).includes('*') ? 0 : 1;
     return sb - sa || (b.firm_id ? 1 : 0) - (a.firm_id ? 1 : 0) || b.version - a.version;
   });
+  // the coordinator may choose any published format that fits (Flat Completed, Flat Under Construction, ...)
+  if (templateId) return fits.find((r) => r.template_id === templateId) ?? null;
   return fits[0] ?? null;
 }
 

@@ -145,6 +145,26 @@ export const EXPR_FNS: Record<string, (...a: unknown[]) => unknown> = {
   dms,
 };
 
+/** Comparable rows a format can print (rate indicators chart). */
+export const COMP_ROWS = 4;
+const SOURCE_LABEL: Record<string, string> = { index2: 'Index II', igr_search: 'IGR', listing: 'Listing', broker: 'Broker', own_report: 'Own report', import: 'Imported' };
+
+/** EVID.COMPn.* for one comparable: source, description, price, area and rate on the case's area basis
+ *  (comparables are kept per sq.ft. built-up; the basis factor turns them into the area the rate is quoted on). */
+function compValues(n: number, x: any, f: number | null): Record<string, unknown> {
+  const k = `EVID.COMP${n}`;
+  const price = Number(x.price) || null;
+  const area = x.area_bua_sqft ? Math.round(Number(x.area_bua_sqft) / (f ?? 1)) : Number(x.area_value) || null;
+  const where = [x.building, x.society].filter(Boolean)[0] ?? x.locality ?? '';
+  return {
+    [`${k}.SOURCE`]: x.source_type === 'igr_search' && x.txn_date ? `IGR-${new Date(x.txn_date).getFullYear()}` : (x.source_ref && x.source_type === 'listing' ? String(x.source_ref).replace(/^https?:\/\/(www\.)?/, '').split('/')[0] : SOURCE_LABEL[x.source_type] ?? x.source_type),
+    [`${k}.DESC`]: `${x.bhk ? `${x.bhk} ` : ''}Flat${where ? ` at ${where}` : ''}`,
+    [`${k}.VALUE`]: price,
+    [`${k}.AREA`]: area,
+    [`${k}.RATE`]: price && area ? Math.round(price / area) : null,
+  };
+}
+
 export interface CaseRecord {
   id: number;
   firm_id: number;
@@ -217,7 +237,16 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     tx.selectFrom('site_visits').select(['visit_date', 'submitted_at']).where('assignment_id', '=', assignmentId).where('status', '=', 'submitted').orderBy('id', 'desc').executeTakeFirst(),
   ]);
   const ruleSet = c.rule_version_id ? await configById<RuleSetPayload>(c.rule_version_id, tx) : null;
-  const rules = ruleSet ? rulesFor(ruleSet.payload, c.bank_code) : ({} as Rules);
+  // the case's report format may bring its own rules (SBI Flat Under Construction: realizable 98%, other area factors)
+  const fmt = c.template_version_id
+    ? await tx.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select('t.rules_json').where('v.id', '=', c.template_version_id).executeTakeFirst()
+    : null;
+  const rules = { ...(ruleSet ? rulesFor(ruleSet.payload, c.bank_code) : ({} as Rules)), ...json<Partial<Rules>>(fmt?.rules_json, {}) } as Rules;
+  // the rate indicators chart: the strongest comparables used for the rate, on the case's area basis
+  const comps = await tx.selectFrom('case_comparables as cc').innerJoin('comparables as cp', 'cp.id', 'cc.comparable_id')
+    .select(['cp.source_type', 'cp.source_ref', 'cp.building', 'cp.society', 'cp.locality', 'cp.bhk', 'cp.price', 'cp.area_bua_sqft', 'cp.area_value', 'cp.txn_date', 'cp.is_asking_price'])
+    .where('cc.assignment_id', '=', assignmentId).where('cc.is_subject', '=', 0).where('cc.included', '=', 1)
+    .orderBy('cc.weight', 'desc').orderBy('cc.id').limit(COMP_ROWS).execute();
   const profile = c.profile_version_id ? (await configById(c.profile_version_id, tx)).payload : {};
   const wording = c.wording_version_id ? (await configById(c.wording_version_id, tx)).payload : { fields: {}, messages: {} };
 
@@ -255,6 +284,15 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     'CUST.NAME': c.borrower_name,
     'SITE.INSPECTION_DATE': visit ? (visit.visit_date ?? visit.submitted_at)?.toISOString().slice(0, 10) ?? null : null,
   };
+  // worked out when first read: the basis factor is itself a resolved field
+  for (let n = 1; n <= COMP_ROWS; n++) {
+    for (const part of ['SOURCE', 'DESC', 'VALUE', 'AREA', 'RATE']) {
+      Object.defineProperty(caseValues, `EVID.COMP${n}.${part}`, {
+        enumerable: true,
+        get: () => (comps[n - 1] ? compValues(n, comps[n - 1], Number(get('VAL.BASIS_FACTOR').value) || null)[`EVID.COMP${n}.${part}`] : null),
+      });
+    }
+  }
   const firmValues: Record<string, unknown> = {
     'FIRM.NAME': firm.name,
     'FIRM.ADDRESS': firm.address,

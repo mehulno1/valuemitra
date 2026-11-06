@@ -12,7 +12,7 @@ import FormatReview, { type AiInfo, type ReviewMapping } from './FormatReview';
 interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; confirmed?: number; change_note: string | null; ai_status?: string }
 interface Tpl { id: number; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
 type Mapping = ReviewMapping;
-interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
+interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; footer_sig?: boolean }; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
 interface DictField { code: string; label: string; group: string; type: string; status: string; sources?: string[] }
 
 const ptLabel = (k: string) => PROPERTY_TYPES.find((p) => p.key === k)?.label ?? k;
@@ -288,6 +288,62 @@ function PreviewBox({ versionId }: { versionId: number }) {
   );
 }
 
+const RULE_LABELS: [string, string, string][] = [
+  ['realizable_pct', 'Realizable value (% of FMV)', 'e.g. 98'], ['distress_pct', 'Distress value (% of FMV)', 'e.g. 80'],
+  ['loading_pct', 'Plinth / built-up = carpet + %', 'e.g. 10'], ['saleable_factor', 'Saleable = carpet ×', 'e.g. 1.35'],
+  ['building_cost_per_sqft', 'Building cost for insurance (Rs./sq.ft.)', 'e.g. 1500'], ['fmv_rounding_step', 'Round FMV to the nearest Rs.', 'e.g. 1000'],
+];
+
+/** Layout of the issued report, the format's own rules, and figures left as fixed text (checked before publishing). */
+function FormatSettings({ d, edit }: { d: VersionDetail; edit: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const draft = d.status === 'draft';
+  const fixed = useQuery({ queryKey: ['tplfixed', d.id, d.mappings.map((m: any) => `${m.field_code}:${m.ignored}`).join()], queryFn: () => api.get<{ value: string; context: string; ok: boolean }[]>(`/api/templates/versions/${d.id}/fixed-numbers`), enabled: draft && d.ai_status !== 'reading' });
+  const keep = useMutation({ mutationFn: (values: string[]) => api.post(`/api/templates/versions/${d.id}/fixed-numbers`, { values }), onSuccess: () => qc.invalidateQueries({ queryKey: ['tplfixed', d.id] }), onError: onErr });
+  const layout = useMutation({ mutationFn: (l: Record<string, unknown>) => api.patch(`/api/templates/versions/${d.id}/layout`, l), onSuccess: () => { qc.invalidateQueries({ queryKey: ['tplv', d.id] }); toast('Layout saved'); }, onError: onErr });
+  const [rules, setRules] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(d.rules ?? {}).map(([k, v]) => [k, String(v)])));
+  const saveRules = useMutation({
+    mutationFn: () => api.patch(`/api/templates/${d.template_id}/rules`, Object.fromEntries(RULE_LABELS.map(([k]) => [k, rules[k]?.trim() ? Number(rules[k]) : null]))),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tplv', d.id] }); toast('Format rules saved'); }, onError: onErr,
+  });
+  const left = (fixed.data ?? []).filter((x) => !x.ok);
+  return (
+    <Panel title="Report layout and rules">
+      <div className="grid gap-3">
+        <Field label="Letterhead" hint="Where the firm's letterhead prints in this format">
+          <select value={d.layout?.letterhead ?? 'all'} disabled={!edit || !draft} onChange={(e) => layout.mutate({ letterhead: e.target.value })}>
+            <option value="all">Every page</option><option value="cover">Cover page only</option><option value="page2">Page 2 only</option><option value="none">Nowhere (pre-printed paper)</option>
+          </select>
+        </Field>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={d.layout?.footer_sig !== false} disabled={!edit || !draft} onChange={(e) => layout.mutate({ footer_sig: e.target.checked })} /> Short signature and seal in the footer of every page (else only where the valuer signs)</label>
+        <div className="sub">This format's own rules (blank = the firm's rule for the bank). They apply to every case that uses the format.</div>
+        <div className="grid grid-cols-2 gap-2">
+          {RULE_LABELS.map(([k, label, ph]) => <Field key={k} label={label}><input inputMode="decimal" value={rules[k] ?? ''} placeholder={ph} disabled={!edit} onChange={(e) => setRules((r) => ({ ...r, [k]: e.target.value }))} /></Field>)}
+        </div>
+        {edit && <div className="btns"><button className="btn" disabled={saveRules.isPending} onClick={() => saveRules.mutate()}>Save rules</button></div>}
+        {draft && (
+          <div className="grid gap-2">
+            <b>Figures left as fixed text</b>
+            {fixed.isLoading ? <div className="sub">Checking…</div> : !fixed.data?.length ? <div className="sub text-ok">No case figures left in the format.</div> : (
+              <>
+                <div className="sub">{left.length ? `${left.length} figure(s) still print as they are in the uploaded file. Map each to a field, or keep it if it is the bank's own text (a statute year, the firm's registration).` : 'All kept as the bank\'s own text.'}</div>
+                <ul className="grid gap-1 m-0 pl-4">
+                  {fixed.data.map((x) => (
+                    <li key={x.value}><b className={x.ok ? '' : 'text-warn'}>{x.value}</b> <span className="sub">…{x.context}…</span>{!x.ok && edit && <button className="btn ghost sm ml-2" onClick={() => keep.mutate([x.value])}>Keep as fixed text</button>}</li>
+                  ))}
+                </ul>
+                {left.length > 1 && edit && <div className="btns"><button className="btn sm" onClick={() => keep.mutate(left.map((x) => x.value))}>Keep all {left.length}</button></div>}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function MappingScreen() {
   const { id } = useParams();
   const vid = Number(id);
@@ -372,6 +428,7 @@ function MappingScreen() {
           <FormatReview vid={vid} ai={d.ai} mappings={d.mappings} fields={fields.data ?? []} edit={edit} onChange={(nd) => qc.setQueryData(['tplv', vid], nd)} Picker={picker} />
           <div className="split">
             {can('config') && <Panel title="Preview with a case"><PreviewBox versionId={vid} /></Panel>}
+            {can('config') && <FormatSettings key={`fs${vid}`} d={d} edit={edit} />}
             {draft && (
               <Panel title="Publish">
                 <div className="grid gap-3">
@@ -456,6 +513,7 @@ function MappingScreen() {
             </Panel>
           )}
           {can('config') && <Panel title="Preview with a case"><PreviewBox versionId={vid} /></Panel>}
+          {can('config') && <FormatSettings key={`fs${vid}`} d={d} edit={edit} />}
           <Panel title="How versions work">
             <ul className="sub m-0 grid gap-1.5 pl-4">
               <li>A published version never changes. To change a format, upload a revised version; it starts from this mapping.</li>

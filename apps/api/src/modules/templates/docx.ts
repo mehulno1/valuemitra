@@ -165,3 +165,115 @@ export function replaceInParagraph(p: XEl, find: string, replacement: string): b
   }
   return false;
 }
+
+/**
+ * Replace `find` in a paragraph without merging its runs, so the bank's formatting around it (a bold
+ * amount in a plain sentence) stays. The text before and after stays in its own runs; the replacement
+ * goes in a run of its own with the formatting of the run where `find` starts.
+ */
+export function replaceKeepingRuns(doc: XDoc, p: XEl, find: string, replacement: string): boolean {
+  const ts = els(p, 'w:t').filter((t) => {
+    // text of this paragraph only, not of a nested one
+    let n: any = t.parentNode;
+    while (n && n.nodeName !== 'w:p') n = n.parentNode;
+    return n === p;
+  });
+  const parts = ts.map((t) => t.textContent ?? '');
+  const full = parts.join('');
+  const at = full.indexOf(find);
+  if (at < 0) return false;
+  const end = at + find.length;
+  let pos = 0;
+  let first = -1;
+  let last = -1;
+  const starts = parts.map((x) => { const s = pos; pos += x.length; return s; });
+  parts.forEach((x, i) => {
+    if (first < 0 && starts[i] + x.length > at) first = i;
+    if (starts[i] < end) last = i;
+  });
+  const before = parts[first].slice(0, at - starts[first]);
+  const after = parts[last].slice(end - starts[last]);
+  for (let i = first; i <= last; i++) { ts[i].textContent = ''; ts[i].setAttribute('xml:space', 'preserve'); }
+  ts[first].textContent = before;
+  if (first !== last) ts[last].textContent = after;
+  if (first === last) {
+    // split the run: before | replacement | after
+    const run = ts[first].parentNode as XEl;
+    const tail = run.cloneNode(true) as XEl;
+    const tailT = els(tail, 'w:t')[0];
+    for (const n of Array.from(tail.childNodes as any) as any[]) if (n.nodeName !== 'w:rPr' && n !== tailT) tail.removeChild(n);
+    tailT.textContent = after;
+    run.parentNode!.insertBefore(tail, run.nextSibling);
+  }
+  const run = ts[first].parentNode as XEl;
+  const rPr = children(run, 'w:rPr')[0];
+  const holder = doc.createElementNS(W_NS, 'w:p');
+  appendRuns(doc, holder, replacement, rPr);
+  let ref: any = run.nextSibling;
+  for (const r of Array.from(holder.childNodes as any) as any[]) run.parentNode!.insertBefore(r, ref);
+  return true;
+}
+
+/**
+ * Rebuild a table's grid from its cells' widths. Word lays out by the cell widths; LibreOffice (which
+ * makes the PDF) by the grid, and a stale grid gives an extra empty column and wider tables. Column
+ * edges are the union of every row's cell edges; each cell then spans the grid columns between its own
+ * edges. Tables with widths other than twips (dxa) are left as they are.
+ */
+export function regridTables(doc: XDoc): number {
+  let fixed = 0;
+  for (const tbl of els(doc, 'w:tbl')) {
+    const rows = children(tbl, 'w:tr');
+    const cellsOf = (tr: XEl) => children(tr, 'w:tc');
+    const widthOf = (tc: XEl) => {
+      const w = els(children(tc, 'w:tcPr')[0] ?? tc, 'w:tcW')[0];
+      return w && (w.getAttribute('w:type') ?? 'dxa') === 'dxa' ? Number(w.getAttribute('w:w')) : NaN;
+    };
+    const before = (tr: XEl) => {
+      const pr = children(tr, 'w:trPr')[0];
+      const wb = pr ? children(pr, 'w:wBefore')[0] : undefined;
+      return wb ? Number(wb.getAttribute('w:w')) || 0 : 0;
+    };
+    const all = rows.flatMap(cellsOf);
+    if (!all.length || all.some((tc) => !(widthOf(tc) > 0))) continue;
+    const SNAP = 20;
+    const edges: number[] = [0];
+    const add = (x: number) => { if (!edges.some((e) => Math.abs(e - x) <= SNAP)) edges.push(x); };
+    for (const tr of rows) {
+      let x = before(tr);
+      add(x);
+      for (const tc of cellsOf(tr)) { x += widthOf(tc); add(x); }
+    }
+    edges.sort((a, b) => a - b);
+    const idx = (x: number) => edges.findIndex((e) => Math.abs(e - x) <= SNAP);
+    const grid = children(tbl, 'w:tblGrid')[0];
+    if (!grid) continue;
+    for (const g of children(grid, 'w:gridCol')) grid.removeChild(g);
+    for (let i = 1; i < edges.length; i++) {
+      const g = doc.createElementNS(W_NS, 'w:gridCol');
+      g.setAttribute('w:w', String(edges[i] - edges[i - 1]));
+      grid.appendChild(g);
+    }
+    for (const tr of rows) {
+      let x = before(tr);
+      const pr = children(tr, 'w:trPr')[0];
+      const gb = pr ? children(pr, 'w:gridBefore')[0] : undefined;
+      if (gb) gb.setAttribute('w:val', String(idx(x)));
+      for (const tc of cellsOf(tr)) {
+        const a = idx(x);
+        x += widthOf(tc);
+        const span = idx(x) - a;
+        const tcPr = children(tc, 'w:tcPr')[0];
+        const gs = children(tcPr, 'w:gridSpan')[0];
+        if (span > 1) {
+          if (gs) gs.setAttribute('w:val', String(span));
+          else { const e = doc.createElementNS(W_NS, 'w:gridSpan'); e.setAttribute('w:val', String(span)); const w = children(tcPr, 'w:tcW')[0]; tcPr.insertBefore(e, w ? w.nextSibling : tcPr.firstChild); }
+        } else if (gs) tcPr.removeChild(gs);
+      }
+      const ga = pr ? children(pr, 'w:gridAfter')[0] : undefined;
+      if (ga) ga.setAttribute('w:val', String(Math.max(0, edges.length - 1 - idx(x))));
+    }
+    fixed++;
+  }
+  return fixed;
+}

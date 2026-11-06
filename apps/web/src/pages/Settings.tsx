@@ -179,7 +179,7 @@ function NumbersSection() {
           <Field label={`Next report no. (FY ${d.fy})`} hint="Continue your current series"><input type="number" min={1} value={f.nextReport} onChange={set('nextReport')} disabled={ro} /></Field>
           <h3>Patterns</h3>
           <Field label="Case ID pattern" hint="{FYC} = 2526, {FY} = 25-26, {N} = running no."><input className="mono" value={f.case_pattern} onChange={set('case_pattern')} disabled={ro} /></Field>
-          <Field label="Report no. pattern" hint="{FIRM} {BANK} {BRANCH} {FY} {N}"><input className="mono" value={f.report_pattern} onChange={set('report_pattern')} disabled={ro} /></Field>
+          <Field label="Report no. pattern" hint="{FIRM} {BANK} {BRANCH} {FY} {N}. Without {FY} the serial runs on across years."><input className="mono" value={f.report_pattern} onChange={set('report_pattern')} disabled={ro} /></Field>
           <Field label="File name pattern" full hint="{CASE} {BORROWER} {UNIT} {BANK} {BRANCH}"><input className="mono" value={f.file_pattern} onChange={set('file_pattern')} disabled={ro} /></Field>
           {!ro && <div className="full btns"><button className="btn pri" disabled={!dirty || save.isPending}>Save</button></div>}
         </form>

@@ -17,6 +17,7 @@ export interface Rules {
   comparable_radius_km: number;
   listing_discount_pct: number;
   value_rounding_step: number;
+  fmv_rounding_step?: number;
   rate_rounding_step: number;
   rent_rounding_step: number;
   measured_area_tolerance_pct: number;

@@ -1,3 +1,4 @@
+import { previewVersion } from '../modules/reports/preview.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ROLES } from '@vm/shared';
@@ -168,6 +169,20 @@ export async function adminRoutes(app: FastifyInstance) {
     return { ok: true };
   });
   app.patch('/api/templates/versions/:id/layout', { preHandler: requirePerm('config') }, async (req) => { await tpl.setLayout(actorOf(req), idParam(req), req.body as any); return { ok: true }; });
+  app.patch('/api/templates/:id/rules', { preHandler: requirePerm('config') }, async (req) => {
+    const b = body(req, z.record(z.string(), z.number().nullable()));
+    return db.transaction().execute((tx) => tpl.setFormatRules(actorOf(req), idParam(req), b, tx));
+  });
+  app.get('/api/templates/versions/:id/fixed-numbers', { preHandler: requirePerm('config') }, async (req) => {
+    const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
+    if (!v || (v.firm_id !== null && v.firm_id !== req.auth!.firmId)) throw badRequest('Template version not found');
+    return tpl.fixedNumberList(v.firm_id, idParam(req));
+  });
+  app.post('/api/templates/versions/:id/fixed-numbers', { preHandler: requirePerm('config') }, async (req) => {
+    const b = body(req, z.object({ values: z.array(z.string().max(80)).min(1).max(200) }));
+    await db.transaction().execute((tx) => tpl.keepFixedNumbers(actorOf(req), idParam(req), b.values, tx));
+    return { ok: true };
+  });
   app.post('/api/templates/versions/:id/publish', { preHandler: requirePerm('config') }, async (req) => {
     const b = body(req, z.object({ effectiveFrom: z.string().nullish() }));
     await db.transaction().execute((tx) => tpl.publishVersion(actorOf(req), idParam(req), b.effectiveFrom ?? null, tx));
@@ -181,22 +196,10 @@ export async function adminRoutes(app: FastifyInstance) {
     if (!a) throw badRequest('Choose one of your cases to preview with');
     const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
     if (!v || (v.firm_id !== null && v.firm_id !== req.auth!.firmId)) throw badRequest('Template version not found');
-    const { compiled } = await tpl.compileVersion(v.firm_id, idParam(req));
-    // a downloaded Word file: the pages as they will be issued (no click-to-edit markers, no signature)
-    const built = await buildRenderData(assignmentId, req.auth!.firmId, 'final_preview', db, idParam(req));
-    const { caseData } = await import('../modules/casedata/resolver.js');
-    const data = await caseData(assignmentId, req.auth!.firmId);
-    // fields the AI proposes exist only once published: show where each will be asked
-    const detail = await tpl.versionDetail(req.auth!.firmId, idParam(req));
-    const proposed = new Map<string, any>((detail.ai?.new_fields ?? []).map((f: any) => [f.code, f]));
-    for (const code of await versionFieldCodes(idParam(req))) {
-      const f = proposed.get(code);
-      if (f && !data.fields.has(code)) built.data[code] = f.default_text ?? `[New field: ${f.label}${f.sources.includes('site_sheet') ? ' (asked on the site sheet)' : ''}]`;
-      else if (!built.data[code] && data.fields.get(code)?.type !== 'image') built.data[code] = `[${data.fields.get(code)?.label ?? code}: pending for this case]`;
-    }
-    for (const t of await versionTemplates(idParam(req))) built.data[templateKey(t.key)] = fillTemplate(t.template, (c) => String(built.data[c] ?? ''));
+    const { docx, empty } = await previewVersion(req.auth!.firmId, v.firm_id, idParam(req), assignmentId);
+    reply.header('X-Empty-Fields', encodeURIComponent(empty.join('; ')).slice(0, 4000));
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    return reply.send(renderDocx(compiled, built.data, built.images));
+    return reply.send(docx);
   });
 
   // ---- in-product feedback (comments on any screen or field) ----

@@ -640,6 +640,7 @@ export interface ReportTemplates {
   id: Generated<number>;
   name: string;
   property_types: Json;
+  rules_json: Json | null;
   status: Generated<"active" | "retired">;
 }
 
@@ -750,6 +751,7 @@ export interface TemplateVersions {
   created_by: number | null;
   detect_json: Json | null;
   effective_from: Date | null;
+  fixed_ok_json: Json | null;
   id: Generated<number>;
   layout_json: Json | null;
   published_at: Date | null;

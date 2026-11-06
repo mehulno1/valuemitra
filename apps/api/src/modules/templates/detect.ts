@@ -85,6 +85,7 @@ export function detectSlots(buf: Buffer): { slots: Slot[]; stats: { tables: numb
     if (raw.includes('{{')) {
       mergeRuns(p);
       for (const m of textOf(p).matchAll(/\{\{\s*([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)+)\s*\}\}/g)) {
+        if (m[1] === 'REPORT.ANNEXURES') continue; // where the annexure pages go, not a field
         slots.push({
           key: `p${pi}x${m.index}`, kind: 'placeholder', label: m[1], context: clean(raw).slice(0, 160), sample: null,
           location: { p: pi, find: m[0] }, explicitCode: m[1],
@@ -99,6 +100,11 @@ export function detectSlots(buf: Buffer): { slots: Slot[]; stats: { tables: numb
     }
   });
 
+  // a tagged template ({{FIELD.CODE}} where every value goes) says exactly what prints: table labels and
+  // blanks beside the tags are the bank's fixed text, never slots of their own
+  // (a format that only uses a few tags in running text, like SBI Format-A, keeps its label slots)
+  const tagged = slots.filter((x) => x.kind === 'placeholder');
+  if (tagged.length >= 40 || tagged.length > slots.length - tagged.length) return { slots: tagged, stats: { tables: tbls.length, paragraphs: ps.length } };
   return { slots, stats: { tables: tbls.length, paragraphs: ps.length } };
 }
 

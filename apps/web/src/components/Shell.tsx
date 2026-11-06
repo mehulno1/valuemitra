@@ -26,7 +26,7 @@ export function Shell() {
       </div>
       <aside className={`side ${open ? 'open' : ''}`} onClick={(e) => (e.target as HTMLElement).closest('a') && setOpen(false)}>
         <div className="flex items-center justify-between">
-          <div className="brand"><div className="seal">VM</div><div><b>ValueMitra</b><small>{user?.firm_code} · Phase 1</small></div></div>
+          <div className="brand"><div className="seal">VM</div><div><b>ValueMitra</b><small>{user?.firm_code}</small></div></div>
           {open && <button className="btn sm ghost" onClick={() => setOpen(false)}>Close</button>}
         </div>
         <nav className="nav">

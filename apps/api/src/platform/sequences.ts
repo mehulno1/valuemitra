@@ -33,3 +33,7 @@ export async function setNext(tx: Tx, firmId: number, series: string, fy: string
   await sql`INSERT INTO sequences (firm_id, series, fy, last_no) VALUES (${firmId}, ${series}, ${fy}, ${next - 1})
             ON DUPLICATE KEY UPDATE last_no = ${next - 1}`.execute(tx);
 }
+
+/** The report series key: per financial year when the number pattern shows the year ({FY}); one running
+ *  series otherwise (UCVLLP/SBI/11724 continues across years). */
+export const reportSeries = (pattern: string, fy: string) => (pattern.includes('{FY}') ? fy : 'ALL');

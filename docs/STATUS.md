@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, local). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -17,8 +17,8 @@ Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQ
 | Old v1 on EC2 | `/var/www/valuemitra`, PM2 `valuemitra-api` — stopped, not deleted |
 | Secrets | `.env` at repo root (local) and `/var/www/valuemitra-v2/.env` (EC2), never committed. Google Vision key: `secrets/google-vision.json` (local), `/var/www/valuemitra/valuemitra-ocr-keys.json` (EC2). Anthropic key: `ANTHROPIC_API_KEY` in both `.env` files — copy local → EC2 over ssh stdin (never on a command line), then `pm2 restart valuemitra-v2 --update-env` |
 
-Logins (demo firm DVA): valuer@ / coordinator@ / accounts@ / admin@demo.valuemitra.in. Local password `ValueMitra@2026`;
-live password = `SEED_PASSWORD` in the EC2 `.env` (random, not in git).
+Logins, local (demo firm DVA): valuer@ / coordinator@ / accounts@ / admin@demo.valuemitra.in, password `ValueMitra@2026`.
+Live: test data wiped 4 Nov 2026 for client go-live, no backup taken. Only admin@demo.valuemitra.in remains (password = `SEED_PASSWORD` in the EC2 `.env`); firm record still has the demo name and details; only SBI Format-A remains; no valuer, branches, engineers, ready reckoner rates, letterhead, signature or seal until the client adds them.
 
 ## 2. Decisions taken (with the user)
 
@@ -122,6 +122,34 @@ Premal's review of 22 Oct (25 issues, 4 demo inputs, AI format conversion) is pl
 - Checks accept dialog: radio list aligned (CSS).
 - Open question for Premal: his manual report uses plinth = carpet + 10% and saleable = carpet + 35%; SBI rules here are
   20% and 1.4. Per-bank rules can be changed in Settings.
+
+## 3h. Universal's 05 Nov demo review: C1–C3, A4, SBI Under Construction (06 Nov 2026, local; not yet deployed)
+
+Review doc: `~/Downloads/ValueMitra — Review of Universal's 05 Nov Demo Feedback.docx` (P1/P2 list, workflow, mock).
+- C1 surviving sample figures: publishing a firm format lists every case-like figure (dates, amounts, areas, long
+  numbers) left as fixed text (`templates/fixednumbers.ts`); publish is blocked until each is mapped or kept
+  ("Keep as fixed text", `template_versions.fixed_ok_json`, carried from the previous version). Statute years skipped.
+- C2 placeholders: preview never prints "[New field…]" / "[… pending]" (`reports/preview.ts`, empty fields returned in
+  `X-Empty-Fields` and listed by the `pending_fields` check); compile blanks any leftover `{{tag}}`, lower case too.
+- C3: report series runs on across years when the pattern has no `{FY}` (`reportSeries`, key `ALL`); sidebar shows
+  the firm code only. Live firm code/pattern/next serial still to set (UCVLLP, `{FIRM}/{BANK}/{N}`).
+- A5: New assignment lists every published format for bank/branch/type (suggested first); `templateId` on create.
+- Tagged templates: a file with 40+ `{{FIELD.CODE}}` placeholders uses only them (no label slots). Placeholders are
+  replaced without merging runs (`replaceKeepingRuns`: bold amounts stay bold). `{{REPORT.ANNEXURES}}` marks where the
+  annexure pages go. Layout options per format: `letterhead` all | cover | page2 | none, `footer_sig`.
+- Format rules (`report_templates.rules_json`, migration 0010, Formats → Report layout and rules): realizable/distress
+  %, loading %, saleable factor, building cost, `fmv_rounding_step`; overlay the firm's bank rules in the resolver.
+- 70 new platform fields (approvals as printed, C.C. floors, RERA, boundaries per documents, rooms, stage/% done,
+  present value, comparables `EVID.COMP1..4.*` from the case's included comparables, etc.); doc type `rera_cert`.
+  Live has firm copies of 23 of these codes (from the AI-converted Flat-Completed v1); they override the platform
+  ones until removed.
+- A4 + SBI UC: `scripts/dev/fmt-apply.mts` turns a bank file into a clean tagged format (spec JSON: tag map + paragraph
+  ops; unfloat, grid rebuilt from cell widths, rows kept whole, padding → page breaks, signature slots, annexure
+  marker). Specs and outputs: `~/Downloads/ValueMitra previews 06 Nov/`. `scripts/dev/t-fmt-sbi.mts` loads both,
+  creates test cases with the sample reports' values and writes previews (11 body pages each + annexures).
+- Known differences from the samples: RV for Flat Completed is the SBI rule 90% (Sandeep's sample uses 98%);
+  insurance still building cost × BUA (A7 band table not built); evidence range is computed from the comparables.
+- Not done yet: A1 roles/workflow, A2/A3 firm default, A6–A11, B1–B6, PropTrace.
 
 ## 4. Left — by work package
 

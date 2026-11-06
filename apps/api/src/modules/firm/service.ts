@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { audit, type Actor } from '../../platform/audit.js';
 import { grantDefaultPermissions, hashPassword, invalidatePerms } from '../../platform/auth.js';
 import { financialYear } from '@vm/shared';
-import { peekNumber, setNext } from '../../platform/sequences.js';
+import { peekNumber, reportSeries, setNext } from '../../platform/sequences.js';
 import { DEFAULT_SETTINGS, getSettings, setSettings, type FirmSettings } from '../../platform/settings.js';
 import { purgeFile, saveFile } from '../../platform/storage.js';
 import { IMAGES, requireKind } from '../../lib/sniff.js';
@@ -18,7 +18,7 @@ export async function firmProfile(firmId: number) {
   const settings = await getSettings(firmId);
   const fy = financialYear().short;
   const valuer = await db.selectFrom('users').select(['id', 'name', 'qualifications', 'ibbi_reg_no', 'ibbi_valid_upto']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst();
-  return { firm, settings, valuer, nextCase: await peekNumber(db, firmId, 'case', fy), nextReport: await peekNumber(db, firmId, 'report', fy), fy };
+  return { firm, settings, valuer, nextCase: await peekNumber(db, firmId, 'case', fy), nextReport: await peekNumber(db, firmId, 'report', reportSeries(settings.report_pattern, fy)), fy };
 }
 
 export async function updateFirm(actor: Actor, patch: { name?: string; address?: string; city?: string; state_code?: string; gstin?: string; phone?: string; email?: string; code?: string; settings?: Partial<FirmSettings>; nextCase?: number; nextReport?: number; valuer?: { qualifications?: string; ibbi_reg_no?: string; ibbi_valid_upto?: string | null } }) {
@@ -43,9 +43,11 @@ export async function updateFirm(actor: Actor, patch: { name?: string; address?:
   }
   if (patch.nextReport !== undefined) {
     if (!(Number.isInteger(patch.nextReport) && patch.nextReport > 0)) throw badRequest('Next report no. must be a whole number');
+    // the pattern just saved decides the series: per year, or one running series
+    const series = reportSeries((await getSettings(firmId)).report_pattern, fy);
     const issued = await db.selectFrom('report_register').select('id').where('firm_id', '=', firmId).where('fy', '=', fy).limit(1).executeTakeFirst();
-    if (issued && patch.nextReport < (await peekNumber(db, firmId, 'report', fy))) throw badRequest('Report numbers cannot go backwards once issued');
-    await setNext(db, firmId, 'report', fy, patch.nextReport);
+    if (issued && patch.nextReport < (await peekNumber(db, firmId, 'report', series))) throw badRequest('Report numbers cannot go backwards once issued');
+    await setNext(db, firmId, 'report', series, patch.nextReport);
   }
   if (patch.valuer) {
     const v = await db.selectFrom('users').select('id').where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst();

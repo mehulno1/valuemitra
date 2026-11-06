@@ -33,7 +33,7 @@ export async function caseRoutes(app: FastifyInstance) {
     const b = body(req, z.object({
       bankId: z.number().int(), branchId: z.number().int(), bankContact: z.string().nullish(), receivedVia: z.string().nullish(), bankRefNo: z.string().nullish(),
       borrowerName: z.string().nullish(), propertyType: z.enum(PROPERTY_TYPES.map((p) => p.key) as [string, ...string[]]), localityHint: z.string().nullish(),
-      purpose: z.string().nullish(), engineerId: z.number().int().nullish(),
+      purpose: z.string().nullish(), engineerId: z.number().int().nullish(), templateId: z.number().int().nullish(),
     }));
     return db.transaction().execute((tx) => asg.createAssignment(actorOf(req), b, tx));
   });

@@ -14,6 +14,7 @@ export const DOC_TYPES = {
     { key: 'approved_plan', label: 'Approved plan', hint: 'Sanctioned building / layout plan', in_report: true },
     { key: 'tax_bill', label: 'Property tax receipt', hint: 'Municipal property tax bill or receipt', in_report: false },
     { key: 'electricity_bill', label: 'Electricity bill', hint: 'Electricity bill', in_report: false },
+    { key: 'rera_cert', label: 'RERA certificate', hint: 'MahaRERA project registration certificate (Form C) with registration number and date', in_report: true },
     { key: 'title_report', label: 'Title certificate / search report', hint: "Advocate's title report or search report", in_report: false },
     { key: 'property_card', label: 'Property card', hint: 'City survey property card', in_report: true },
     { key: 'seven_twelve', label: '7/12 extract', hint: '7/12 (सातबारा) land record extract', in_report: true },
@@ -48,6 +49,7 @@ export const PROFILE_FLAT = {
     { code: 'elec', label: 'Electricity bill', remark: 'Electricity bill', doc_types: ['electricity_bill'] },
     { code: 'tax', label: 'Property tax receipt', remark: 'Property Tax', doc_types: ['tax_bill'] },
     { code: 'title', label: 'Title certificate / search report', remark: 'Title Certificate', doc_types: ['title_report'], chase: false },
+    { code: 'rera', label: 'RERA certificate', remark: 'RERA Certificate', doc_types: ['rera_cert'], chase: false },
     { code: 'sheet', label: 'Site inspection sheet', remark: null, doc_types: ['site_sheet'] },
     { code: 'photos', label: 'Site photos', remark: null, doc_types: ['@photos'] },
   ],
@@ -59,6 +61,7 @@ export const PROFILE_FLAT = {
     'PHYS.ROOMS', 'PHYS.TOTAL_FLOORS', 'PHYS.UNITS_PER_FLOOR', 'PHYS.LIFT', 'PHYS.STRUCTURE', 'PHYS.YEAR_BUILT', 'PHYS.SPEC',
     'PHYS.MAINTENANCE', 'OCC.STATUS', 'OCC.PERSON_MET', 'SITE.INSPECTION_DATE', 'AREA.MEASURED', 'AREA.BALCONY', 'PROP.AREA_CLASS', 'PROP.BHK',
     'PHYS.BUILDING_STATUS', 'PHYS.WORK_DONE', 'PHYS.DEVIATION_SITE',
+    'PHYS.ROOMS_LIVING', 'PHYS.ROOMS_BEDROOM', 'PHYS.ROOMS_TOILET', 'PHYS.ROOMS_KITCHEN', 'PHYS.BOUNDARIES_MATCH', 'PHYS.DEMARCATED', 'PHYS.PCT_DONE', 'REPORT.SITE_REMARK',
   ],
   // documents that can be listed under "Legal documents"; the valuer can leave any of them out per case
   legal_documents: [
@@ -250,7 +253,12 @@ export const WORDING = {
     // read from the agreement while the C.C. itself is marked not provided: say so, never cite it as seen
     'APPR.CC': W("{{ present(DOC.CC.NUMBER) ? 'C.C. bearing no. ' + DOC.CC.NUMBER + (present(DOC.CC.DATE) ? ' dated ' + date(DOC.CC.DATE) : '') + (DOCSTATE.CC == 'provided' ? '' : ' (details as per agreement; copy not provided)') : 'Not provided' }}"),
     'PHYS.CONSTRUCTION_STAGE': W("{{ present(DOC.OC.NUMBER) ? 'Completed. Building is completed as per O.C.' : (PHYS.BUILDING_STATUS == 'Under construction' ? 'Under construction' + (present(PHYS.WORK_DONE) ? ': ' + PHYS.WORK_DONE : '') : (PHYS.BUILDING_STATUS == 'Completed' ? 'Completed' : null)) }}"),
-    'PHYS.VIOLATIONS': W("{{ present(DOC.OC.NUMBER) ? 'No (we have verified through O.C.)' : (present(PHYS.DEVIATION_SITE) ? PHYS.DEVIATION_SITE : null) }}"),
+    'PHYS.VIOLATIONS': W("{{ present(DOC.OC.NUMBER) ? 'No (we have verified through O.C.)' : (present(PHYS.DEVIATION_SITE) ? PHYS.DEVIATION_SITE : (present(DOC.CC.NUMBER) ? 'No (we have verified through CC & Plan)' : null)) }}"),
+    // SBI Flat Completed / Under Construction wording (Universal's reports)
+    'APPR.PLAN_APPROVAL': W("{{ present(DOC.PLAN.NUMBER) ? 'Approved plan bearing no. ' + DOC.PLAN.NUMBER + (present(DOC.PLAN.DATE) ? ' dated ' + date(DOC.PLAN.DATE) : '') : (present(DOC.OC.NUMBER) ? 'We have been provided with O.C bearing no. ' + DOC.OC.NUMBER + (present(DOC.OC.DATE) ? ' dated ' + date(DOC.OC.DATE) : '') + '. Hence we presume building is constructed as per plan.' : (contains(['not_provided', 'na'], DOCSTATE.APPROVED_PLAN) ? 'Not Provided' : null)) }}"),
+    'APPR.OC_TEXT': W("{{ present(DOC.OC.NUMBER) ? 'O.C bearing no. ' + DOC.OC.NUMBER + (present(DOC.OC.DATE) ? ' dated ' + date(DOC.OC.DATE) : '') : (PHYS.BUILDING_STATUS == 'Under construction' ? 'N.A (Building is under construction)' : (contains(['not_provided', 'na'], DOCSTATE.OC) ? 'Not Provided' : null)) }}"),
+    'AREA.CARPET_PARKING_TEXT': W("{{ AREA.CARPET_TEXT + (present(PHYS.PARKING_TEXT) ? ' + ' + PHYS.PARKING_TEXT : (PHYS.PARKING_COUNT > 0 ? ' + ' + PHYS.PARKING_COUNT + ' car parking' : '')) }}"),
+    'VAL.LOCATION_NOTE': W("{{ present(PROP.STATION) ? 'The said property is ' + (present(PROP.STATION_KM) ? PROP.STATION_KM + ' kms. ' : '') + 'away from ' + PROP.STATION + ' railway station. ' : '' }}All other civic amenities are available nearby and within easy reach."),
     'DOC.AGREEMENT.SUMMARY': W('Agreement for Sale dated {{DOC.AGREEMENT.DATE}} between {{DOC.AGREEMENT.SELLER}} (Transferor) and {{DOC.AGREEMENT.BUYER}} (Transferee)'),
     'DOC.INDEX2.SUMMARY': W('Index-II bearing no. {{DOC.INDEX2.NUMBER}} dated {{DOC.INDEX2.DATE}}'),
     'DOC.INDEX2_PREV.SUMMARY': W('Index-II bearing no. {{DOC.INDEX2_PREV.NUMBER}} dated {{DOC.INDEX2_PREV.DATE}}'),

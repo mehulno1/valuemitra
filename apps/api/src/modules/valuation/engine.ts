@@ -221,7 +221,8 @@ export function computeValues(v: ValuationInput, r: Rules): ValuesOut {
   const interior = get('interior');
   const others = v.extras.filter((e) => !['parking', 'interior'].includes(e.code)).reduce((t, e) => t + amt(e), 0);
   for (const e of v.extras) lines.push({ label: e.label, working: e.amount !== undefined ? 'lump sum' : `${e.qty ?? 1} × Rs. ${e.rate ?? 0}`, amount: amt(e) });
-  const fmv = roundTo(unit + parking + interior + others, r.value_rounding_step);
+  // the FMV may be rounded more coarsely than the other values ("Say Rs. 93,97,000")
+  const fmv = roundTo(unit + parking + interior + others, Number(r.fmv_rounding_step) || r.value_rounding_step);
   return {
     unit: roundTo(unit, r.value_rounding_step), parking, interior, others, extrasTotal: parking + interior + others, fmv,
     realizable: roundTo((fmv * r.realizable_pct) / 100, r.value_rounding_step),

@@ -13,7 +13,7 @@ interface Meta {
   engineers: { id: number; name: string; localities: string | null; phone: string | null }[];
   flags: Record<string, boolean>;
 }
-interface Tpl { id: number; name: string; bank_code: string | null; property_types: string[]; branch_scope: string[]; versions: { status: string; version: number }[] }
+interface Tpl { id: number; firm_id: number | null; name: string; bank_code: string | null; property_types: string[]; branch_scope: string[]; versions: { status: string; version: number }[] }
 
 /** Score an engineer by how many words of the locality appear in their localities. */
 function engineerScore(localities: string | null, hint: string) {
@@ -66,16 +66,23 @@ export default function NewAssignment() {
     placeholderData: (p) => p,
   });
 
-  const format = useMemo(() => {
-    if (!bank || !tpls.data) return null;
-    const live = tpls.data.filter((t) => t.bank_code === bank.code && t.property_types.includes(f.propertyType) && t.versions.some((v) => v.status === 'published'));
-    return live.find((t) => branch && t.branch_scope.includes(branch.code)) ?? live.find((t) => t.branch_scope.includes('*')) ?? null;
+  // every published format for the bank, branch and property type; the most specific is suggested
+  const formats = useMemo(() => {
+    if (!bank || !tpls.data) return [];
+    const live = tpls.data.filter((t) => t.bank_code === bank.code && t.property_types.includes(f.propertyType) && t.versions.some((v) => v.status === 'published')
+      && (t.branch_scope.includes('*') || (!!branch && t.branch_scope.includes(branch.code))));
+    const rank = (t: Tpl) => (branch && t.branch_scope.includes(branch.code) ? 2 : 0) + (t.firm_id ? 1 : 0);
+    return [...live].sort((a, b) => rank(b) - rank(a));
   }, [bank, branch, tpls.data, f.propertyType]);
+  const [formatId, setFormatId] = useState(0);
+  useEffect(() => { if (!formats.some((t) => t.id === formatId)) setFormatId(formats[0]?.id ?? 0); }, [formats, formatId]);
+  const format = formats.find((t) => t.id === formatId) ?? null;
 
   const create = useMutation({
     mutationFn: () => api.post<{ id: number; caseNo: string }>('/api/assignments', {
       bankId: f.bankId, branchId: f.branchId, bankContact: f.bankContact || null, receivedVia: f.receivedVia || null, bankRefNo: f.bankRefNo || null,
       borrowerName: f.borrowerName || null, propertyType: f.propertyType, localityHint: f.localityHint || null, purpose: f.purpose || null, engineerId: f.engineerId || null,
+      templateId: format?.id ?? null,
     }),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['board'] });
@@ -132,8 +139,14 @@ export default function NewAssignment() {
               <select value={f.propertyType} onChange={(e) => set('propertyType', e.target.value)}>{PROPERTY_TYPES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
             </Field>
             <Field label="Locality (rough, from the call)" full><input value={f.localityHint} onChange={(e) => set('localityHint', e.target.value)} placeholder="Vrindavan Society, Majiwada, Thane (W)" /></Field>
-            <Field label="Report format" full hint="Picked automatically from bank and property type">
-              <input readOnly value={format ? `${bank?.code} · ${format.name}` : tpls.isLoading ? 'Checking…' : 'No published format for this bank and property type. Add one under Bank formats.'} className={format ? '' : 'text-crit'} />
+            <Field label="Report format" full hint={formats.length > 1 ? 'Suggested from bank, branch and property type; choose another if it fits this case better' : 'Picked from bank and property type'}>
+              {formats.length ? (
+                <select value={formatId} onChange={(e) => setFormatId(Number(e.target.value))}>
+                  {formats.map((t, i) => <option key={t.id} value={t.id}>{bank?.code} · {t.name}{i === 0 && formats.length > 1 ? ' (suggested)' : ''}</option>)}
+                </select>
+              ) : (
+                <input readOnly value={tpls.isLoading ? 'Checking…' : 'No published format for this bank and property type. Add one under Bank formats.'} className="text-crit" />
+              )}
             </Field>
 
             <h3>Site visit</h3>
