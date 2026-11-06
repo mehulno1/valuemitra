@@ -15,7 +15,7 @@ interface Comp {
   rate_per_sqft: number | string; adjustments: Adj[]; adjusted_rate: number | string; weight: number | string; weight_label: string; included: number | boolean;
   exclusion_reason: string | null; age_months: number | string | null; note: string | null; notes: string | null; manual_override: number | boolean; file_id: number | null; bhk: string | null;
 }
-interface Capture { id: number; file_id: number; mime: string; source_kind: string; source_name: string | null; url: string | null; status: string; error: string | null; in_report: number | boolean }
+interface Capture { id: number; file_id: number; mime: string; source_kind: string; source_name: string | null; url: string | null; status: string; error: string | null; in_report: number | boolean; suggested_kind?: string | null; check_note?: string | null }
 interface Evidence {
   readyReckoner: { ratePerSqm: unknown; ratePerSqft: unknown; year: unknown; source: string | null } | null;
   guideline: unknown; consideration: unknown; area: unknown; registrationDate: unknown;
@@ -30,9 +30,9 @@ const AREA_WORD: Record<string, string> = { bua: 'built-up', carpet: 'carpet', s
 const n = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const rs = (v: unknown) => (n(v) === null ? '—' : `Rs. ${inr(n(v))}`);
 const SOURCE: Record<string, string> = { index2: 'Index II', igr_search: 'IGR search', listing: 'Listing', own_report: 'Earlier report (guidance)', manual: 'Manual', valuer_entry: 'Valuer entry' };
-const KIND: Record<string, string> = { igr: 'IGR search', listing: 'Listing page', other: 'Other evidence', rr: 'Ready reckoner page', map: 'Location map' };
+const KIND: Record<string, string> = { igr: 'IGR search', listing: 'Listing page', other: 'Other evidence', rr: 'Ready reckoner page', map: 'Location map', proptrace: 'Index II search (PropTrace)' };
 const PRINT_ONLY = new Set(['rr', 'map']);
-const DEFAULT_SOURCE: Record<string, string> = { igr: 'IGR Maharashtra', listing: '99acres', rr: 'IGR Maharashtra e-ASR', map: 'Google Maps', other: '' };
+const DEFAULT_SOURCE: Record<string, string> = { igr: 'IGR Maharashtra', listing: '99acres', rr: 'IGR Maharashtra e-ASR', map: 'Google Maps', proptrace: 'PropTrace', other: '' };
 
 export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   const { can } = useAuth();
@@ -45,7 +45,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
   });
   const vq = useQuery({ queryKey: caseKey(c.id, 'valuation'), queryFn: () => api.get<any>(`/api/assignments/${c.id}/valuation`) });
 
-  const [kind, setKind] = useState<'igr' | 'listing' | 'other' | 'rr' | 'map'>('listing');
+  const [kind, setKind] = useState<'igr' | 'listing' | 'other' | 'rr' | 'map' | 'proptrace'>('listing');
   const [source, setSource] = useState('99acres');
   const [url, setUrl] = useState('');
   const [edit, setEdit] = useState<{ comp: Comp; included: boolean; weight: string; reason: string; area: string; basis: string } | null>(null);
@@ -66,6 +66,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
     onSuccess: () => { toast('Comparable updated. Proposal recomputed.'); setEdit(null); refresh(); },
     onError: err,
   });
+  const kindFix = useMutation({ mutationFn: (x: { cid: number; action: 'move' | 'keep' }) => api.post(`/api/assignments/${c.id}/captures/${x.cid}/kind`, { action: x.action }), onSuccess: () => refresh(), onError: err });
   const inReport = useMutation({
     mutationFn: (b: { cid: number; inReport: boolean }) => api.patch(`/api/assignments/${c.id}/captures/${b.cid}`, { inReport: b.inReport }),
     onSuccess: (_r, b) => { toast(b.inReport ? 'Page added to the report' : 'Page left out of the report'); refresh(); },
@@ -154,6 +155,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                   <label>Page type</label>
                   <select value={kind} onChange={(e) => { const k = e.target.value as typeof kind; setKind(k); setSource(DEFAULT_SOURCE[k] ?? ''); }}>
                     <option value="igr">IGR search (Index II)</option>
+                    <option value="proptrace">Index II search (PropTrace)</option>
                     <option value="listing">Listing page</option>
                     <option value="rr">Ready reckoner page (printed as is)</option>
                     <option value="other">Other</option>
@@ -173,7 +175,8 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                 <b>{upload.isPending ? <span className="dots">Uploading</span> : 'Drop screenshots or PDFs of the result pages'}</b>
                 <div className="sub">{PRINT_ONLY.has(kind) ? 'Printed in the report as captured; not read into comparables.' : 'One file per captured page. Each entry on the page becomes a comparable.'}</div>
               </FileDrop>
-              {kind === 'rr' && <p className="sub m-0">The rate above is looked up from the property's village. To print the official page: igrmaharashtra.gov.in → e-ASR (ready reckoner) → year, district, taluka and village → screenshot the rate table, then drop it here.</p>}
+              {kind === 'proptrace' && <p className="sub m-0">Search PropTrace (proptrace.real-value.co.in) for the building, then the society, the survey no. and 1–2 km around; screenshot or export the result page and drop it here. Each sale (document no., date, area, consideration) becomes a comparable.</p>}
+              {kind === 'rr' && <p className="sub m-0">The page is read: year, zone and the flat rate per sq.m. give the guideline value when Index II has none. Otherwise the rate is looked up from the property's village. To print the official page: igrmaharashtra.gov.in → e-ASR (ready reckoner) → year, district, taluka and village → screenshot the rate table, then drop it here.</p>}
               {kind === 'other' && <p className="sub m-0">A Google Maps screenshot is recognised automatically, here or among the site photos: its pin gives the coordinates and it prints on the location map page.</p>}
             </div>
           ) : <p className="sub">{locked ? 'The report is signed and locked.' : 'You do not have permission to add evidence.'}</p>}
@@ -201,6 +204,12 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                         <button className="linkbtn" onClick={() => downloadFile(cp.file_id, `evidence-${cp.id}`).catch(err)}>Download</button>
                       </small>
                       {cp.error && <small className="text-crit" title={cp.error}>{cp.error.slice(0, 90)}</small>}
+                      {cp.suggested_kind && (
+                        <small className="grid gap-1 text-warn">
+                          <span>{cp.check_note}</span>
+                          {canEdit && <span className="flex gap-2"><button className="linkbtn" onClick={() => kindFix.mutate({ cid: cp.id, action: 'move' })}>Move to {KIND[cp.suggested_kind] ?? cp.suggested_kind}</button><button className="linkbtn" onClick={() => kindFix.mutate({ cid: cp.id, action: 'keep' })}>Keep as is</button></span>}
+                        </small>
+                      )}
                     </div>
                   </div>
                 );

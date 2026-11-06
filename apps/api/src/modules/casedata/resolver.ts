@@ -143,7 +143,22 @@ export const EXPR_FNS: Record<string, (...a: unknown[]) => unknown> = {
     return items.length ? items.map((x, i) => `${i + 1}) ${x}`).join('\n') : null;
   },
   dms,
+  /** upper floors of a building from "Stilt + 1st to 16th upper floors" (16) or "Ground + 5 podiums + 6th to
+   *  36th floors" (31) or "G + 7" (7); podiums, stilts and amenity floors do not count (insurance band, A7) */
+  upper_floors: (t) => upperFloors(t),
 };
+
+export function upperFloors(t: unknown): number | null {
+  if (t === null || t === undefined || t === '') return null;
+  if (typeof t === 'number') return t;
+  const s = String(t).toLowerCase().replace(/(\d+)\s*(st|nd|rd|th|h)\b/g, '$1');
+  const range = /(\d+)\s*(?:to|-|–)\s*(\d+)/.exec(s);
+  if (range) return Number(range[2]) - Number(range[1]) + 1;
+  const plus = /(?:g|ground|stilt|s)\s*\+\s*(\d+)(?!\s*(?:level|podium|basement))/.exec(s);
+  if (plus) return Number(plus[1]);
+  const n = /^\s*(\d+)\s*(?:upper\s*)?(?:floors?|storeys?)/.exec(s);
+  return n ? Number(n[1]) : null;
+}
 
 /** Comparable rows a format can print (rate indicators chart). */
 export const COMP_ROWS = 4;
@@ -182,6 +197,7 @@ export interface CaseRecord {
   report_no: string | null;
   signed_at: Date | null;
   signed_by?: number | null;
+  rules_json?: unknown;
   locality_hint: string | null;
   engineer_name: string | null;
   bank_ref_no: string | null;
@@ -201,7 +217,7 @@ export async function loadCase(assignmentId: number, firmId: number, tx: Tx = db
     .leftJoin('engineers as e', 'e.id', 'a.engineer_id')
     .select([
       'a.id', 'a.firm_id', 'a.case_no', 'a.stage', 'a.property_type', 'a.borrower_name', 'a.bank_contact', 'a.purpose',
-      'a.created_at', 'a.report_no', 'a.signed_at', 'a.signed_by', 'a.locality_hint', 'a.bank_ref_no', 'a.draft_version',
+      'a.created_at', 'a.report_no', 'a.signed_at', 'a.signed_by', 'a.rules_json', 'a.locality_hint', 'a.bank_ref_no', 'a.draft_version',
       'a.rule_version_id', 'a.profile_version_id', 'a.check_version_id', 'a.wording_version_id', 'a.template_version_id',
       'b.code as bank_code', 'b.name as bank_name', 'br.code as branch_code', 'br.name as branch_name', 'e.name as engineer_name',
     ])
@@ -215,6 +231,8 @@ export async function loadCase(assignmentId: number, firmId: number, tx: Tx = db
 export interface CaseData {
   case: CaseRecord;
   rules: Rules;
+  /** where a rule's value comes from: the firm's rules for the bank, the report format, or this case */
+  ruleOrigin: (key: string) => 'firm' | 'format' | 'case';
   fields: Map<string, Field>;
   profile: any;
   wording: any;
@@ -245,7 +263,11 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   const fmt = c.template_version_id
     ? await tx.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select('t.rules_json').where('v.id', '=', c.template_version_id).executeTakeFirst()
     : null;
-  const rules = { ...(ruleSet ? rulesFor(ruleSet.payload, c.bank_code) : ({} as Rules)), ...json<Partial<Rules>>(fmt?.rules_json, {}) } as Rules;
+  // firm rules for the bank, then the format's own, then this case's changes (Valuation tab, A6/A8)
+  const caseRules = json<Partial<Rules>>(c.rules_json, {});
+  const fmtRules = json<Partial<Rules>>(fmt?.rules_json, {});
+  const rules = { ...(ruleSet ? rulesFor(ruleSet.payload, c.bank_code) : ({} as Rules)), ...fmtRules, ...caseRules } as Rules;
+  const ruleOrigin = (k: string) => (Object.hasOwn(caseRules, k) ? 'case' : Object.hasOwn(fmtRules, k) ? 'format' : 'firm');
   // the rate indicators chart: the strongest comparables used for the rate, on the case's area basis
   const comps = await tx.selectFrom('case_comparables as cc').innerJoin('comparables as cp', 'cp.id', 'cc.comparable_id')
     .select(['cp.source_type', 'cp.source_ref', 'cp.building', 'cp.society', 'cp.locality', 'cp.bhk', 'cp.price', 'cp.area_bua_sqft', 'cp.area_value', 'cp.txn_date', 'cp.is_asking_price'])
@@ -560,6 +582,7 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   return {
     case: c,
     rules,
+    ruleOrigin,
     fields,
     profile,
     wording,

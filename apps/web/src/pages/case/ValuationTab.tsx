@@ -4,7 +4,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { inr } from '@vm/shared';
-import { Empty, Loading, Panel, Pending, fmtDate, useErrorToast, useToast } from '@/components/ui';
+import { Empty, Field, Loading, Panel, Pending, fmtDate, useErrorToast, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { caseKey, type TabProps } from './context';
@@ -24,6 +24,12 @@ interface ValView {
   current: { adopted_rate: unknown; reason: string | null; values: Values; extras: Extra[]; draft_version: number; created_at: string; basis: string; rate_unit: Unit } | null;
   parking: { count: number; text: string | null; source: string | null } | null;
   justification: { display: string | null; state: string; pendingLabel: string | null; edited: boolean };
+  defaults?: Record<string, { value: number | null; origin: 'firm' | 'format' | 'case' }>;
+  insurance?: { rate: number; label: string; floors: number | null; band: string | null };
+  upperFloors?: { value: unknown; from: unknown };
+  guidelineSource?: string | null;
+  readyReckoner?: { rate: unknown; year: unknown; zone: unknown; property: unknown; snippet: string | null; fromGuideline: boolean } | null;
+  rera?: { number: unknown; date: unknown; project: unknown; carpet: unknown };
   history: { id: number; adopted_rate: unknown; proposed_rate: unknown; reason: string | null; draft_version: number; created_at: string; by: string | null; fmv: number }[];
 }
 interface Custom { label: string; qty: string; rate: string }
@@ -337,9 +343,9 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
                       <Row label="Fair market value" working={sv.lines.length > 1 ? 'Total of the above' : sv.lines[0]?.working ?? ''} value={sv.fmv} strong />
                       <Row label={`Realizable · ${r.realizable_pct}%`} working={`FMV × ${r.realizable_pct}% (${c.bank_code} rule)`} value={sv.realizable} />
                       <Row label={`Distress · ${r.distress_pct}%`} working={`FMV × ${r.distress_pct}%`} value={sv.distress} />
-                      <Row label="Guideline" working="As per Index II" value={gv} />
+                      <Row label="Guideline" working={d.guidelineSource ?? 'As per Index II'} value={gv} />
                       <Row label="Agreement" working="Consideration as per Index II" value={agr} />
-                      <Row label="Insurable" working={`Building cost Rs. ${inr(r.building_cost_per_sqft)} × BUA`} value={sv.insurable} />
+                      <Row label="Insurable" working={`Rs. ${inr(d.insurance?.rate ?? r.building_cost_per_sqft)} per sq.ft. (${d.insurance?.label ?? 'building cost'}) × built-up area`} value={sv.insurable} />
                       <Row label="Rent p.m." working={`FMV × ${r.rental_yield_pct}% a year ÷ 12, nearest Rs. ${inr(r.rent_rounding_step || 1)}`} value={sv.rent} />
                     </tbody>
                   </table>
@@ -352,6 +358,8 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
               </>
             )}
           </Panel>
+
+          <CaseDefaults c={c} d={d} refresh={refresh} locked={locked} />
 
           <Panel title={<div><div className="eyebrow">Draft justification{sv && gv ? ` · FMV is ${Math.abs(Math.round(((sv.fmv - gv) / gv) * 1000) / 10)}% ${sv.fmv >= gv ? 'above' : 'below'} guideline value` : ''}</div></div>}
             right={<button className="btn sm ghost" onClick={() => go('rep')}>Edit in report</button>}>
@@ -400,5 +408,54 @@ function Variation({ label, fmv, base, limit }: { label: string; fmv: number; ba
       <span className={`sev ${over ? 'warn' : 'info'}`}>{pct(v)}</span>
       <span>FMV vs {label} ({rs(base)}){over ? ` · ${limit}% or more: the report carries a justification` : ''}</span>
     </div>
+  );
+}
+
+const DEFAULT_ROWS: [string, string, string][] = [
+  ['realizable_pct', 'Realizable value', '% of FMV'], ['distress_pct', 'Distress value', '% of FMV'],
+  ['loading_pct', 'Built-up / plinth', '% over carpet'], ['saleable_factor', 'Saleable', '× carpet'], ['insurance_rate', 'Insurance rate', 'Rs. per sq.ft. built-up'],
+];
+const ORIGIN: Record<string, string> = { firm: 'firm rule for the bank', format: "report format's default", case: 'changed for this case' };
+
+/** The bank's defaults as they apply to this case, changeable here with a reason (A6, A7, A8). */
+function CaseDefaults({ c, d, refresh, locked }: { c: TabProps['c']; d: ValView; refresh: () => void; locked: boolean }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const [edit, setEdit] = useState<Record<string, string> | null>(null);
+  const [reason, setReason] = useState('');
+  const save = useMutation({
+    mutationFn: () => api.patch(`/api/assignments/${c.id}/case-rules`, { rules: Object.fromEntries(Object.entries(edit!).map(([k, v]) => [k, v.trim() === '' ? null : Number(v)])), reason }),
+    onSuccess: () => { toast('Defaults changed for this case; values worked out again'); setEdit(null); setReason(''); refresh(); },
+    onError: onErr,
+  });
+  if (!d.defaults) return null;
+  const may = can('case_rules') && !locked;
+  const rr = d.readyReckoner;
+  return (
+    <Panel title="Bank defaults for this case" right={may && !edit && <button className="btn sm ghost" onClick={() => setEdit(Object.fromEntries(DEFAULT_ROWS.map(([k]) => [k, d.defaults![k]?.origin === 'case' ? String(d.defaults![k].value ?? '') : ''])))}>Change for this case</button>}>
+      <table className="list"><tbody>
+        {DEFAULT_ROWS.map(([k, label, unit]) => {
+          const x = d.defaults![k];
+          return (
+            <tr key={k}>
+              <td>{label}</td>
+              <td className="text-right mono">{edit ? <input className="inp text-right" style={{ maxWidth: 110 }} inputMode="decimal" placeholder={x?.origin === 'case' ? '' : String(x?.value ?? '')} value={edit[k] ?? ''} onChange={(e) => setEdit({ ...edit, [k]: e.target.value })} /> : (x?.value ?? '—')}</td>
+              <td className="sub">{unit}{x ? ` · ${k === 'insurance_rate' && x.origin !== 'case' ? d.insurance?.label ?? '' : ORIGIN[x.origin]}` : ''}</td>
+            </tr>
+          );
+        })}
+      </tbody></table>
+      {d.upperFloors?.from != null && <p className="sub mb-0 mt-2">Building: {String(d.upperFloors.from)} → {d.upperFloors.value != null ? `${d.upperFloors.value} upper floors` : 'upper floors not known'} (podiums and stilts do not count). Correct "Upper floors of the building" on Extracted details if needed.</p>}
+      {rr && <p className="sub mb-0 mt-2">Ready reckoner: Rs. {inr(Number(rr.rate))}/sq.m.{rr.year ? ` · ${String(rr.year)}` : ''}{rr.zone ? ` · zone ${String(rr.zone)}` : ''}{rr.property ? ` · ${String(rr.property)}` : ''}{rr.fromGuideline ? ' · used for the guideline value (no value in Index II): rate × carpet (sq.m.) × 1.1' : ''}</p>}
+      {d.rera && <p className="sub mb-0 mt-2">RERA: {d.rera.number ? `${String(d.rera.number)}${d.rera.date ? ` dated ${String(d.rera.date)}` : ''}${d.rera.project ? ` · ${String(d.rera.project)}` : ''}${d.rera.carpet ? ` · RERA carpet ${String(d.rera.carpet)} sq.ft.` : ''}` : 'Not applicable (no registration found)'}</p>}
+      {edit && (
+        <div className="mt-3 grid gap-2">
+          <p className="sub m-0">Leave a box empty to use the default. The change is logged and an applied valuation is worked out again with the same rate.</p>
+          <Field label="Reason (required)"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Branch asked for 95% realizable on this case" /></Field>
+          <div className="btns"><button className="btn pri sm" disabled={reason.trim().length < 5 || save.isPending} onClick={() => save.mutate()}>Save for this case</button><button className="btn ghost sm" onClick={() => setEdit(null)}>Cancel</button></div>
+        </div>
+      )}
+    </Panel>
   );
 }

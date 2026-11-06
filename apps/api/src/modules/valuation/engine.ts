@@ -174,6 +174,19 @@ export interface ValuationInput {
   plotArea?: number | null;
   landRate?: number | null;
   buildingAge?: number | null;
+  /** insurance rate per sq.ft. built-up for this building (floor band or a per-case rate); else the building cost */
+  insuranceRate?: number | null;
+}
+
+/** Insurance rate by the building's upper floors (A7): the first band whose max_floors covers it. */
+export function insuranceBand(bands: { max_floors?: number | null; rate: number; label?: string }[] | undefined, upperFloors: number | null) {
+  if (!bands?.length || upperFloors === null || !(upperFloors > 0)) return null;
+  const sorted = [...bands].sort((a, b) => (a.max_floors ?? Infinity) - (b.max_floors ?? Infinity));
+  const hit = sorted.find((b) => b.max_floors === null || b.max_floors === undefined || upperFloors <= b.max_floors) ?? sorted[sorted.length - 1];
+  const i = sorted.indexOf(hit);
+  const from = i === 0 ? 1 : (sorted[i - 1].max_floors ?? 0) + 1;
+  const label = hit.label ?? (hit.max_floors ? (i === 0 ? `Up to G + ${hit.max_floors}` : `G + ${from} to G + ${hit.max_floors}`) : `Above G + ${from - 1}`);
+  return { rate: hit.rate, label };
 }
 
 export interface ValuesOut {
@@ -227,7 +240,7 @@ export function computeValues(v: ValuationInput, r: Rules): ValuesOut {
     unit: roundTo(unit, r.value_rounding_step), parking, interior, others, extrasTotal: parking + interior + others, fmv,
     realizable: roundTo((fmv * r.realizable_pct) / 100, r.value_rounding_step),
     distress: roundTo((fmv * r.distress_pct) / 100, r.value_rounding_step),
-    insurable: v.bua ? roundTo(v.bua * r.building_cost_per_sqft, r.value_rounding_step) : null,
+    insurable: v.bua ? roundTo(v.bua * (v.insuranceRate || r.building_cost_per_sqft), r.value_rounding_step) : null,
     rent: roundTo((fmv * r.rental_yield_pct) / 100 / 12, r.rent_rounding_step),
     land, building, depreciation_pct: depPct, lines,
   };

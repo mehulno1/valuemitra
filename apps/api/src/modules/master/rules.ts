@@ -31,6 +31,12 @@ export interface Rules {
   outlier_action?: 'flag' | 'exclude';
   floor_pct_per_floor?: number;
   floor_max_pct?: number;
+  /** insurance rate by upper floors of the building (A7); podiums and stilts do not count */
+  insurance_bands?: { max_floors?: number | null; rate: number; label?: string }[];
+  /** a per-case insurance rate (Rs./sq.ft. built-up) instead of the band */
+  insurance_rate?: number;
+  /** guideline value from the ready reckoner: rate per sq.m. × carpet (sq.m.) × this (flats: carpet + 10%) */
+  rr_area_factor?: number;
   [k: string]: unknown;
 }
 

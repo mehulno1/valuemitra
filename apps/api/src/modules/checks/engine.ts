@@ -120,6 +120,11 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
       const list = (data.value('DOC.NOT_RECEIVED_LIST') as string[]) ?? [];
       return list.length ? { ...base, severity: sev, title: fill(def.title, { list: list.join(', ') }), detail: def.detail ?? null } : null;
     }
+    case 'capture_kind': {
+      const n = await tx.selectFrom('evidence_captures').select((eb) => eb.fn.countAll<number>().as('n')).where('assignment_id', '=', data.case.id).where('suggested_kind', 'is not', null).executeTakeFirst();
+      const count = Number(n?.n ?? 0);
+      return count ? { ...base, severity: sev, title: fill(def.title, { count }), detail: def.detail ?? null } : null;
+    }
     case 'old_comparables': {
       const old = ctx.comps.filter((c) => c.included && c.age_months !== null && Number(c.age_months) > data.rules.comparable_window_months);
       return old.length ? { ...base, severity: sev, title: fill(def.title, { count: old.length, months: data.rules.comparable_window_months }), detail: `${old.map((c) => `${c.source_ref ?? 'comparable'} (${Math.round(Number(c.age_months))} months, ${c.weight_label} weight)`).join('; ')}. ${def.detail ?? ''}` } : null;

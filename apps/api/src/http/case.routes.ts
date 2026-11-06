@@ -160,7 +160,7 @@ export async function caseRoutes(app: FastifyInstance) {
   app.get('/api/assignments/:id/evidence', async (req) => val.evidence(req.auth!.firmId, idParam(req)));
   app.post('/api/assignments/:id/evidence', { preHandler: can('edit') }, async (req) => {
     const { files, fields } = await multipartFiles(req);
-    const kind = (['igr', 'listing', 'other', 'rr', 'map'].includes(fields.kind) ? fields.kind : 'listing') as val.CaptureKind;
+    const kind = (['igr', 'listing', 'other', 'rr', 'map', 'proptrace'].includes(fields.kind) ? fields.kind : 'listing') as val.CaptureKind;
     return { ids: await val.captureEvidence(actorOf(req), idParam(req), files, kind, fields.source || null, fields.url || null) };
   });
   app.post('/api/assignments/:id/evidence/refresh', { preHandler: can('edit') }, async (req) => {
@@ -176,6 +176,15 @@ export async function caseRoutes(app: FastifyInstance) {
     const b = body(req, z.object({ inReport: z.boolean() }));
     await val.setCaptureInReport(actorOf(req), idParam(req), idParam(req, 'cid'), b.inReport);
     return { ok: true };
+  });
+  app.post('/api/assignments/:id/captures/:cid/kind', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ action: z.enum(['move', 'keep']) }));
+    await val.resolveCaptureKind(actorOf(req), idParam(req), idParam(req, 'cid'), b.action);
+    return { ok: true };
+  });
+  app.patch('/api/assignments/:id/case-rules', { preHandler: can('case_rules') }, async (req) => {
+    const b = body(req, z.object({ rules: z.record(z.string(), z.number().nullable()), reason: z.string().max(500) }));
+    return val.setCaseRules(actorOf(req), idParam(req), b.rules, b.reason);
   });
   app.get('/api/assignments/:id/valuation', async (req) => val.valuationView(req.auth!.firmId, idParam(req)));
   app.post('/api/assignments/:id/valuation', { preHandler: can('val') }, async (req) => {

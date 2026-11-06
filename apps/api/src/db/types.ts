@@ -56,6 +56,7 @@ export interface Assignments {
   report_rev: Generated<number>;
   report_seq: number | null;
   rule_version_id: number | null;
+  rules_json: Json | null;
   sent_at: Date | null;
   sent_for_review_at: Date | null;
   signed_at: Date | null;
@@ -378,14 +379,16 @@ export interface Events {
 export interface EvidenceCaptures {
   assignment_id: number;
   captured_by: number | null;
+  check_note: string | null;
   created_at: Generated<Date>;
   error: string | null;
   file_id: number;
   id: Generated<number>;
   in_report: Generated<number>;
-  source_kind: "igr" | "listing" | "map" | "other" | "rr";
+  source_kind: "igr" | "listing" | "map" | "other" | "proptrace" | "rr";
   source_name: string | null;
   status: Generated<"failed" | "read" | "reading" | "uploaded">;
+  suggested_kind: string | null;
   url: string | null;
 }
 

@@ -75,6 +75,45 @@ export async function seedPlatform() {
     cfgVersions++;
   }
   console.log(`Platform: ${BANKS.length} banks, ${FIELDS.length} fields (${added} added, ${versioned} new versions), ${configs.length} configurations (${cfgVersions} published)`);
+  await mergeIntoFirmVersions();
+}
+
+/** A firm with its own rule set or property profile would never see what the platform adds later (new rules
+ *  such as the insurance bands, new checklist items and site questions). Their live versions get the missing
+ *  pieces as a new firm version; nothing the firm set is changed. */
+async function mergeIntoFirmVersions() {
+  const canonical = (v: unknown): unknown => (Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canonical((v as any)[k])])) : v);
+  const j = (v: unknown) => JSON.stringify(canonical(v ?? null));
+  const firmRows = await db.selectFrom('config_versions').selectAll().where('firm_id', 'is not', null).where('status', '=', 'published').where('kind', 'in', ['rule_set', 'profile']).orderBy('version', 'desc').execute();
+  const seen = new Set<string>();
+  let n = 0;
+  for (const row of firmRows) {
+    const key = `${row.firm_id}:${row.kind}:${row.ckey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const cur: any = typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json;
+    const next = JSON.parse(JSON.stringify(cur));
+    if (row.kind === 'rule_set') {
+      next.defaults ??= {};
+      for (const [k, v] of Object.entries(RULE_SET.defaults)) if (!(k in next.defaults)) next.defaults[k] = v;
+    } else if (row.kind === 'profile' && row.ckey === 'flat') {
+      const have = new Set((next.checklist ?? []).map((c: any) => c.code));
+      for (const c of PROFILE_FLAT.checklist) if (!have.has(c.code)) (next.checklist ??= []).push(c);
+      const sf = new Set(next.site_sheet_fields ?? []);
+      for (const f of PROFILE_FLAT.site_sheet_fields) if (!sf.has(f)) (next.site_sheet_fields ??= []).push(f);
+      const ld = new Set((next.legal_documents ?? []).map((x: any) => x.key));
+      for (const x of PROFILE_FLAT.legal_documents ?? []) if (!ld.has(x.key)) (next.legal_documents ??= []).push(x);
+    }
+    if (j(next) === j(cur)) continue;
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    await db.updateTable('config_versions').set({ status: 'retired' }).where('id', '=', row.id).execute();
+    await db.insertInto('config_versions').values({
+      firm_id: row.firm_id, kind: row.kind, ckey: row.ckey, version: row.version + 1, status: 'published', effective_from: today,
+      payload_json: toJson(next), change_note: 'Platform additions merged (firm settings kept)', published_at: new Date(),
+    }).execute();
+    n++;
+  }
+  if (n) console.log(`Firm configurations: ${n} updated with platform additions`);
 }
 
 export async function seedDemoFirm() {

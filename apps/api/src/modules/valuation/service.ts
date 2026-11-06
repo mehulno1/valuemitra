@@ -3,7 +3,7 @@
 // the working shown, and value history.
 import sharp from 'sharp';
 import { z } from 'zod';
-import { imageBlock, structured, textBlock } from '../../ai/claude.js';
+import { aiConfigured, imageBlock, structured, textBlock } from '../../ai/claude.js';
 import { ocrImages } from '../../ai/vision.js';
 import { db, json, toJson, type Tx } from '../../db/index.js';
 import { badRequest, notFound } from '../../lib/errors.js';
@@ -19,7 +19,7 @@ import { inr } from '@vm/shared';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { assertCase } from '../documents/service.js';
-import { adjustComparable, computeValues, flagOutliers, floorNo, propose, toBua, type Adjustment, type Extra } from './engine.js';
+import { adjustComparable, computeValues, flagOutliers, floorNo, insuranceBand, propose, toBua, type Adjustment, type Extra } from './engine.js';
 
 const RR_CATEGORY: Record<string, string> = { flat: 'residential', bungalow: 'residential', shop: 'shop', office: 'office', open_land: 'open_land' };
 const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9ऀ-ॿ]/g, '');
@@ -43,15 +43,21 @@ export async function lookupReadyReckoner(assignmentId: number, firmId: number) 
     .sort((a, b) => (a.year_label === year ? -1 : 0) - (b.year_label === year ? -1 : 0) || (norm(b.district) === district ? 1 : 0) - (norm(a.district) === district ? 1 : 0))[0];
   if (!hit) return null;
   const snippet = `Ready reckoner ${hit.year_label}: Village ${hit.village}, ${hit.district}${hit.zone ? `, zone ${hit.zone}` : ''}, ${hit.category}: Rs. ${hit.rate_per_sqm}/sq.m.`;
+  // the rate read from the case's own ready reckoner screenshot wins; the master is kept to compare (check rr_mismatch)
+  const shot = data.get('VAL.RR_SHOT_SQM').state === 'filled';
   await writeCandidates(assignmentId, firmId, [
-    { fieldCode: 'VAL.RR_RATE_SQM', value: hit.rate_per_sqm, sourceType: 'evidence', snippet, confidence: hit.year_label === year ? 99 : 80 },
-    { fieldCode: 'VAL.RR_YEAR', value: hit.year_label, sourceType: 'evidence', snippet, confidence: 99 },
+    { fieldCode: 'VAL.RR_MASTER_SQM', value: hit.rate_per_sqm, sourceType: 'evidence', snippet, confidence: 99 },
+    ...(shot ? [] : [
+      { fieldCode: 'VAL.RR_RATE_SQM', value: hit.rate_per_sqm, sourceType: 'evidence' as const, snippet, confidence: hit.year_label === year ? 99 : 80 },
+      { fieldCode: 'VAL.RR_YEAR', value: hit.year_label, sourceType: 'evidence' as const, snippet, confidence: 99 },
+      ...(hit.zone ? [{ fieldCode: 'VAL.RR_ZONE', value: hit.zone, sourceType: 'evidence' as const, snippet, confidence: 99 }] : []),
+    ]),
   ]);
   return { ...hit, matchedYear: hit.year_label === year };
 }
 
-export type CaptureKind = 'igr' | 'listing' | 'other' | 'rr' | 'map';
-const CAPTURE_LABEL: Record<CaptureKind, string> = { igr: 'IGR search', listing: 'listing', other: 'evidence', rr: 'ready reckoner', map: 'location map' };
+export type CaptureKind = 'igr' | 'listing' | 'other' | 'rr' | 'map' | 'proptrace';
+const CAPTURE_LABEL: Record<CaptureKind, string> = { igr: 'IGR search', listing: 'listing', other: 'evidence', rr: 'ready reckoner', map: 'location map', proptrace: 'Index II search (PropTrace)' };
 /** Pages that print as they are (ready reckoner, location map); the rest are read into comparables. */
 const PRINT_ONLY = new Set<CaptureKind>(['rr', 'map']);
 
@@ -64,7 +70,8 @@ export async function captureEvidence(actor: Actor, assignmentId: number, files:
     const stored = await saveFile({ firmId: a.firm_id, purpose: 'evidence', folder: `a${a.id}/evidence`, buffer: f.buffer, name: f.name, mime, userId: actor.id });
     const r = await db.insertInto('evidence_captures').values({ assignment_id: a.id, file_id: stored.id, source_kind: kind, source_name: sourceName, url, captured_by: actor.id ?? null, status: printOnly ? 'read' : 'uploaded' }).executeTakeFirstOrThrow();
     ids.push(Number(r.insertId));
-    if (!printOnly) await enqueue('evidence.read', { captureId: Number(r.insertId) }, { firmId: a.firm_id });
+    // pages that print as they are are still checked for what they show (B6) and a ready reckoner page is read (A9)
+    await enqueue(printOnly ? 'evidence.check' : 'evidence.read', { captureId: Number(r.insertId) }, { firmId: a.firm_id });
   }
   await audit(actor, { entityType: 'evidence', assignmentId, action: 'evidence.capture', summary: `Captured ${files.length} ${CAPTURE_LABEL[kind]} page(s)${sourceName ? ` from ${sourceName}` : ''}.${printOnly ? ' Printed in the report as captured.' : ' Reading entries.'}` });
   return ids;
@@ -117,8 +124,8 @@ async function readCapture(captureId: number) {
     if (!(e.area_sqft > 0 && e.price > 0)) continue;
     const bua = toBua(e.area_sqft, e.area_basis, rules);
     const comp = await db.insertInto('comparables').values({
-      firm_id: a.firm_id, scope: 'private', source_type: e.kind === 'listing' ? 'listing' : c.source_kind === 'igr' ? 'igr_search' : 'index2',
-      source_ref: e.reference ?? c.source_name, property_type: a.property_type, building: e.building, society: e.society, locality: e.locality, village: e.village,
+      firm_id: a.firm_id, scope: 'private', source_type: e.kind === 'listing' ? 'listing' : c.source_kind === 'igr' || c.source_kind === 'proptrace' ? 'igr_search' : 'index2',
+      source_ref: e.reference ?? c.source_name ?? (c.source_kind === 'proptrace' ? 'PropTrace' : null), property_type: a.property_type, building: e.building, society: e.society, locality: e.locality, village: e.village,
       txn_date: e.date ? new Date(e.date) : e.kind === 'listing' ? new Date() : null, is_asking_price: e.kind === 'listing' ? 1 : 0,
       area_value: e.area_sqft, area_basis: e.area_basis, area_bua_sqft: Math.round(bua), price: e.price, rate_per_sqft: Math.round(e.price / bua),
       floor_no: e.floor, total_floors: e.total_floors, has_lift: e.has_lift === null ? null : e.has_lift ? 1 : 0, building_age: e.building_age, bhk: e.bhk,
@@ -143,6 +150,72 @@ async function readCapture(captureId: number) {
   await audit(systemActor(a.firm_id), { entityType: 'evidence', entityId: captureId, assignmentId: a.id, action: 'evidence.read', summary: isMap ? `Location map recognised in the captured page${pos ? `; pin at ${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}` : ''}. Printed on the location map page.` : `${n} comparable(s) read from the captured page.` });
   await publish({ type: 'evidence.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { captureId } });
 }
+
+const PageCheck = z.object({
+  page_kind: z.enum(['ready_reckoner', 'map', 'listing', 'registration_search', 'other']).describe('What the page shows: the IGR e-ASR / stamp duty ready reckoner rate table; a map app screenshot with a location pin; a property listing site; an IGR / Index II / PropTrace search of registered sales; anything else'),
+  rr: z.object({
+    year: z.string().nullable().describe('Financial year of the rates, as YYYY-YY, e.g. 2026-27'),
+    zone: z.string().nullable().describe('Zone / sub-zone / value zone number as written, e.g. "5.2" or "Zone 12"'),
+    property_type: z.string().nullable().describe('The row used for a flat: e.g. "Residential flat (सदनिका)"'),
+    rate_per_sqm: z.number().nullable().describe('Rate in rupees per sq.m. for residential flats (सदनिका) in that zone'),
+    village: z.string().nullable(),
+  }).nullable().describe('Only for a ready reckoner page'),
+});
+
+const KIND_OF: Record<string, CaptureKind> = { ready_reckoner: 'rr', map: 'map', listing: 'listing', registration_search: 'igr', other: 'other' };
+
+/** A page that prints as it is (ready reckoner, location map): check that it shows what it was uploaded as (B6)
+ *  and read a ready reckoner page's year, zone and rate (A9). A wrong page is taken out of the report and flagged. */
+async function checkCapture(captureId: number) {
+  const c = await db.selectFrom('evidence_captures').selectAll().where('id', '=', captureId).executeTakeFirstOrThrow();
+  const a = await db.selectFrom('assignments').select(['id', 'firm_id']).where('id', '=', c.assignment_id).executeTakeFirstOrThrow();
+  if (!aiConfigured()) return;
+  const { file, buffer } = await readFile(c.file_id, a.firm_id);
+  const images = file.mime === 'application/pdf' ? (await pdfToImages(buffer, { dpi: 120, first: 1, last: 2 })) : [await sharp(buffer).rotate().jpeg({ quality: 85 }).toBuffer()];
+  const small = await Promise.all(images.map((i) => sharp(i).resize({ width: 1400, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()));
+  const ocr = await ocrImages(small);
+  const content = small.flatMap((img, i) => [imageBlock(img), textBlock(`OCR of page ${i + 1}:\n${ocr[i]?.text.slice(0, 4000) ?? ''}`)]);
+  content.push(textBlock(`The valuer uploaded this as a ${CAPTURE_LABEL[c.source_kind as CaptureKind]} page. Say what it really shows. If it is a ready reckoner (e-ASR) page, read the year, zone, the flat row and its rate per sq.m.`));
+  const r = await structured({ system: 'You check pages a valuer attaches to an Indian property valuation report (Maharashtra IGR ready reckoner, Google Maps screenshots, listing sites, registration searches).', content, schema: PageCheck, effort: 'low' });
+  const real = KIND_OF[r.data.page_kind];
+  const mismatch = real !== c.source_kind && !(c.source_kind === 'rr' && real === 'other' && r.data.rr?.rate_per_sqm);
+  if (mismatch) {
+    const note = `This looks like a ${CAPTURE_LABEL[real]} page, not a ${CAPTURE_LABEL[c.source_kind as CaptureKind]} page. It is left out of the report until moved or kept.`;
+    await db.updateTable('evidence_captures').set({ suggested_kind: real, check_note: note, in_report: 0 }).where('id', '=', captureId).execute();
+    await audit(systemActor(a.firm_id), { entityType: 'evidence', entityId: captureId, assignmentId: a.id, action: 'evidence.kind_check', summary: note });
+  } else if (c.source_kind === 'rr' && r.data.rr?.rate_per_sqm) {
+    const x = r.data.rr;
+    const snippet = `Ready reckoner screenshot: ${[x.year, x.village, x.zone && `zone ${x.zone}`, x.property_type].filter(Boolean).join(', ')}: Rs. ${x.rate_per_sqm}/sq.m.`;
+    await writeCandidates(a.id, a.firm_id, [
+      { fieldCode: 'VAL.RR_SHOT_SQM', value: x.rate_per_sqm, sourceType: 'evidence', snippet, confidence: 85 },
+      { fieldCode: 'VAL.RR_RATE_SQM', value: x.rate_per_sqm, sourceType: 'evidence', snippet, confidence: 85 },
+      ...(x.year ? [{ fieldCode: 'VAL.RR_YEAR', value: x.year, sourceType: 'evidence' as const, snippet, confidence: 85 }] : []),
+      ...(x.zone ? [{ fieldCode: 'VAL.RR_ZONE', value: x.zone, sourceType: 'evidence' as const, snippet, confidence: 85 }] : []),
+      ...(x.property_type ? [{ fieldCode: 'VAL.RR_PROPERTY', value: x.property_type, sourceType: 'evidence' as const, snippet, confidence: 85 }] : []),
+    ]);
+    await audit(systemActor(a.firm_id), { entityType: 'evidence', entityId: captureId, assignmentId: a.id, action: 'evidence.rr_read', summary: `${snippet}. Used for the guideline value when Index II has none.` });
+  }
+  await publish({ type: 'evidence.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { captureId } });
+}
+
+/** Move a flagged page to what it really is, or keep it as uploaded (B6). */
+export async function resolveCaptureKind(actor: Actor, assignmentId: number, captureId: number, action: 'move' | 'keep') {
+  const a = await assertCase(actor.firmId!, assignmentId);
+  if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
+  const c = await db.selectFrom('evidence_captures').selectAll().where('id', '=', captureId).where('assignment_id', '=', a.id).executeTakeFirst();
+  if (!c || !c.suggested_kind) throw notFound('Flagged page');
+  const to = c.suggested_kind as CaptureKind;
+  if (action === 'keep') {
+    await db.updateTable('evidence_captures').set({ suggested_kind: null, check_note: null, in_report: 1 }).where('id', '=', c.id).execute();
+  } else {
+    const printOnly = PRINT_ONLY.has(to);
+    await db.updateTable('evidence_captures').set({ source_kind: to, suggested_kind: null, check_note: null, in_report: printOnly ? 1 : 0, status: printOnly ? 'read' : 'uploaded' }).where('id', '=', c.id).execute();
+    await enqueue(printOnly ? 'evidence.check' : 'evidence.read', { captureId: c.id }, { firmId: a.firm_id });
+  }
+  await audit(actor, { entityType: 'evidence', entityId: c.id, assignmentId: a.id, action: 'evidence.kind_resolve', summary: action === 'keep' ? `Kept as ${CAPTURE_LABEL[c.source_kind as CaptureKind]} page.` : `Moved from ${CAPTURE_LABEL[c.source_kind as CaptureKind]} to ${CAPTURE_LABEL[to]}.` });
+}
+
+registerJob('evidence.check', async ({ captureId }) => { await checkCapture(captureId); });
 
 /** Make sure the subject's own registration and nearby firm comparables are in the set, then recompute. */
 export async function refreshEvidence(assignmentId: number, firmId: number, tx: Tx = db) {
@@ -243,6 +316,44 @@ export async function evidence(firmId: number, assignmentId: number) {
 }
 
 const AREA_WORD: Record<string, string> = { bua: 'built-up', carpet: 'carpet', saleable: 'saleable' };
+
+/** Insurance rate for the case (A7): a per-case rate, else the band for the building's upper floors, else the building cost. */
+export function insuranceFor(data: CaseData) {
+  const floors = Number(data.value('PHYS.UPPER_FLOORS')) || null;
+  if (data.ruleOrigin('insurance_rate') === 'case' && Number(data.rules.insurance_rate) > 0) return { rate: Number(data.rules.insurance_rate), label: 'rate set for this case', floors, band: null as string | null };
+  const b = insuranceBand(data.rules.insurance_bands, floors);
+  if (b) return { rate: b.rate, label: `${b.label}, ${floors} upper floors`, floors, band: b.label };
+  return { rate: data.rules.building_cost_per_sqft, label: floors ? 'building cost' : 'building cost (floors of the building not known)', floors, band: null as string | null };
+}
+
+const CASE_RULE_KEYS = ['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'insurance_rate'] as const;
+const CASE_RULE_LABEL: Record<string, string> = { realizable_pct: 'Realizable %', distress_pct: 'Distress %', loading_pct: 'Built-up loading %', saleable_factor: 'Saleable factor', insurance_rate: 'Insurance rate' };
+
+/** Change the bank defaults for this case only (A6, A7, A8), with a reason; blank goes back to the default.
+ *  A valuation already applied is worked out again with the same rate. */
+export async function setCaseRules(actor: Actor, assignmentId: number, patch: Record<string, number | null>, reason: string) {
+  const a = await assertCase(actor.firmId!, assignmentId);
+  if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
+  if ((reason ?? '').trim().length < 5) throw badRequest('Give the reason for changing the default (a few words)');
+  const row = await db.selectFrom('assignments').select('rules_json').where('id', '=', assignmentId).executeTakeFirstOrThrow();
+  const before: Record<string, number> = json(row.rules_json, {});
+  const cur = { ...before };
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(CASE_RULE_KEYS as readonly string[]).includes(k)) throw badRequest(`Unknown default ${k}`);
+    if (v === null) delete cur[k];
+    else if (!(Number.isFinite(v) && v >= 0 && v <= (k === 'insurance_rate' ? 100000 : k === 'saleable_factor' ? 3 : 100))) throw badRequest(`${CASE_RULE_LABEL[k]}: out of range`);
+    else cur[k] = v;
+  }
+  await db.updateTable('assignments').set({ rules_json: toJson(cur) }).where('id', '=', assignmentId).execute();
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(cur)])].filter((k) => before[k] !== cur[k]);
+  await audit(actor, { entityType: 'assignment', entityId: assignmentId, assignmentId, action: 'valuation.case_rules', summary: `Defaults for this case: ${changed.map((k) => `${CASE_RULE_LABEL[k]} ${before[k] ?? 'default'} → ${cur[k] ?? 'default'}`).join(', ') || 'no change'}.`, reason: reason.trim(), before, after: cur });
+  // the areas follow at once (derived); values already applied are worked out again with the same inputs
+  const v = await db.selectFrom('valuations').selectAll().where('assignment_id', '=', assignmentId).where('is_current', '=', 1).executeTakeFirst();
+  if (v && changed.length) {
+    await applyValuation(actor, assignmentId, { rate: Number(v.adopted_rate), reason: v.reason, extras: json(v.extras_json, []), basis: (isBasis(v.basis) ? v.basis : undefined) as any, unit: (v.rate_unit ?? 'sqft') as RateUnit });
+  }
+  return cur;
+}
 
 export async function overrideComparable(actor: Actor, assignmentId: number, ccId: number, patch: { included?: boolean; weight?: number; adjustments?: Adjustment[]; reason?: string; area?: number; basis?: 'bua' | 'carpet' | 'saleable' }) {
   const a = await assertCase(actor.firmId!, assignmentId);
@@ -371,7 +482,8 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
     const basisArea = unit === 'sqm' ? round2(opt.sqft / SQM) : opt.sqft;
     const ul = UNIT_LABEL[unit];
     const bua = Number(data.value('AREA.BUA')) || null;
-    const v = computeValues({ method, basisArea, rate: input.rate, unitLabel: ul, extras: input.extras ?? [], bua, plotArea: Number(data.value('AREA.PLOT')) || null, landRate: input.landRate ?? null, buildingAge: (data.value('PHYS.AGE') as number) ?? null }, data.rules);
+    const ins = insuranceFor(data);
+    const v = computeValues({ method, basisArea, rate: input.rate, unitLabel: ul, extras: input.extras ?? [], bua, plotArea: Number(data.value('AREA.PLOT')) || null, landRate: input.landRate ?? null, buildingAge: (data.value('PHYS.AGE') as number) ?? null, insuranceRate: ins.rate }, data.rules);
     const rateBua = bua && method === 'market_comparison' ? Math.round((basisArea * input.rate) / bua) : null;
     const from = opt.how === 'rule' ? workedOutFrom(data) : null;
     const r0 = data.get(BASES[basis].field);
@@ -411,7 +523,9 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
       { fieldCode: 'VAL.FMV', value: v.fmv, sourceType: 'valuation', snippet },
       { fieldCode: 'VAL.REALIZABLE', value: v.realizable, sourceType: 'valuation', snippet: `${data.rules.realizable_pct}% of FMV (${data.case.bank_code} rule)` },
       { fieldCode: 'VAL.DISTRESS', value: v.distress, sourceType: 'valuation', snippet: `${data.rules.distress_pct}% of FMV` },
-      { fieldCode: 'VAL.INSURABLE', value: v.insurable, sourceType: 'valuation', snippet: `Building cost Rs. ${data.rules.building_cost_per_sqft}/sq.ft. × BUA` },
+      { fieldCode: 'VAL.INSURABLE', value: v.insurable, sourceType: 'valuation', snippet: `Rs. ${ins.rate}/sq.ft. (${ins.label}) × built-up ${bua ?? '?'} sq.ft.` },
+      { fieldCode: 'VAL.INSURANCE_RATE', value: ins.rate, sourceType: 'valuation', snippet: ins.label },
+      { fieldCode: 'VAL.INSURANCE_BAND', value: ins.label, sourceType: 'valuation' },
       { fieldCode: 'VAL.RENT', value: v.rent, sourceType: 'valuation', snippet: `${data.rules.rental_yield_pct}% a year on FMV, nearest Rs. ${data.rules.rent_rounding_step}` },
     ].filter((x) => x.value !== null && x.value !== undefined) as any, tx);
     // the evidence is per sq.ft. built-up: compare like with like
@@ -460,6 +574,13 @@ export async function valuationView(firmId: number, assignmentId: number) {
     guideline: data.value('VAL.GUIDELINE'), agreement: data.value('VAL.AGREEMENT'),
     rules: { realizable_pct: data.rules.realizable_pct, distress_pct: data.rules.distress_pct, gv_variation_pct: data.rules.gv_variation_pct, rate_deviation_pct: data.rules.rate_deviation_pct, building_cost_per_sqft: data.rules.building_cost_per_sqft, rental_yield_pct: data.rules.rental_yield_pct, value_rounding_step: data.rules.value_rounding_step, rent_rounding_step: data.rules.rent_rounding_step, loading_pct: data.rules.loading_pct, saleable_factor: data.rules.saleable_factor },
     bua: data.value('AREA.BUA'),
+    // defaults for this case: value, where it comes from (firm rule for the bank, report format, this case)
+    defaults: Object.fromEntries(['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'insurance_rate'].map((k) => [k, { value: k === 'insurance_rate' ? insuranceFor(data).rate : (data.rules as any)[k] ?? null, origin: data.ruleOrigin(k) }])),
+    insurance: insuranceFor(data),
+    upperFloors: { value: data.value('PHYS.UPPER_FLOORS'), from: data.value('PHYS.TOTAL_FLOORS') },
+    guidelineSource: data.value('VAL.GUIDELINE_SOURCE'),
+    readyReckoner: (() => { const r = data.get('VAL.RR_RATE_SQM'); return r.state === 'filled' ? { rate: r.value, year: data.value('VAL.RR_YEAR'), zone: data.value('VAL.RR_ZONE'), property: data.value('VAL.RR_PROPERTY'), snippet: r.snippet, fromGuideline: !data.value('REG.GUIDELINE_VALUE') } : null; })(),
+    rera: { number: data.value('DOC.RERA.NUMBER'), date: data.value('DOC.RERA.DATE'), project: data.value('DOC.RERA.PROJECT'), carpet: data.value('AREA.RERA_CARPET') },
     current: current ? { ...current, values: json(current.values_json, {}), extras: json(current.extras_json, []) } : null,
     justification: data.get('VAL.JUSTIFICATION'),
     // parking read from the agreement or the site sheet, to prefill the extras
