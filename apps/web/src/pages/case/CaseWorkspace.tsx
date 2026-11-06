@@ -5,6 +5,7 @@ import { PROPERTY_TYPES } from '@vm/shared';
 import { Loading, StageChip } from '@/components/ui';
 import { api } from '@/lib/api';
 import WorkflowBar from './WorkflowBar';
+import FormatChange from './FormatChange';
 import { caseKey, TABS, useCaseRefresh, type CaseHeader, type TabKey } from './context';
 
 const Documents = lazy(() => import('./DocumentsTab'));
@@ -50,7 +51,7 @@ export default function CaseWorkspace() {
           <h1>{c.borrower_name ?? 'Borrower to be confirmed'}{c.locality_hint ? ` · ${c.locality_hint}` : ''}</h1>
           <div className="caseids">
             <span>Bank <b>{c.bank_code}, {c.branch_name}</b></span>
-            <span>Format <b>{c.template_name}{c.template_version ? ` v${c.template_version}` : ''}</b></span>
+            <span>Format <b>{c.template_name}{c.template_version ? ` v${c.template_version}` : ''}</b><FormatChange c={c} refresh={refresh} /></span>
             <span>Property <b>{PROPERTY_TYPES.find((p) => p.key === c.property_type)?.label}</b></span>
             <span>Report no. <b className="mono">{c.report_no ?? 'issued at sign-off'}</b></span>
             <span>Field engineer <b>{c.engineer_name ?? 'not assigned'}</b></span>

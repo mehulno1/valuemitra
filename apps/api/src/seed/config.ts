@@ -216,6 +216,7 @@ export const CHECK_SET = {
       title: "{{ 'Ready reckoner screenshot Rs. ' + inr(VAL.RR_SHOT_SQM) + '/sq.m. differs from the master Rs. ' + inr(VAL.RR_MASTER_SQM) + '/sq.m.' }}",
       detail: 'The screenshot is used. Check the zone, or correct the rate on the Valuation tab.',
       pass_title: 'Ready reckoner screenshot agrees with the master' },
+    { code: 'format_fit', type: 'builtin', builtin: 'format_fit', severity: 'warn', enabled: true, target: 'rep', title: 'Format to check' },
     { code: 'capture_kind', type: 'builtin', builtin: 'capture_kind', severity: 'warn', enabled: true, target: 'mkt',
       title: '{count} captured page(s) do not show what they were uploaded as', detail: 'Move each to where it belongs (e.g. a map to Location map), or keep it. Until then it is left out of the report.' },
     { code: 'rr_year', type: 'expr', enabled: true, target: 'mkt',

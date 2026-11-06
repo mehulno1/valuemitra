@@ -45,7 +45,7 @@ export interface Resolved {
   confidence: number | null;
   edited: boolean;
   candidates: Candidate[];
-  conflict: { message: string; minor?: boolean; options: { label: string; value: unknown; display: string; basis?: string; code?: string; candidateId?: number }[] } | null;
+  conflict: { message: string; minor?: boolean; chosenId?: number | null; options: { label: string; value: unknown; display: string; basis?: string; code?: string; candidateId?: number }[] } | null;
   notProvided?: boolean;       // its documents are marked not provided / not applicable on the checklist
   formula?: string | null;     // derived arithmetic in words, e.g. "Built-up area 465 ÷ (1 + loading % 20 ÷ 100) = 388"
   ruleKeys?: string[];         // bank rule keys the derivation uses
@@ -477,9 +477,11 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     // 1. a person's edit wins (most recent)
     const manual = [...cands].reverse().find((x) => x.sourceType === 'manual' || x.sourceType === 'report_edit');
     if (manual) { setFrom(r, f, manual, true); return r; }
-    // 2. a candidate a person explicitly chose in a conflict
+    // 2. a candidate a person explicitly chose in a conflict: it gives the value, but the other readings stay
+    //    on offer so the choice can be switched until signing (B2)
     const chosen = cands.find((x) => x.chosen);
-    if (chosen) { setFrom(r, f, chosen, false); return r; }
+    if (chosen) setFrom(r, f, chosen, false);
+    if (chosen && !f) return r;
     if (!f) {
       if (Object.hasOwn(caseValues, r.code)) { r.value = caseValues[r.code]; r.source = 'case'; }
       else if (Object.hasOwn(firmValues, r.code)) { r.value = firmValues[r.code]; r.source = 'firm'; }
@@ -554,6 +556,7 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
         const fuller = minor ? vals.find((v) => norm(v) === keys[0]) : null;
         if (fuller && !cands.some((x) => x.chosen)) setFrom(r, f, fuller, false);
         r.conflict = {
+          chosenId: chosen?.id ?? null,
           minor,
           message: minor ? `${f.label}: ${vals.map((v) => v.docType).join(' and ')} give the same value, one more fully. The fuller reading is used; pick another if needed.` : `${f.label} reads differently in ${vals.map((v) => v.docType).join(' and ')}`,
           options: vals.map((v) => ({ label: v.docType ?? v.sourceType, value: parseRaw(f, v), display: formatValue(f.type, parseRaw(f, v), f.unit) ?? '', candidateId: v.id })),

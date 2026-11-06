@@ -53,7 +53,11 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
     const r = data.get(code);
     if (r.type === 'image') continue;
     const shown = r.state === 'filled' || r.notProvided;
-    const text = r.state === 'filled' ? r.display ?? '' : r.notProvided ? 'Not provided' : '';
+    // a document summary that is only a status ("Not provided") prints with the document's name, so a list
+    // item never reads just "Not provided" (B4)
+    const named = /\.SUMMARY$/.test(code);
+    const status = r.notProvided ? 'not provided' : r.state === 'filled' && /^\s*(not provided|not applicable|n\.?\s*a\.?|nil)\s*\.?\s*$/i.test(String(r.display ?? '')) ? String(r.display).trim().replace(/\.$/, '').toLowerCase() : null;
+    const text = named && status ? `${r.label}: ${status}` : r.state === 'filled' ? r.display ?? '' : r.notProvided ? 'Not provided' : '';
     snapshot[code] = text;
     if (mode === 'preview') {
       out[code] = shown ? `${M.start}${code}${M.mid}${text}${M.end}` : `${M.start}${code}${M.pend}${r.pendingLabel ?? 'Pending'}${M.end}`;

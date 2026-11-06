@@ -106,6 +106,29 @@ export async function updateAssignment(actor: Actor, id: number, patch: Partial<
   await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'assignment.update', summary: `Case details changed: ${Object.keys(set).join(', ')}`, before: Object.fromEntries(Object.keys(set).map((k) => [k, (a as any)[k]])), after: set }, tx);
 }
 
+/** Use another published format for this case (B3, C5: an under-construction case drafted in Flat Completed). */
+export async function changeFormat(actor: Actor, id: number, templateId: number, tx: Tx = db) {
+  const a = await tx.selectFrom('assignments as a').innerJoin('bank_branches as br', 'br.id', 'a.branch_id').select(['a.id', 'a.bank_id', 'a.property_type', 'a.signed_at', 'a.template_version_id', 'br.code as branch_code']).where('a.id', '=', id).where('a.firm_id', '=', actor.firmId!).executeTakeFirst();
+  if (!a) throw notFound('Assignment');
+  if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
+  const v = await pickTemplateVersion(actor.firmId!, a.bank_id, a.branch_code, a.property_type, tx, new Date(), templateId);
+  if (!v) throw badRequest('That format is not published for this bank, branch and property type');
+  if (v.id === a.template_version_id) return;
+  const before = a.template_version_id ? await tx.selectFrom('template_versions as tv').innerJoin('report_templates as t', 't.id', 'tv.template_id').select(['t.name', 'tv.version']).where('tv.id', '=', a.template_version_id).executeTakeFirst() : null;
+  await tx.updateTable('assignments').set({ template_version_id: v.id }).where('id', '=', id).execute();
+  await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'assignment.format', summary: `Report format changed${before ? ` from ${before.name} v${before.version}` : ''} to ${v.name} v${v.version}.`, before: { template_version_id: a.template_version_id }, after: { template_version_id: v.id } }, tx);
+}
+
+/** Formats this case could use instead (same bank, branch and property type). */
+export async function formatChoices(firmId: number, id: number) {
+  const a = await db.selectFrom('assignments as a').innerJoin('bank_branches as br', 'br.id', 'a.branch_id').select(['a.bank_id', 'a.property_type', 'br.code as branch_code']).where('a.id', '=', id).where('a.firm_id', '=', firmId).executeTakeFirst();
+  if (!a) throw notFound('Assignment');
+  const ts = await db.selectFrom('report_templates').select(['id', 'name']).where('bank_id', '=', a.bank_id).where('status', '=', 'active').where((eb) => eb.or([eb('firm_id', 'is', null), eb('firm_id', '=', firmId)])).execute();
+  const out: { templateId: number; name: string; versionId: number; version: number }[] = [];
+  for (const t of ts) { const v = await pickTemplateVersion(firmId, a.bank_id, a.branch_code, a.property_type, db, new Date(), t.id); if (v) out.push({ templateId: t.id, name: t.name, versionId: v.id, version: v.version }); }
+  return out;
+}
+
 /** Recompute the stage from facts. Billed/paid are owned by the billing module. */
 export async function recomputeStage(assignmentId: number, actorId: number | null = null, tx: Tx = db): Promise<Stage> {
   const a = await tx.selectFrom('assignments').select(['id', 'firm_id', 'stage', 'signed_at', 'sent_at']).where('id', '=', assignmentId).executeTakeFirstOrThrow();

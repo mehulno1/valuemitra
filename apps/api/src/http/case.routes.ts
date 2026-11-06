@@ -39,6 +39,13 @@ export async function caseRoutes(app: FastifyInstance) {
     return db.transaction().execute((tx) => asg.createAssignment(actorOf(req), b, tx));
   });
   app.get('/api/assignments/:id', async (req) => asg.assignmentHeader(req.auth!.firmId, idParam(req)));
+  app.get('/api/assignments/:id/formats', async (req) => asg.formatChoices(req.auth!.firmId, idParam(req)));
+  app.post('/api/assignments/:id/format', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ templateId: z.number().int() }));
+    await db.transaction().execute((tx) => asg.changeFormat(actorOf(req), idParam(req), b.templateId, tx));
+    await runChecks(idParam(req), req.auth!.firmId);
+    return { ok: true };
+  });
   app.patch('/api/assignments/:id', { preHandler: can('edit') }, async (req) => {
     const b = body(req, z.object({ bankContact: z.string().nullish(), borrowerName: z.string().nullish(), engineerId: z.number().int().nullish(), purpose: z.string().nullish(), bankRefNo: z.string().nullish(), localityHint: z.string().nullish() }));
     await asg.updateAssignment(actorOf(req), idParam(req), b as any);

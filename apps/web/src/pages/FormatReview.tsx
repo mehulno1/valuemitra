@@ -22,6 +22,11 @@ const PILL: Record<string, [string, string]> = { match: ['ok', 'Matched'], new: 
 const SOURCE: Record<string, string> = { site_sheet: 'Site sheet (engineer)', manual: 'Entered by you', derived: 'Standard wording', wording: 'Standard wording', valuation: 'Valuation tab', evidence: 'Market evidence', case: 'Case details', firm: 'Firm settings' };
 const TAG_RE = /\{\{\s*([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)+)\s*\}\}/g;
 
+/** Photographs, Google location, ready reckoner and listings are the same in every bank's report: found and
+ *  replaced by ValueMitra's annexure pages without asking (shown as one line, each with Undo). */
+const STANDARD = /photo|google|map\b|location map|ready\s*reckoner|stamp duty|listing|sale transaction|price trend/i;
+const isStandard = (m: ReviewMapping) => (m.status === 'clear' || (m.ignored && m.status === 'fixed')) && !m.template && m.kind === 'para' && STANDARD.test(`${m.label} ${m.section ?? ''}`);
+
 /** What the valuer must still look at: open questions, and anything not yet accepted. */
 const needsYou = (m: ReviewMapping) => !m.confirmed && (m.status === 'needs' || (m.confidence ?? 0) < READY);
 const filterOf = (m: ReviewMapping): Filter => (m.status === 'needs' || (!m.confirmed && (m.confidence ?? 0) < READY) ? 'needs' : (m.status as Filter) ?? 'match');
@@ -56,7 +61,9 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
   const open = mappings.filter((m) => !m.confirmed);
   const ready = open.filter((m) => !needsYou(m));
   const sel = mappings.find((m) => m.id === selId) ?? mappings.find(needsYou) ?? mappings[0];
-  const sections = [...new Set(mappings.map((m) => m.section || 'Other'))];
+  const standard = mappings.filter(isStandard);
+  const listed = mappings.filter((m) => !isStandard(m));
+  const sections = [...new Set(listed.map((m) => m.section || 'Other'))];
   const goNext = (after: ReviewMapping) => { const nx = mappings.find((m) => m.id !== after.id && needsYou(m)); if (nx) setSelId(nx.id); };
 
   const tile = (k: Filter, label: string) => (
@@ -78,6 +85,18 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
         <p className="sub m-0">This file is a filled report of an earlier case. Its case details, photographs and the earlier valuer's name and registration are cleared (grey items); your firm's details print in their place. The uploaded original is deleted when you publish.</p>
       )}
 
+      {!!standard.length && (
+        <div className="panel p-3">
+          <b>{standard.filter((m) => !m.ignored).length} standard section(s) found and replaced</b>
+          <span className="sub"> · ValueMitra's own pages print instead, laid out by the Report layout settings</span>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            {standard.map((m) => (
+              <span key={m.id} className="sub">{m.label}{m.ignored ? ' (kept as in the file)' : ''}{edit && <button className="linkbtn ml-1" disabled={busy} onClick={() => patch.mutate({ mid: m.id, body: m.ignored ? { ignore: false } : { ignore: true } })}>{m.ignored ? 'Replace' : 'Undo'}</button>}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="cols">
         <section className="panel min-w-0 rv-paper" style={{ paddingBottom: 10 }}>
           <div className="border-b border-line px-4 py-3" style={{ fontFamily: 'var(--f-body)' }}>
@@ -87,7 +106,7 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
           {sections.map((sec) => (
             <div key={sec}>
               <h3>{sec}</h3>
-              {mappings.filter((m) => (m.section || 'Other') === sec).map((m) => {
+              {listed.filter((m) => (m.section || 'Other') === sec).map((m) => {
                 const [cls, text] = m.status === 'needs' && m.confirmed ? ['ok', 'Answered'] : PILL[m.status ?? 'match'] ?? PILL.match;
                 const look = !m.confirmed && m.status !== 'needs' && (m.confidence ?? 0) < READY;
                 return (

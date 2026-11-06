@@ -129,7 +129,7 @@ export const FIELDS: FieldDef[] = [
   { code: 'PHYS.LIFT', label: 'Lift', group: 'PHYS', type: 'enum', enum: ['Yes', 'No'], applies: BUILT, sources: ['site_sheet', 'manual'] },
   { code: 'PHYS.STRUCTURE', label: 'Type of structure', group: 'PHYS', type: 'text', applies: BUILT, sources: ['site_sheet', 'oc', 'manual'], hint: 'e.g. "RCC"', aliases: ['Type of construction', 'Structure'] },
   { code: 'PHYS.FLOORS_STRUCTURE', label: 'Floors / structure', group: 'PHYS', type: 'longtext', applies: BUILT, sources: ['wording'], pending: 'Awaiting site visit', aliases: ['Floors/Structure', 'No. of floors'] },
-  { code: 'PHYS.BUILDING_STATUS', label: 'Building status', group: 'PHYS', type: 'enum', enum: ['Completed', 'Under construction'], applies: BUILT, sources: ['site_sheet', 'agreement', 'manual', 'derived'],
+  { code: 'PHYS.BUILDING_STATUS', label: 'Building status', group: 'PHYS', type: 'enum', enum: ['Completed', 'Under construction', 'Partly occupied'], applies: BUILT, sources: ['site_sheet', 'agreement', 'manual', 'derived'],
     derivation: "present(DOC.OC.NUMBER) ? 'Completed' : null",
     hint: '"Under construction" when the building is not complete: the site sheet says under construction / work in progress, or the agreement gives a future possession date. "Completed" when ready, occupied or an O.C. is mentioned',
     aliases: ['Status of construction'] },

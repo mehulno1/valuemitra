@@ -202,7 +202,9 @@ export async function confirmMapping(actor: Actor, versionId: number, mappingId:
   if (code && !asIs && !proposed.has(code) && !(await dictionary(actor.firmId!, tx)).has(code)) throw badRequest(`Unknown field ${code}`);
   const loc = json<any>(m.location_json, {});
   const template = input.ignore || asIs ? loc.template ?? null : code ? `{{${code}}}` : null;
-  const status = input.ignore ? 'fixed' : asIs && m.status ? m.status : templateCodes(template).some((c) => proposed.has(c)) ? 'new' : 'match';
+  // "Replace" after "Undo" on a standard section: back to cleared (ValueMitra's pages print instead)
+  const restore = input.ignore === false && !!m.ignored && m.slot_kind === 'para' && !loc.template;
+  const status = restore ? 'clear' : input.ignore ? 'fixed' : asIs && m.status ? m.status : templateCodes(template).some((c) => proposed.has(c)) ? 'new' : 'match';
   await tx.updateTable('template_mappings').set({
     field_code: input.ignore ? null : code, ignored: input.ignore ? 1 : 0, method, confidence: asIs ? m.confidence : 100,
     location_json: toJson({ ...loc, template }), status, confirmed_by: actor.id ?? null, confirmed_at: new Date(),

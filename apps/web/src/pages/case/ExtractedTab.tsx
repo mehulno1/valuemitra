@@ -12,7 +12,7 @@ export interface ResolvedField {
   code: string; label: string; group: string; type: string; value: unknown; display: string | null;
   state: 'filled' | 'pending' | 'not_applicable'; notProvided?: boolean; pendingLabel: string | null; source: string | null; sourceDocType: string | null;
   page: number | null; partId: number | null; snippet: string | null; confidence: number | null; edited: boolean;
-  candidates: unknown[]; conflict: { message: string; options: { label: string; display: string }[] } | null;
+  candidates: unknown[]; conflict: { message: string; chosenId?: number | null; options: { label: string; display: string; candidateId?: number }[] } | null;
   formula?: string | null; ruleKeys?: string[];
 }
 export interface FieldsResp {
@@ -201,14 +201,18 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, ext
         ) : null}
         {f.conflict && (
           <div className="flag">
-            <div><b>Check: </b>{f.conflict.message}</div>
-            {editable && (
-              <div className="btns">
-                {f.conflict.options.map((o, i) => (
-                  <button key={i} className="btn sm" disabled={busy} onClick={() => resolve(i)} title={o.display}>{o.label}</button>
-                ))}
-              </div>
-            )}
+            <div><b>{f.conflict.chosenId ? 'Chosen: ' : 'Check: '}</b>{f.conflict.message}</div>
+            <div className="grid gap-1 mt-1">
+              {f.conflict.options.map((o, i) => {
+                const on = !!f.conflict!.chosenId && o.candidateId === f.conflict!.chosenId;
+                return (
+                  <div key={i} className="flex flex-wrap items-center gap-2">
+                    <span className="sub">{o.label.replace(/_/g, ' ')}:</span> <b>{o.display}</b>
+                    {on ? <span className="sev ok">In use</span> : editable && <button className="btn sm" disabled={busy} onClick={() => resolve(i)}>Use this</button>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

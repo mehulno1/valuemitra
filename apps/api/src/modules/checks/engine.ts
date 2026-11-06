@@ -57,7 +57,8 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
       const out: Result[] = [];
       for (const code of codes) {
         const r = data.get(code);
-        if (r.conflict) out.push({ ...base, code: `${def.code}:${code}`, severity: r.conflict.minor ? 'info' : sev, title: r.conflict.minor ? `${r.label}: one source reads it more fully` : fill(def.title, { label: r.label }), detail: r.conflict.message, actions: { field: code, options: r.conflict.options.map((o) => ({ label: o.label, display: o.display })) } });
+        // a conflict someone already chose on is settled (the choice can still be switched on Extracted details)
+        if (r.conflict && !r.conflict.chosenId) out.push({ ...base, code: `${def.code}:${code}`, severity: r.conflict.minor ? 'info' : sev, title: r.conflict.minor ? `${r.label}: one source reads it more fully` : fill(def.title, { label: r.label }), detail: r.conflict.message, actions: { field: code, options: r.conflict.options.map((o) => ({ label: o.label, display: o.display })) } });
       }
       return out;
     }
@@ -119,6 +120,19 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
     case 'docs_missing': {
       const list = (data.value('DOC.NOT_RECEIVED_LIST') as string[]) ?? [];
       return list.length ? { ...base, severity: sev, title: fill(def.title, { list: list.join(', ') }), detail: def.detail ?? null } : null;
+    }
+    case 'format_fit': {
+      // an under-construction building drafted in a completed-building format, or the other way round (C5)
+      const status = data.value('PHYS.BUILDING_STATUS');
+      const uc = status === 'Under construction' || (!data.value('DOC.OC.NUMBER') && !!data.value('DOC.CC.NUMBER') && data.value('PHYS.STAGE_TEXT') !== 'Completed' && status !== 'Completed');
+      const cur = data.case.template_version_id ? await tx.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.name', 't.bank_id']).where('v.id', '=', data.case.template_version_id).executeTakeFirst() : null;
+      if (!cur) return null;
+      const curUc = /under\s*construction|\buc\b/i.test(cur.name);
+      if (uc === curUc) return null;
+      const alt = await tx.selectFrom('report_templates').select(['id', 'name']).where('bank_id', '=', cur.bank_id).where('status', '=', 'active').where((eb) => eb.or([eb('firm_id', 'is', null), eb('firm_id', '=', ctx.firmId)])).execute();
+      const better = alt.find((t) => /under\s*construction|\buc\b/i.test(t.name) === uc && t.name !== cur.name);
+      if (!better) return null;
+      return { ...base, severity: sev, title: uc ? `The building is under construction: use the ${better.name} format` : `The building is completed: use the ${better.name} format`, detail: `This case uses ${cur.name}. ${uc ? 'No O.C. and a C.C. for the work so far.' : 'An O.C. is on record.'} Change the format in the case header (Format → Change).`, actions: { format: better.id } };
     }
     case 'capture_kind': {
       const n = await tx.selectFrom('evidence_captures').select((eb) => eb.fn.countAll<number>().as('n')).where('assignment_id', '=', data.case.id).where('suggested_kind', 'is not', null).executeTakeFirst();
