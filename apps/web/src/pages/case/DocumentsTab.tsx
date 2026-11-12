@@ -194,8 +194,9 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
                         </td>
                         <td className="text-[13px]">
                           {pageRange(p.pages)}
-                          {p.is_kyc ? ' · kept out of the report' : p.moved_to === 'site_photos' ? ' · moved to Site visit photos' : p.languages ? ` · ${p.languages}` : ''}
+                          {p.is_kyc ? ' · kept out of the report' : p.moved_to === 'site_photos' ? ' · moved to Site visit photos' : p.moved_to === 'market_evidence' ? ' · another flat: used as a comparable on Market evidence' : p.languages ? ` · ${p.languages}` : ''}
                           {p.moved_to === 'site_photos' && <> <button className="linkbtn" onClick={() => go('site')}>Open</button></>}
+                          {p.moved_to === 'market_evidence' && <> <button className="linkbtn" onClick={() => go('mkt')}>Open</button></>}
                         </td>
                         <td>{p.is_kyc ? <span className="conf x">excluded</span> : <ConfPct v={p.confidence} />}</td>
                         <td>

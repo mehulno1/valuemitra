@@ -226,7 +226,41 @@ const RULES: { k: string; label: string; hint?: string; step?: string; options?:
   { k: 'range_margin_pct', label: 'Printed rate range margin, %', hint: 'The "rates in the nearby area" range always takes in the adopted rate, with this margin' },
   { k: 'value_rounding_step', label: 'Values rounded to, Rs.', hint: 'FMV, realizable, distress, insurable; 1 = to the rupee' },
   { k: 'rent_rounding_step', label: 'Rent rounded to, Rs.' },
+  { k: 'pct_done_rounding', label: '% of work completed rounded to', hint: 'Under construction: 5 = nearest 5%, halves up (62.5 → 65)' },
 ];
+
+interface WorkWeight { key: string; label: string; weight: number; per_floor?: boolean }
+
+/** % of work completed for a building under construction: the firm's activities and weights. Each activity's weight ×
+ *  how far it has got at site, summed, gives the percentage (the working shows on a case's Valuation tab). */
+function WorkWeights({ list, ro, onChange }: { list: WorkWeight[]; ro: boolean; onChange: (w: WorkWeight[]) => void }) {
+  const total = list.reduce((t, w) => t + (Number(w.weight) || 0), 0);
+  const set = (i: number, patch: Partial<WorkWeight>) => onChange(list.map((w, j) => (j === i ? { ...w, ...patch } : w)));
+  const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || `activity_${list.length + 1}`;
+  return (
+    <div className="full grid gap-2">
+      <h3 className="m-0">% of work completed: activities and weights</h3>
+      <p className="sub m-0">For buildings under construction. Each activity's weight × how far it has got (per-floor activities: floors done ÷ floors of the building), summed and rounded. Weights are shares of the whole; they need not add to 100.</p>
+      <div className="tablewrap">
+        <table className="list">
+          <thead><tr><th>Activity</th><th className="text-right">Weight</th><th>Counted per floor</th><th /></tr></thead>
+          <tbody>
+            {list.map((w, i) => (
+              <tr key={w.key}>
+                <td><input value={w.label} disabled={ro} aria-label="Activity" onChange={(e) => set(i, { label: e.target.value })} /></td>
+                <td className="text-right"><input type="number" step="0.5" min="0" style={{ maxWidth: 90 }} className="text-right" value={w.weight} disabled={ro} aria-label={`Weight of ${w.label}`} onChange={(e) => set(i, { weight: Number(e.target.value) })} /></td>
+                <td><input type="checkbox" checked={!!w.per_floor} disabled={ro} aria-label={`${w.label} counted per floor`} onChange={(e) => set(i, { per_floor: e.target.checked })} /></td>
+                <td>{!ro && <button type="button" className="btn sm ghost" onClick={() => onChange(list.filter((_, j) => j !== i))}>Remove</button>}</td>
+              </tr>
+            ))}
+            <tr><td className="font-semibold">Total</td><td className="n mono font-semibold">{Math.round(total * 100) / 100}</td><td colSpan={2} className="sub">{total === 100 ? 'Weights are percentages of the whole work.' : `Each weight counts as its share of ${Math.round(total * 100) / 100}.`}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      {!ro && <div><button type="button" className="btn sm ghost" onClick={() => onChange([...list, { key: slug(`activity ${list.length + 1}`), label: 'New activity', weight: 1 }])}>Add an activity</button></div>}
+    </div>
+  );
+}
 
 function RulesSection() {
   const { can, user } = useAuth();
@@ -315,6 +349,7 @@ function RulesSection() {
               </Field>
             );
           })}
+          {!scope && <WorkWeights list={defs.work_weights ?? []} ro={ro} onChange={(w) => setP({ ...p, defaults: { ...defs, work_weights: w } })} />}
           {!ro && (
             <>
               <Field label="Change note" full><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why are the rules changing?" /></Field>

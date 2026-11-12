@@ -8,7 +8,7 @@ import { enqueue, registerJob } from '../../platform/jobs.js';
 import { saveFile } from '../../platform/storage.js';
 import { DOCS, requireKind } from '../../lib/sniff.js';
 import { retractPartCandidates, writeCandidates } from '../casedata/values.js';
-import { applyKyc, docTypes, extractFields, langLabel, readDocument, syncChecklist } from './reader.js';
+import { applyKyc, docTypes, extractFields, langLabel, ranked, readDocument, syncChecklist } from './reader.js';
 
 export async function assertCase(firmId: number, assignmentId: number, tx: Tx = db) {
   const a = await tx.selectFrom('assignments').select(['id', 'firm_id', 'signed_at', 'property_type', 'case_no']).where('id', '=', assignmentId).where('firm_id', '=', firmId).executeTakeFirst();
@@ -101,6 +101,8 @@ export async function correctPartLabel(actor: Actor, assignmentId: number, partI
   await db.updateTable('document_parts').set({
     corrected_type: newType, corrected_by: newType ? actor.id ?? null : null, corrected_at: newType ? new Date() : null,
     is_kyc: t?.is_kyc ? 1 : 0, excluded: t?.is_kyc ? 1 : 0, moved_to: effective === 'site_photo' ? 'site_photos' : null,
+    // a label that is not placed in reports (Other, a comparable's Index II) takes its pages out of the documents annexure
+    ...(t?.in_report ? {} : { in_report_pages: toJson([]) }),
   }).where('id', '=', partId).execute();
   await retractPartCandidates(assignmentId, partId);
   if (t?.is_kyc) {
@@ -126,9 +128,9 @@ async function reextractPart(partId: number) {
   const pages = (await db.selectFrom('document_pages').selectAll().where('document_id', '=', p.document_id).where('page_no', 'in', pg).orderBy('page_no').execute())
     .map((x, i) => ({ ...x, orig_page: x.page_no, page_no: i + 1 }));
   const { values } = await extractFields(a.firm_id, type, types.find((t) => t.key === type)?.label ?? type, a.property_type, pages, new Map());
-  await writeCandidates(a.id, a.firm_id, values.map((v) => ({
+  await writeCandidates(a.id, a.firm_id, ranked(values).map((v) => ({
     fieldCode: v.field_code, value: v.value, sourceType: 'document' as const, docType: type, partId, documentId: p.document_id,
-    page: pages[v.page - 1]?.orig_page ?? pg[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence),
+    page: pages[v.page - 1]?.orig_page ?? pg[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence), keep: v.keep, chosen: v.chosen,
   })));
   await publish({ type: 'document.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { partId } });
 }

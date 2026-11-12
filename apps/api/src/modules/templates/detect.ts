@@ -11,7 +11,7 @@ export interface Slot {
   label: string;
   context: string | null;
   sample: string | null;
-  location: { t?: number; r?: number; c?: number; p?: number; find?: string };
+  location: { t?: number; r?: number; c?: number; p?: number; find?: string; cond?: 'para' | 'row' };
   explicitCode?: string;
 }
 
@@ -84,6 +84,13 @@ export function detectSlots(buf: Buffer): { slots: Slot[]; stats: { tables: numb
     const raw = textOf(p);
     if (raw.includes('{{')) {
       mergeRuns(p);
+      // {{?FIELD.CODE}}: this line prints only when the field has a value other than "No"; {{?row FIELD.CODE}}: this table row
+      for (const m of textOf(p).matchAll(/\{\{\?\s*(row\s+)?([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)+)\s*\}\}/g)) {
+        slots.push({
+          key: `p${pi}q${m.index}`, kind: 'placeholder', label: `Printed only when: ${m[2]}`, context: clean(raw).slice(0, 160), sample: null,
+          location: { p: pi, find: m[0], cond: m[1] ? 'row' : 'para' }, explicitCode: m[2],
+        });
+      }
       for (const m of textOf(p).matchAll(/\{\{\s*([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)+)\s*\}\}/g)) {
         if (m[1] === 'REPORT.ANNEXURES') continue; // where the annexure pages go, not a field
         slots.push({

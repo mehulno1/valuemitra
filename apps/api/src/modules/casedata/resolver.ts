@@ -83,8 +83,38 @@ export function formatValue(type: string, v: unknown, unit?: string | null): str
       return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : String(v);
     }
     default:
-      return String(v);
+      // a date read into a text field ("Proposed date of completion": 2026-12-31) prints as dates do
+      return /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? ddmmyyyy(String(v)) || String(v) : String(v);
   }
+}
+
+export interface WorkWeight { key: string; label: string; weight: number; per_floor?: boolean }
+export interface WorkStage { key: string; pct: number; note?: string | null }
+
+/** Stage of each activity as stored (JSON text or a list): [{ key, pct 0-100, note }]. */
+export function parseStages(v: unknown): WorkStage[] {
+  let list: unknown = v;
+  if (typeof v === 'string') { try { list = JSON.parse(v); } catch { return []; } }
+  if (!Array.isArray(list)) return [];
+  return list.filter((x) => x && typeof x === 'object' && typeof (x as any).key === 'string' && Number.isFinite(Number((x as any).pct)))
+    .map((x: any) => ({ key: String(x.key), pct: Math.max(0, Math.min(100, Number(x.pct))), note: x.note ? String(x.note) : null }));
+}
+
+/** % of work completed: each activity's weight × its completion, summed over the firm's weightage table, then
+ *  rounded to the nearest `step` with halves up (62.5 → 65). Null until any activity has a stage. */
+export function workPct(stagesIn: unknown, weightsIn: unknown, stepIn?: unknown) {
+  const weights = (Array.isArray(weightsIn) ? weightsIn : []) as WorkWeight[];
+  const stages = new Map(parseStages(stagesIn).map((x) => [x.key, x]));
+  const total = weights.reduce((t, w) => t + (Number(w.weight) || 0), 0);
+  if (!total || !weights.some((w) => stages.has(w.key))) return null;
+  const rows = weights.map((w) => {
+    const st = stages.get(w.key);
+    const pct = st?.pct ?? 0;
+    return { key: w.key, label: w.label, weight: Math.round((Number(w.weight) / total) * 10000) / 100, pct, note: st?.note ?? null, weighted: Math.round((Number(w.weight) / total) * pct * 100) / 100, per_floor: !!w.per_floor };
+  });
+  const raw = Math.round(rows.reduce((t, r) => t + r.weighted, 0) * 100) / 100;
+  const step = Number(stepIn) > 0 ? Number(stepIn) : 1;
+  return { rows, raw, step, pct: Math.min(100, Math.floor(raw / step + 0.5) * step) };
 }
 
 function toDate(v: unknown): Date | null {
@@ -146,6 +176,12 @@ export const EXPR_FNS: Record<string, (...a: unknown[]) => unknown> = {
   /** upper floors of a building from "Stilt + 1st to 16th upper floors" (16) or "Ground + 5 podiums + 6th to
    *  36th floors" (31) or "G + 7" (7); podiums, stilts and amenity floors do not count (insurance band, A7) */
   upper_floors: (t) => upperFloors(t),
+  work_pct: (stages, weights, step) => workPct(stages, weights, step)?.pct ?? null,
+  /** bedrooms of a "2 BHK" / "1.5 BHK" / "1 RK" configuration (1 RK: 0) */
+  bhk: (t) => { const m = /(\d+(?:\.5)?)\s*(?:b\.?\s*h\.?\s*k|bed)/i.exec(String(t ?? '')); return m ? Math.floor(Number(m[1])) : null; },
+  pad2: (x) => (x === null || x === undefined || x === '' || !Number.isFinite(Number(x)) ? null : String(Math.round(Number(x))).padStart(2, '0')),
+  /** "Thane railway station, 2.5 km; bus stop 100 m" → "Thane" */
+  station_name: (t) => (t === null || t === undefined || t === '' ? null : String(t).split(/[,;(]/)[0].replace(/\b(railway|rly\.?|local)?\s*(station|stn\.?)\b.*$/i, '').trim() || String(t).trim()),
 };
 
 export function upperFloors(t: unknown): number | null {
@@ -172,12 +208,22 @@ function compValues(n: number, x: any, f: number | null): Record<string, unknown
   const area = x.area_bua_sqft ? Math.round(Number(x.area_bua_sqft) / (f ?? 1)) : Number(x.area_value) || null;
   const where = [x.building, x.society].filter(Boolean)[0] ?? x.locality ?? '';
   return {
-    [`${k}.SOURCE`]: x.source_type === 'igr_search' && x.txn_date ? `IGR-${new Date(x.txn_date).getFullYear()}` : (x.source_ref && x.source_type === 'listing' ? String(x.source_ref).replace(/^https?:\/\/(www\.)?/, '').split('/')[0] : SOURCE_LABEL[x.source_type] ?? x.source_type),
+    [`${k}.SOURCE`]: x.source_type === 'igr_search' && x.txn_date ? `IGR-${new Date(x.txn_date).getFullYear()}` : (x.source_type === 'listing' ? listingSite(x) : SOURCE_LABEL[x.source_type] ?? x.source_type),
     [`${k}.DESC`]: `${x.bhk ? `${x.bhk} ` : ''}Flat${where ? ` at ${where}` : ''}`,
     [`${k}.VALUE`]: price,
     [`${k}.AREA`]: area,
     [`${k}.RATE`]: price && area ? Math.round(price / area) : null,
   };
+}
+
+const site = (s: unknown) => String(s ?? '').trim().replace(/^https?:\/\/(www\.)?/i, '').split(/[/?#]/)[0];
+const ID_LIKE = /^[A-Za-z]{0,4}[-_ ]?\d{5,}$/;
+/** The website a listing came from (99acres, Housing.com), never the listing's id: the comparable's own source when
+ *  it names a site, else the captured page's source name or address. */
+export function listingSite(x: { source_ref?: string | null; capture_source?: string | null; capture_url?: string | null }): string {
+  const own = site(x.source_ref);
+  if (own && !ID_LIKE.test(own)) return own;
+  return site(x.capture_source) || site(x.capture_url) || 'Listing';
 }
 
 export interface CaseRecord {
@@ -270,7 +316,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   const ruleOrigin = (k: string) => (Object.hasOwn(caseRules, k) ? 'case' : Object.hasOwn(fmtRules, k) ? 'format' : 'firm');
   // the rate indicators chart: the strongest comparables used for the rate, on the case's area basis
   const comps = await tx.selectFrom('case_comparables as cc').innerJoin('comparables as cp', 'cp.id', 'cc.comparable_id')
-    .select(['cp.source_type', 'cp.source_ref', 'cp.building', 'cp.society', 'cp.locality', 'cp.bhk', 'cp.price', 'cp.area_bua_sqft', 'cp.area_value', 'cp.txn_date', 'cp.is_asking_price'])
+    .leftJoin('evidence_captures as ec', 'ec.id', 'cc.capture_id')
+    .select(['ec.source_name as capture_source', 'ec.url as capture_url', 'cp.source_type', 'cp.source_ref', 'cp.building', 'cp.society', 'cp.locality', 'cp.bhk', 'cp.price', 'cp.area_bua_sqft', 'cp.area_value', 'cp.txn_date', 'cp.is_asking_price'])
     .where('cc.assignment_id', '=', assignmentId).where('cc.is_subject', '=', 0).where('cc.included', '=', 1)
     .orderBy('cc.weight', 'desc').orderBy('cc.id').limit(COMP_ROWS).execute();
   const profile = c.profile_version_id ? (await configById(c.profile_version_id, tx)).payload : {};
@@ -332,13 +379,20 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     'REPORT.SIGNATURE': c.signed_at ? 'signed' : null,
   };
 
+  const profileItem = new Map<string, { optional?: boolean; unreadable_field?: string }>(((profile.checklist ?? []) as any[]).map((x) => [x.code, x]));
   const checkLists = () => {
     const got: string[] = [];
     const not: string[] = [];
     for (const i of checklist) {
       if (!i.remark_label) continue;
+      const cfg = profileItem.get(i.item_code);
+      // a document that could not be read (plan marked "Not readable") is not cited as seen; it is listed as not
+      // provided only when the valuer chose that wording, else Remark 1 asks for a clear copy
+      const unreadable = cfg?.unreadable_field && i.state === 'y' && get(cfg.unreadable_field).value === 'Yes';
+      if (unreadable) { if (!/clear copy/i.test(String(get(`${cfg!.unreadable_field}_TEXT`).value ?? ''))) not.push(i.remark_label); continue; }
       if (i.state === 'y') got.push(i.remark_label);
-      else if (i.state === 'n') not.push(i.remark_label);
+      // an optional document (title report) that was not received is simply left out
+      else if (i.state === 'n' && !(cfg?.optional && !i.overridden)) not.push(i.remark_label);
     }
     return { got, not };
   };
@@ -346,7 +400,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   // document types the checklist settles: received, marked not provided (✕ by a person), or not applicable
   const docState = new Map<string, 'provided' | 'not_provided' | 'na'>();
   for (const i of checklist) {
-    const st = i.state === 'y' ? 'provided' : i.state === 'na' ? 'na' : i.overridden ? 'not_provided' : null;
+    // crossed by a person, or optional and not received: nothing to wait for
+    const st = i.state === 'y' ? 'provided' : i.state === 'na' ? 'na' : i.overridden || profileItem.get(i.item_code)?.optional ? 'not_provided' : null;
     if (!st) continue;
     for (const dt of json<string[]>(i.doc_types, [])) if (docState.get(dt) !== 'provided') docState.set(dt, st);
   }
@@ -448,6 +503,9 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
       if (r.value !== null && r.value !== undefined && r.value !== '' && r.display === null) r.display = formatValue(r.type, r.value, unit);
       if (r.value === null || r.value === undefined || r.value === '') {
         r.state = f && !(f.applies.includes('*') || f.applies.includes(c.property_type)) ? 'not_applicable' : 'pending';
+        // printed only in some cases (value as per work completed, when switched on): otherwise nothing is pending
+        const when = (f?.rules as { only_when?: string } | null | undefined)?.only_when;
+        if (r.state === 'pending' && when && !evalExpr(when, resolveIdent, EXPR_FNS)) r.state = 'not_applicable';
         if (r.state === 'pending' && f && notProvided(f)) { r.state = 'not_applicable'; r.notProvided = true; r.pendingLabel = 'Not provided'; }
       } else r.state = 'filled';
       memo.set(code, r);
@@ -561,12 +619,15 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
         const keys = vals.map(norm).sort((a, b) => b.length - a.length);
         const minor = !NUMERIC.has(f.type) && keys.slice(1).every((k) => k && keys[0].includes(k));
         const fuller = minor ? vals.find((v) => norm(v) === keys[0]) : null;
+        const oneDoc = new Set(vals.map((v) => v.partId ?? v.docType)).size === 1;
         if (fuller && !cands.some((x) => x.chosen)) setFrom(r, f, fuller, false);
         r.conflict = {
           chosenId: chosen?.id ?? null,
           minor,
-          message: minor ? `${f.label}: ${vals.map((v) => v.docType).join(' and ')} give the same value, one more fully. The fuller reading is used; pick another if needed.` : `${f.label} reads differently in ${vals.map((v) => v.docType).join(' and ')}`,
-          options: vals.map((v) => ({ label: v.docType ?? v.sourceType, value: parseRaw(f, v), display: formatValue(f.type, parseRaw(f, v), f.unit) ?? '', candidateId: v.id })),
+          message: minor ? `${f.label}: ${vals.map((v) => v.docType).join(' and ')} give the same value, one more fully. The fuller reading is used; pick another if needed.`
+            : oneDoc ? `${f.label}: the document carries ${vals.length} dated entries. The latest is used; an earlier one can be picked.`
+            : `${f.label} reads differently in ${[...new Set(vals.map((v) => v.docType))].join(' and ')}`,
+          options: vals.map((v) => ({ label: `${v.docType ?? v.sourceType}${oneDoc && v.page ? ` p. ${v.page}` : ''}${oneDoc ? (v.id === Math.min(...vals.map((x) => x.id)) ? ' (latest)' : ' (earlier)') : ''}`, value: parseRaw(f, v), display: formatValue(f.type, parseRaw(f, v), f.unit) ?? '', candidateId: v.id })),
         };
       }
     }

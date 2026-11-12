@@ -62,7 +62,8 @@ export async function extractPages(pdf: Buffer, pages: number[]): Promise<Buffer
 /** Diagonal DRAFT watermark on every page (drafts shared with the bank). */
 export async function watermark(pdf: Buffer, text = 'DRAFT'): Promise<Buffer> {
   const d = await PDFDocument.load(pdf);
-  const font = await d.embedFont(StandardFonts.HelveticaBold);
+  // Times, as the report itself: a shared draft lists no font other than the report's
+  const font = await d.embedFont(StandardFonts.TimesRomanBold);
   for (const page of d.getPages()) {
     const { width, height } = page.getSize();
     const size = Math.min(width, height) / 4.2;

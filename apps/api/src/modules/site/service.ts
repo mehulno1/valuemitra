@@ -18,7 +18,7 @@ import { readFile, saveFile } from '../../platform/storage.js';
 import { DOCS, IMAGES, requireKind } from '../../lib/sniff.js';
 import { mapCoords, parseLatLng } from '../../lib/coords.js';
 import { ocrImages } from '../../ai/vision.js';
-import { caseData } from '../casedata/resolver.js';
+import { caseData, workPct, type WorkWeight } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { extractFields, preparePages, syncChecklist } from '../documents/reader.js';
 import { assertCase } from '../documents/service.js';
@@ -341,6 +341,38 @@ export async function reorderPhotos(actor: Actor, assignmentId: number, ids: num
   for (const [i, id] of ids.entries()) await db.updateTable('site_photos').set({ sort_order: i }).where('id', '=', id).where('assignment_id', '=', assignmentId).execute();
 }
 
+/** How far each activity of the firm's weightage table has got, as the site sheet describes the work. */
+async function readWorkStages(pages: { page_no: number; ocr_text: string | null }[], imgs: Map<number, Buffer>, weights: WorkWeight[], floors: string) {
+  if (!aiConfigured()) return [];
+  const keys = weights.map((w) => w.key) as [string, ...string[]];
+  const schema = z.object({
+    stages: z.array(z.object({
+      key: z.enum(keys),
+      pct: z.number().describe('0-100: how much of this activity is complete for the whole building'),
+      note: z.string().describe('What the sheet says that supports it, in a few words, e.g. "slab 27 of 35", "completed", "in progress", "not started"'),
+    })),
+    total_floors: z.number().int().nullable().describe('Floors (slabs) of the building used for the per-floor activities'),
+  });
+  const content = [...imgs].flatMap(([n, img]) => [textBlock(`Image of page ${n}:`), imageBlock(img)]);
+  content.push(textBlock(pages.map((p) => `=== PAGE ${p.page_no} ===\n${(p.ocr_text ?? '').slice(0, 3500)}`).join('\n\n')));
+  content.push(textBlock([
+    `Building as described on the case: ${floors || 'not known'}.`,
+    'Activities (give every one):',
+    ...weights.map((w) => `- ${w.key}: ${w.label}${w.per_floor ? ' [per floor: floors where it is done ÷ floors of the building × 100]' : ''}`),
+  ].join('\n')));
+  const system = [
+    'You read a field engineer\'s site inspection sheet for a building under construction in India and say how far each construction activity has got, for working out the percentage of work completed.',
+    'Use only what the sheet states: "RCC completed up to 27th slab" of a 35-slab building is slabs 77; "brick work up to 25th floor" is 71.',
+    'An activity the sheet calls completed is 100; "in progress" / "under progress" with no count is 50; pending, not started or balance work is 0.',
+    'Work that must be finished before a later stage counts as 100 even if the sheet does not list it: once superstructure slabs are cast, excavation, basement / plinth, podiums and stilt are 100.',
+    'Map the sheet\'s words to the nearest activity: RCC = slabs; flooring = tiling / dado; woodwork = doors & windows; electrification = electrical; painting and final finishing belong to the last common-area and handing-over activities; lift = the lifts / fire fighting / O.C. requirements activity.',
+    'An activity the sheet says nothing about, with no later stage implying it, is 0 with note "not mentioned".',
+  ].join('\n');
+  const r = await structured({ system, content, schema, effort: 'medium' });
+  const seen = new Set<string>();
+  return r.data.stages.filter((x) => !seen.has(x.key) && (seen.add(x.key), true)).map((x) => ({ key: x.key, pct: Math.max(0, Math.min(100, Math.round(x.pct))), note: x.note.slice(0, 120) }));
+}
+
 async function readSiteSheet(documentId: number) {
   const d = await db.selectFrom('documents').selectAll().where('id', '=', documentId).executeTakeFirstOrThrow();
   const a = await db.selectFrom('assignments').select(['id', 'firm_id', 'property_type', 'profile_version_id']).where('id', '=', d.assignment_id).executeTakeFirstOrThrow();
@@ -352,9 +384,23 @@ async function readSiteSheet(documentId: number) {
   for (const p of pages.slice(0, 6)) if (p.image_file_id) imgs.set(p.page_no, (await readFile(p.image_file_id, a.firm_id)).buffer);
   const { values } = await extractFields(a.firm_id, 'site_sheet', 'Site inspection sheet filled by the field engineer', a.property_type, pages, imgs, json(profile.site_sheet_fields, []));
   await writeCandidates(a.id, a.firm_id, values.map((v) => ({ fieldCode: v.field_code, value: v.value, sourceType: 'site_sheet' as const, docType: 'site_sheet', documentId, page: v.page, snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence) })));
+  // a building under construction: the stage of each activity, for the % of work completed (firm's weightage table)
+  let stagesNote = '';
+  try {
+    const data = await caseData(a.id, a.firm_id);
+    const weights = (data.rules as { work_weights?: WorkWeight[] }).work_weights ?? [];
+    if (weights.length && data.value('PHYS.BUILDING_STATUS') === 'Under construction' && !data.value('DOC.OC.NUMBER')) {
+      const stages = await readWorkStages(pages, imgs, weights, String(data.value('PHYS.TOTAL_FLOORS') ?? ''));
+      if (stages.length) {
+        await writeCandidates(a.id, a.firm_id, [{ fieldCode: 'PHYS.WORK_STAGES', value: JSON.stringify(stages), sourceType: 'site_sheet', docType: 'site_sheet', documentId, page: 1, snippet: stages.filter((x) => x.note).map((x) => `${weights.find((w) => w.key === x.key)?.label ?? x.key}: ${x.note}`).join('; ').slice(0, 900), confidence: 80 }]);
+        const w = workPct(stages, weights, (data.rules as { pct_done_rounding?: number }).pct_done_rounding);
+        if (w) stagesNote = ` Work completed worked out as ${w.pct}% (${w.raw}% before rounding) from the stage of each activity; the working is on the Valuation tab.`;
+      }
+    }
+  } catch (e) { stagesNote = ` Stage of work could not be read (${(e as Error).message.slice(0, 120)}); enter it on the Valuation tab.`; }
   await db.updateTable('documents').set({ status: 'read' }).where('id', '=', documentId).execute();
   await syncChecklist(a.id);
-  await audit({ type: 'system', name: 'System', firmId: a.firm_id }, { entityType: 'document', entityId: documentId, assignmentId: a.id, action: 'site.sheet_read', summary: `Site sheet (${pages.length} page(s)) read: ${values.length} site fields filled.` });
+  await audit({ type: 'system', name: 'System', firmId: a.firm_id }, { entityType: 'document', entityId: documentId, assignmentId: a.id, action: 'site.sheet_read', summary: `Site sheet (${pages.length} page(s)) read: ${values.length} site fields filled.${stagesNote}` });
   await publish({ type: 'document.read', firmId: a.firm_id, entityType: 'assignment', entityId: a.id, payload: { documentId } });
 }
 

@@ -7,6 +7,7 @@ import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import sharp from 'sharp';
 import { CLOSE, HEADER_XML, OPEN } from './compile.js';
 import { keepTablesWithHeadings, openDocx, saveDocx, unfloatTables } from './docx.js';
+import { fitCells, fitCover, styleSizes } from './fit.js';
 
 export interface RenderImage {
   buffer: Buffer;
@@ -44,7 +45,18 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
     }),
   });
   doc.render(data);
+  fitText(doc.getZip());
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
+}
+
+/** After the values are in: narrow cells never break inside a word or number, and the cover stays one page. */
+function fitText(zip: PizZip) {
+  const xml = zip.file('word/document.xml')?.asText();
+  if (!xml) return;
+  const doc = new DOMParser().parseFromString(xml, 'text/xml') as any;
+  const sizes = styleSizes(zip.file('word/styles.xml')?.asText());
+  const changed = fitCells(doc, sizes) + fitCover(doc, sizes);
+  if (changed) zip.file('word/document.xml', new XMLSerializer().serializeToString(doc));
 }
 
 /** Formats compiled before 28 Oct 2026 may keep the bank's floating tables (see unfloatTables); every format

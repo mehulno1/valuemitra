@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 12 Nov 2026 (Universal retest findings of 11 Nov, live, see 3j). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 12 Nov 2026 (second retest of 12 Nov built locally, see 3k; 11 Nov retest live, see 3j). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -214,6 +214,44 @@ tagged templates: `~/Downloads/ValueMitra previews 12 Nov/` (specs still in the 
   (RERA item n/a unless a RERA project). Case prefix stays UC- (VM-2627-0002/0003 are test cases).
 - Still open: Soni (needs email; role Coordinator + Accounts), MKS letterhead/signature/seal files (#10), IBBI validity
   date (#21), report number series before go-live (#8), field engineer name "Pramod Penta" has no "Mr." on live.
+
+## 3k. Universal second retest of 12 Nov (built 12 Nov 2026, NOT yet committed or deployed)
+Doc: `~/Downloads/ValueMitra — Retest Findings and Changes for Mehul_12Nov26.pdf` (N1–N10, R1–R11, T1–T12, D1–D10) and
+`Percentage completion & Rate analysis-Working sheet-1.xlsx`. Previews and tagged templates: `~/Downloads/ValueMitra previews
+12 Nov (second retest)/` (specs in the 06 Nov folder; `*.before-12nov.json` = old). No migration.
+- T1/D2 plan not readable: tick "Not readable" on Extracted details (profile `marks` → `DOC.PLAN.UNREADABLE`); plan lines,
+  enclosures a/b/e print `DOC.PLAN.UNREADABLE_TEXT`, Remark 1 "Clear copy of approved plan required", check `plan_unreadable`
+  (info); profile `sign_questions` asks the wording at Approve and sign (`signReport(…, answers)`).
+- T2 latest C.C.: extraction `rank` (1 = latest endorsement); `ranked()` keeps earlier ones as candidates, the latest
+  `is_chosen`; they show under "Use this" as a settled conflict.
+- T3/R7 a document inside another is its own document (classifier rule, doc type `floor_plan`, checklist `fplan`);
+  `DOC.FLOOR_PLAN` / `DOC.PLAN.ENCL` have `rules.checklist`: editing them changes the checklist item.
+- T4 `AREA.CARPET_DESC` (parts as written, else `AREA.CARPET_SQM` + " sq.mtr"). R3 `PHYS.BOUNDARY_DOC_*` = rule
+  `boundaries_doc_missing` ("Not available") and `PHYS.BOUNDARIES_MATCH` "Not Applicable". R4 rooms: floor plan → site sheet →
+  from BHK (`bhk()`, `pad2()`).
+- T5 % of work completed: rule `work_weights` (Universal's 16 activities, Firm settings → Valuation rules) × `PHYS.WORK_STAGES`
+  (read from the site sheet by `readWorkStages`, or entered on the Valuation tab), `workPct()` rounds to `pct_done_rounding`
+  (5, halves up). Valuation tab → Work completed: working, change stages, own % with reason. Check `work_pct`.
+- T6/D1 title report optional (checklist `optional`): not pending, not in Remark 1; its line is conditional.
+- T12 `VAL.PRINT_PRESENT` (off by default): value-today row, "As on date" line and remark print only when on.
+  Format syntax: `{{?FIELD.CODE}}` (this paragraph) / `{{?row FIELD.CODE}}` (this table row); render key `IF.<code>`;
+  field `rules.only_when` keeps unprinted fields from pending.
+- T7/T9/T11/D9 fonts: `templates/fonts.ts` `recommendedFonts` (Times New Roman, body 11, tables 10, chart 9 with fixed widths),
+  layout option `fonts: recommended | uploaded` (pre-selected by `fontReport` at upload); annexures, header, footer in Times.
+  Local PDFs embed only Times New Roman (+ Wingdings bullets). EC2 still needs Times New Roman installed
+  (`ttf-mscorefonts-installer`), then check with `pdffonts`.
+- D3/D4/T8 `templates/fit.ts` at render: narrow cells shrink to fit the longest word (7 pt floor; "Not Applicable" → "N.A."),
+  cover lines 20 → 16 → 14 pt. D5 heading rows keep with their first three rows.
+- R6/D8 `reconcileIndex2`: an Index II of another flat becomes `index2_comp`, values withdrawn, pages sent to Market evidence;
+  never in the Documents annexure. N5 ISO dates in text fields print DD/MM/YYYY. N6 preview uses the insurance band.
+  N7 rule `rr_carry_forward`. D7 map captions. N2/R9 location sentence: station named once, editable on the Valuation tab and
+  in the report. T10 Bank formats: Active / Inactive switch, filter, history, warning for the only active format.
+  R11 rule `rate_factors` drives the reason factors ("Open the rate analysis sheet").
+- FC spec: doubled serial numbers in the valuation table removed.
+- To do on deploy: seed (new platform config; firm profile/rules merged), publish Flat Completed v4 and Under Construction v3
+  from the new tagged templates (fonts = recommended), move UC-2627-0005 to the new versions and re-read its documents and
+  site sheet, install fonts on EC2. Not done: N10 (branch full name: check the branch's name on live), #17 re-read of
+  VM-2627-0003, #18 prefix, side-by-side font previews at upload (Preview with a case shows the chosen fonts).
 
 ## 4. Left — by work package
 

@@ -1,6 +1,6 @@
 // Report & sign-off and Output: live preview, draft sharing (watermarked), valuer-only signing with
 // gap-free report numbers, reopen as /R1, final Word + PDF, email/WhatsApp drafts, dispatch, register.
-import { fillPattern, financialYear, pad } from '@vm/shared';
+import { evalExpr, fillPattern, financialYear, pad } from '@vm/shared';
 import { db, toJson, type Tx } from '../../db/index.js';
 import { blocked, badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { docxToPdf, watermark } from '../../lib/pdf.js';
@@ -13,7 +13,8 @@ import { getSettings } from '../../platform/settings.js';
 import { readFile, saveFile } from '../../platform/storage.js';
 import { scheduleKycPurge } from '../../platform/retention.js';
 import { recomputeStage } from '../assignments/service.js';
-import { caseData } from '../casedata/resolver.js';
+import { caseData, EXPR_FNS, type CaseData } from '../casedata/resolver.js';
+import { setManualValue } from '../casedata/values.js';
 import { reportFieldCodes, runChecks, summary } from '../checks/engine.js';
 import { renderDocx } from '../templates/render.js';
 import { buildRenderData, fileBase, type Mode } from './data.js';
@@ -85,13 +86,31 @@ export async function sendToValuer(actor: Actor, assignmentId: number) {
 }
 
 /** Valuer approves and signs. The report number is issued here, from one gap-free series per FY. */
-export async function signReport(actor: Actor & { role?: string }, assignmentId: number) {
+interface SignQuestion { when: string; field: string; question: string; choices: string[] }
+
+/** Questions the profile asks at Approve and sign that apply to this case now (an approved plan still not readable). */
+function signQuestions(data: CaseData) {
+  return ((data.profile.sign_questions ?? []) as SignQuestion[])
+    .filter((q) => data.fields.has(q.field) && !!evalExpr(q.when, data.resolver, EXPR_FNS))
+    .map((q) => ({ field: q.field, question: q.question, choices: q.choices, current: (data.value(q.field) as string | null) ?? null }));
+}
+
+export async function signReport(actor: Actor & { role?: string }, assignmentId: number, answers: Record<string, string> = {}) {
   const firmId = actor.firmId!;
   // the Report Checker of the case may sign when the firm allows it (the report prints whoever signs)
   if (actor.role !== 'valuer') {
     const ok = actor.role === 'checker' && (await getSettings(firmId)).checker_may_sign
       && !!(await db.selectFrom('assignments').select('id').where('id', '=', assignmentId).where('firm_id', '=', firmId).where('checker_id', '=', actor.id!).executeTakeFirst());
     if (!ok) throw forbidden('Only a registered valuer can sign');
+  }
+  // the profile's sign-off questions: each needs one of its choices; the answer is saved (and logged) before signing
+  const before = await caseData(assignmentId, firmId);
+  if (!before.case.signed_at) {
+    for (const q of signQuestions(before)) {
+      const ans = answers[q.field];
+      if (!ans || !q.choices.includes(ans)) throw badRequest(`${q.question} choose one of: ${q.choices.join(' / ')}`);
+      if (ans !== q.current || !before.get(q.field).edited) await setManualValue(actor, assignmentId, q.field, ans, { reason: 'Chosen at Approve and sign' });
+    }
   }
   const res = await db.transaction().execute(async (tx) => {
     const a = await tx.selectFrom('assignments as a').innerJoin('banks as b', 'b.id', 'a.bank_id').innerJoin('bank_branches as br', 'br.id', 'a.branch_id')
@@ -185,6 +204,7 @@ export async function reportStatus(firmId: number, assignmentId: number) {
     ...a, checks: { blocked: s.blocked, crit: s.crit, warn: s.warn }, pending,
     values: ['VAL.FMV', 'VAL.REALIZABLE', 'VAL.DISTRESS', 'VAL.GUIDELINE', 'VAL.RATE', 'VAL.BASIS_AREA', 'VAL.RATE_REASON'].map((c) => { const r = data.get(c); return { code: c, label: r.label, display: r.display, state: r.state }; }),
     rules: { realizable_pct: data.rules.realizable_pct, distress_pct: data.rules.distress_pct },
+    signQuestions: a.signed_at ? [] : signQuestions(data),
     versions,
   };
 }

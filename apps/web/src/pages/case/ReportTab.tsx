@@ -15,7 +15,10 @@ interface RepStatus {
   checks: { blocked: boolean; crit: number; warn: number };
   pending: { code: string; label: string; pendingLabel: string | null }[];
   values: RepValue[]; rules: { realizable_pct: number; distress_pct: number }; versions: Version[];
+  signQuestions?: { field: string; question: string; choices: string[]; current: string | null }[];
 }
+// wording the valuer may change in the report itself even though it sits with the values
+const VAL_TEXT = new Set(['VAL.JUSTIFICATION', 'VAL.LOCATION_NOTE']);
 interface FieldInfo { code: string; label: string; type: string; value: unknown; display: string | null; state: string }
 
 const M_START = '', M_VAL = '', M_END = '', M_PEND = '';
@@ -87,6 +90,7 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
   const [renderErr, setRenderErr] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
   const [confirmSign, setConfirmSign] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [previewing, setPreviewing] = useState(false);
   // the pages exactly as they will be issued (marked PREVIEW): check photo order, letterhead and annexures before signing
   const previewFinal = () => {
@@ -173,7 +177,7 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
     const code = el.dataset.code;
     const f = fieldMap.get(code);
     const label = f?.label ?? repVals.get(code)?.label ?? code;
-    if (code.startsWith('VAL.')) return setEdit({ code, label, value: '', multi: false, valTab: true });
+    if (code.startsWith('VAL.') && !VAL_TEXT.has(code)) return setEdit({ code, label, value: '', multi: false, valTab: true });
     const shown = Array.from(host.current?.querySelectorAll<HTMLElement>(`.vm-val[data-code="${CSS.escape(code)}"]`) ?? []).map((x) => x.textContent ?? '').join('\n');
     const raw = f && (typeof f.value === 'number' || (typeof f.value === 'string' && !['text', 'longtext', 'enum'].includes(f.type))) ? String(f.value) : f?.display ?? shown;
     setEdit({ code, label, value: raw, multi: f?.type === 'longtext' || raw.length > 80 || raw.includes('\n'), valTab: false });
@@ -195,7 +199,7 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
     onError: (e) => { if (e instanceof ApiError && Array.isArray(e.details)) setSignErr({ message: e.message, items: e.details as any[] }); else err(e); },
   });
   const sign = useMutation({
-    mutationFn: () => api.post<{ reportNo: string }>(`/api/assignments/${c.id}/report/sign`),
+    mutationFn: () => api.post<{ reportNo: string }>(`/api/assignments/${c.id}/report/sign`, { answers: Object.fromEntries((q.data?.signQuestions ?? []).map((x) => [x.field, answers[x.field] ?? x.current ?? ''])) }),
     onSuccess: (r) => { setSignErr(null); setShare(null); setEdit(null); setConfirmSign(false); toast(`Approved and signed. Report no. ${r.reportNo} issued.`); refresh(); },
     onError: (e) => { setConfirmSign(false); if (e instanceof ApiError && Array.isArray(e.details)) setSignErr({ message: e.message, items: e.details as any[] }); else err(e); },
   });
@@ -398,6 +402,17 @@ export default function ReportTab({ c, go, refresh, locked }: TabProps) {
         <div className="grid gap-2 text-[14px]">
           <p className="m-0">A report number{r.report_rev ? ` with /R${r.report_rev}` : ''} is issued to <b>{c.bank_name}</b>, your signature and seal are placed, and the report is locked.</p>
           {fmvV?.display && <p className="m-0">Fair market value: <b>{fmvV.display}</b></p>}
+          {(r.signQuestions ?? []).map((x) => (
+            <fieldset key={x.field} className="m-0 grid gap-1 rounded-md border border-line px-3 py-2">
+              <legend className="px-1 text-[13px] font-semibold">{x.question}</legend>
+              {x.choices.map((ch) => (
+                <label key={ch} className="flex items-center gap-2">
+                  <input type="radio" name={`sq-${x.field}`} checked={(answers[x.field] ?? x.current) === ch} onChange={() => setAnswers({ ...answers, [x.field]: ch })} /> {ch}
+                </label>
+              ))}
+              <span className="sub">Printed in the plan lines and Remark 1.</span>
+            </fieldset>
+          ))}
           {r.checks.warn > 0 && <p className="m-0 text-warn">{r.checks.warn} item(s) are still flagged to look at on Checks.</p>}
           <p className="sub m-0">Changes after signing need a reopen, which issues a revised number. <button className="linkbtn" disabled={previewing} onClick={previewFinal}>{previewing ? 'Preparing the preview…' : 'Preview the final PDF first'}</button> to check the pages.</p>
         </div>

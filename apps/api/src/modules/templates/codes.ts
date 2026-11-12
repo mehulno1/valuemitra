@@ -57,8 +57,20 @@ export async function versionFieldCodes(versionId: number | null, tx: Tx = db): 
   const rows = await tx.selectFrom('template_mappings').select(['field_code', 'location_json']).where('template_version_id', '=', versionId).where('ignored', '=', 0).execute();
   const out = new Set<string>();
   for (const r of rows) {
+    // a condition ("this line prints only when …") decides what prints; it is not itself a printed field
+    if (json<any>(r.location_json, {}).cond) continue;
     if (r.field_code) out.add(r.field_code);
     for (const c of templateCodes(json<any>(r.location_json, {}).template)) out.add(c);
   }
   return [...out];
 }
+
+/** Fields a version's conditional lines and rows depend on ({{?FIELD.CODE}} in the format). */
+export async function versionConditions(versionId: number | null, tx: Tx = db): Promise<string[]> {
+  if (!versionId) return [];
+  const rows = await tx.selectFrom('template_mappings').select(['field_code', 'location_json']).where('template_version_id', '=', versionId).where('ignored', '=', 0).execute();
+  return [...new Set(rows.filter((r) => r.field_code && json<any>(r.location_json, {}).cond).map((r) => r.field_code!))];
+}
+
+/** Render key of a condition. */
+export const conditionKey = (code: string) => `IF.${code}`;

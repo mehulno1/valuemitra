@@ -4,11 +4,12 @@ import sharp from 'sharp';
 import { inr } from '@vm/shared';
 import { db, json, type Tx } from '../../db/index.js';
 import { pdfToImages } from '../../lib/pdf.js';
+import { activeConfig } from '../../platform/config.js';
 import { getSettings } from '../../platform/settings.js';
 import { readFile } from '../../platform/storage.js';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { fitImage, type RenderData, type RenderImage } from '../templates/render.js';
-import { fillTemplate, templateKey, versionFieldCodes, versionTemplates } from '../templates/codes.js';
+import { conditionKey, fillTemplate, templateKey, versionConditions, versionFieldCodes, versionTemplates } from '../templates/codes.js';
 import { mapImages } from './maps.js';
 
 // final_preview: the final layout before signing (no draft line; the signature is not placed)
@@ -62,6 +63,12 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
     if (mode === 'preview') {
       out[code] = shown ? `${M.start}${code}${M.mid}${text}${M.end}` : `${M.start}${code}${M.pend}${r.pendingLabel ?? 'Pending'}${M.end}`;
     } else out[code] = text;
+  }
+
+  // lines and rows the format prints only when a field has a value other than "No" ({{?FIELD.CODE}})
+  for (const code of await versionConditions(tplVersion, tx)) {
+    const r = data.get(code);
+    out[conditionKey(code)] = r.state === 'filled' && !/^(no|false|0|nil|not provided)$/i.test(String(r.value ?? '').trim());
   }
 
   // signature and seal: full at signing blocks, short on every page footer
@@ -131,13 +138,14 @@ async function annexPages(data: CaseData, firmId: number, settings: { doc_grid: 
     for (const c of caps.filter((x) => kinds.includes(x.source_kind))) {
       const { file, buffer } = await readFile(c.file_id, firmId, tx);
       const pagesImg = file.mime === 'application/pdf' ? await pdfToImages(buffer, { dpi: 110, first: 1, last: 2 }) : [buffer];
-      for (const b of pagesImg) imgs.push({ buf: b, cap: `${c.source_name || fallback}${c.url ? ` · ${c.url}` : ''}` });
+      // a map page is captioned as a map, whatever source name it was uploaded under
+      for (const b of pagesImg) imgs.push({ buf: b, cap: c.source_kind === 'map' ? 'Location map (screenshot)' : `${c.source_name || fallback}${c.url ? ` · ${c.url}` : ''}` });
     }
     return imgs;
   };
   const rowsOf = async (imgs: { buf: Buffer; cap: string }[]) => {
     const rows = [];
-    for (const x of imgs) rows.push({ a_img: await add(x.buf, 600, 400), a_cap: x.cap });
+    for (const x of imgs) rows.push({ a_img: await add(x.buf, 600, 385), a_cap: x.cap });
     return rows;
   };
 
@@ -150,7 +158,7 @@ async function annexPages(data: CaseData, firmId: number, settings: { doc_grid: 
   let mapNote = latlng;
   if (lat && lng) {
     try {
-      for (const m of await mapImages(firmId, lat, lng)) mapRows.push({ a_img: await add(m.buffer, 600, 395), a_cap: m.label });
+      for (const m of await mapImages(firmId, lat, lng)) mapRows.push({ a_img: await add(m.buffer, 600, 385), a_cap: m.label === 'Map' ? 'Location map' : m.label });
     } catch { mapNote = `${latlng} (map image unavailable)`; }
   }
   // map screenshots recognised among the site photos
@@ -180,11 +188,16 @@ async function annexPages(data: CaseData, firmId: number, settings: { doc_grid: 
   if (settings.docs_at_end === false) return pages;
   const parts = await tx.selectFrom('document_parts').selectAll().where('assignment_id', '=', data.case.id).where('excluded', '=', 0).orderBy('document_id').orderBy('page_from').execute();
   const docImgs: { fileId: number; cap: string }[] = [];
+  const dt = await activeConfig<{ types: { key: string; label: string; in_report?: boolean }[] }>('doc_types', 'default', firmId);
+  const typeLabel = new Map((dt?.payload.types ?? []).map((t) => [t.key, t.label]));
+  // a comparable's Index II belongs under Sale transactions only, never among the property's documents
+  const notPrinted = new Set(['index2_comp', 'other', 'kyc', 'site_photo']);
   for (const p of parts) {
+    if (notPrinted.has(p.corrected_type ?? p.detected_type)) continue;
     const want = json<number[]>(p.in_report_pages, []);
     if (!want.length) continue;
     const pg = await tx.selectFrom('document_pages').select(['page_no', 'image_file_id']).where('document_id', '=', p.document_id).where('page_no', 'in', want).orderBy('page_no').execute();
-    for (const x of pg) if (x.image_file_id) docImgs.push({ fileId: x.image_file_id, cap: `${p.title ?? p.detected_type}${pg.length > 1 ? `, p. ${x.page_no}` : ''}` });
+    for (const x of pg) if (x.image_file_id) docImgs.push({ fileId: x.image_file_id, cap: `${p.corrected_type ? typeLabel.get(p.corrected_type) ?? p.corrected_type : p.title ?? p.detected_type}${pg.length > 1 ? `, p. ${x.page_no}` : ''}` });
   }
   // portrait pages in the firm's grid; landscape pages (plans, wide scans) 2 per page at full width
   const per = docGrid === 4 ? 4 : docGrid === 1 ? 1 : 9;

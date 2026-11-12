@@ -37,6 +37,14 @@ export interface Rules {
   insurance_bands?: { max_floors?: number | null; rate: number; label?: string }[];
   /** a per-case insurance rate (Rs./sq.ft. built-up) instead of the band */
   insurance_rate?: number;
+  /** % of work completed: activities and weights (per firm), and the step the result is rounded to (5) */
+  work_weights?: { key: string; label: string; weight: number; per_floor?: boolean }[];
+  pct_done_rounding?: number;
+  /** rate analysis worksheet: premium / discount factors by property type */
+  rate_factors?: Record<string, { label: string; avg: number; hint?: string }[]>;
+  /** printed for a boundary the documents do not state */
+  boundaries_doc_missing?: string;
+  rr_carry_forward?: number;
   /** guideline value from the ready reckoner: rate per sq.m. × carpet (sq.m.) × this (flats: carpet + 10%) */
   rr_area_factor?: number;
   [k: string]: unknown;

@@ -15,6 +15,8 @@ import { singleField, templateCodes, versionFieldCodes } from './codes.js';
 import { AUTO_ACCEPT, mappingHistory, matchSlot } from './automap.js';
 import { compileTemplate, parsePages, type Layout } from './compile.js';
 import { detectSlots, type Slot } from './detect.js';
+import { openDocx } from './docx.js';
+import { fontReport } from './fonts.js';
 import { fixedNumbers } from './fixednumbers.js';
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -42,9 +44,18 @@ export async function listTemplates(firmId: number) {
     .execute();
   const c = new Map(counts.map((x) => [x.template_version_id, x]));
   const hidden = new Set((await getSettings(firmId)).hidden_templates ?? []);
+  // a format new cases can use: not retired, not made inactive by this firm, with a published version
+  const offered = (r: (typeof rows)[number]) => r.status === 'active' && !hidden.has(r.id) && versions.some((v) => v.template_id === r.id && v.status === 'published');
+  const types = (r: (typeof rows)[number]) => json<string[]>(r.property_types, []);
+  const history = await db.selectFrom('audit_log').select(['entity_id', 'summary', 'actor_name', 'created_at']).where('firm_id', '=', firmId).where('entity_type', '=', 'template').where('action', 'in', ['template.hide', 'template.show']).orderBy('id', 'desc').limit(200).execute();
   return rows.map((r) => ({
     ...r,
     hidden: hidden.has(r.id),
+    // active: offered for new cases; inactive: existing cases keep it, new ones cannot pick it
+    active: !hidden.has(r.id),
+    // property types this is the only active format for, at its bank: making it inactive leaves new cases without one
+    only_for: offered(r) ? types(r).filter((pt) => !rows.some((o) => o.id !== r.id && o.bank_code === r.bank_code && offered(o) && (types(o).includes(pt) || types(o).includes('*')))) : [],
+    history: history.filter((h) => h.entity_id === String(r.id)).map((h) => ({ summary: h.summary, by: h.actor_name, at: h.created_at })),
     property_types: json(r.property_types, []),
     branch_scope: json(r.branch_scope, ['*']),
     rules: json<Record<string, number>>(r.rules_json, {}),
@@ -93,6 +104,8 @@ export async function uploadTemplate(
   if (draft) throw conflict('This format already has a draft version. Publish or discard it first.');
 
   const { slots, stats } = detectSlots(input.buffer);
+  // fonts: the recommended set is pre-selected when the file's own would not print the same everywhere (T9)
+  const fonts = fontReport(openDocx(input.buffer));
   const ai = !!input.ai && aiConfigured();
   if (!slots.length && !ai) throw badRequest('No labels or placeholders found in this document');
   const file = await saveFile({ firmId, purpose: 'template', buffer: input.buffer, name: input.fileName, mime: DOCX, userId: actor.id }, tx);
@@ -100,7 +113,7 @@ export async function uploadTemplate(
   const version = Number(maxV?.v ?? 0) + 1;
   const v = await tx.insertInto('template_versions').values({
     template_id: templateId, version, status: 'draft', effective_from: input.effectiveFrom ? new Date(input.effectiveFrom) : null,
-    source_file_id: file.id, detect_json: toJson({ stats }), layout_json: toJson(DEFAULT_LAYOUT), change_note: input.note ?? null, created_by: actor.id ?? null,
+    source_file_id: file.id, detect_json: toJson({ stats, fonts }), layout_json: toJson({ ...DEFAULT_LAYOUT, fonts: fonts.reason ? 'recommended' : 'uploaded' }), change_note: input.note ?? null, created_by: actor.id ?? null,
     ai_status: ai ? 'reading' : 'none',
   }).executeTakeFirstOrThrow();
   const versionId = Number(v.insertId);
@@ -142,7 +155,7 @@ export async function versionDetail(firmId: number, versionId: number) {
     .selectFrom('template_versions as v')
     .innerJoin('report_templates as t', 't.id', 'v.template_id')
     .leftJoin('banks as b', 'b.id', 't.bank_id')
-    .select(['v.id', 'v.version', 'v.status', 'v.effective_from', 'v.published_at', 'v.layout_json', 't.rules_json', 'v.source_file_id', 'v.compiled_file_id', 'v.change_note', 'v.ai_status', 'v.ai_json', 'v.ai_error',
+    .select(['v.id', 'v.version', 'v.status', 'v.effective_from', 'v.published_at', 'v.layout_json', 'v.detect_json', 't.rules_json', 'v.source_file_id', 'v.compiled_file_id', 'v.change_note', 'v.ai_status', 'v.ai_json', 'v.ai_error',
       't.id as template_id', 't.name', 't.code', 't.firm_id', 't.property_types', 'b.code as bank_code', 'b.name as bank_name'])
     .where('v.id', '=', versionId)
     .executeTakeFirst();
@@ -153,6 +166,9 @@ export async function versionDetail(firmId: number, versionId: number) {
   return {
     ...v,
     layout: json(v.layout_json, DEFAULT_LAYOUT),
+    // fonts the uploaded file names, and why the recommended set is suggested (null: its own fonts are fine)
+    fonts: json<any>(v.detect_json, {}).fonts ?? null,
+    detect_json: undefined,
     rules: json<Record<string, number>>(v.rules_json, {}),
     property_types: json(v.property_types, []),
     ai: json<any>(v.ai_json, null),
@@ -261,6 +277,7 @@ export async function setLayout(actor: Actor, versionId: number, layout: Partial
   const v = await assertDraft(actor.firmId, versionId, tx);
   if (layout.letterhead != null && !['all', 'cover', 'page2', 'none', 'custom'].includes(layout.letterhead)) throw badRequest('Letterhead: every page, cover, page 2, none or chosen pages');
   if (layout.letterhead === 'custom' && !parsePages(layout.letterhead_pages ?? '')) throw badRequest('Letterhead pages: e.g. 2, or 1, 2, or 2-4');
+  if (layout.fonts != null && !['uploaded', 'recommended'].includes(layout.fonts)) throw badRequest('Fonts: keep as uploaded, or ValueMitra recommended');
   // null clears a choice: the firm's Report layout default applies
   const next: Record<string, unknown> = { ...json(v.layout_json, DEFAULT_LAYOUT), ...layout };
   for (const k of Object.keys(next)) if (next[k] === null) delete next[k];
@@ -419,7 +436,7 @@ export async function setTemplateHidden(actor: Actor, templateId: number, hide: 
   const cur = new Set((await getSettings(actor.firmId!)).hidden_templates ?? []);
   if (hide) cur.add(templateId); else cur.delete(templateId);
   await setSettings(actor.firmId!, { hidden_templates: [...cur] }, actor.id ?? null);
-  await audit(actor, { entityType: 'template', entityId: templateId, action: hide ? 'template.hide' : 'template.show', summary: `${t.name} ${hide ? 'hidden: not offered for new cases' : 'offered again for new cases'}` });
+  await audit(actor, { entityType: 'template', entityId: templateId, action: hide ? 'template.hide' : 'template.show', summary: `${t.name} made ${hide ? 'inactive: not offered for new cases (existing cases keep it)' : 'active: offered for new cases again'}` });
 }
 
 export async function pickTemplateVersion(firmId: number, bankId: number, branchCode: string, propertyType: string, tx: Tx = db, asOf = new Date(), templateId?: number | null) {

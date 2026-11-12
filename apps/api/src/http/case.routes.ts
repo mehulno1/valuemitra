@@ -119,6 +119,8 @@ export async function caseRoutes(app: FastifyInstance) {
       signed: !!data.case.signed_at,
       // summaries that can be listed under "Legal documents", and those the valuer left out
       legal: { items: (data.profile.legal_documents ?? []) as { key: string; field: string }[], skip: (data.value('DOC.LEGAL_SKIP') as string[] | null) ?? [] },
+      // ticks beside fields (a plan that cannot be read): each sets a Yes/No field
+      marks: ((data.profile.marks ?? []) as { field: string; label: string; on: string[] }[]).filter((m) => data.fields.has(m.field)).map((m) => ({ ...m, value: data.value(m.field) === 'Yes' })),
     };
   });
   app.put('/api/assignments/:id/fields/:code', { preHandler: can('edit') }, async (req) => {
@@ -246,7 +248,10 @@ export async function caseRoutes(app: FastifyInstance) {
     await wf.sendBack({ ...actorOf(req), role: req.auth!.role }, idParam(req), b.to, b.reason);
     return { ok: true };
   });
-  app.post('/api/assignments/:id/report/sign', { preHandler: can('sign') }, async (req) => reports.signReport({ ...actorOf(req), role: req.auth!.role }, idParam(req)));
+  app.post('/api/assignments/:id/report/sign', { preHandler: can('sign') }, async (req) => {
+    const b = body(req, z.object({ answers: z.record(z.string().max(60), z.string().max(200)).optional() }).optional());
+    return reports.signReport({ ...actorOf(req), role: req.auth!.role }, idParam(req), b?.answers ?? {});
+  });
   app.post('/api/assignments/:id/report/reopen', { preHandler: can('sign') }, async (req) => {
     const b = body(req, z.object({ reason: z.string() }));
     await reports.reopenReport({ ...actorOf(req), role: req.auth!.role }, idParam(req), b.reason);

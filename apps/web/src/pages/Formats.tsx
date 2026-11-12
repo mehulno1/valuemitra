@@ -11,9 +11,9 @@ import { Conf, Empty, Field, Loading, Modal, PageHead, Panel, fmtDate, useErrorT
 import FormatReview, { type AiInfo, type ReviewMapping } from './FormatReview';
 
 interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; confirmed?: number; change_note: string | null; ai_status?: string }
-interface Tpl { id: number; hidden?: boolean; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
+interface Tpl { id: number; hidden?: boolean; active?: boolean; only_for?: string[]; history?: { summary: string; by: string | null; at: string }[]; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
 type Mapping = ReviewMapping;
-interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; letterhead_pages?: string; footer_sig?: boolean }; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
+interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; letterhead_pages?: string; footer_sig?: boolean; fonts?: 'uploaded' | 'recommended' }; fonts?: { used: string[]; unsafe: string[]; reason: string | null } | null; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
 interface DictField { code: string; label: string; group: string; type: string; status: string; sources?: string[] }
 
 const ptLabel = (k: string) => PROPERTY_TYPES.find((p) => p.key === k)?.label ?? k;
@@ -124,8 +124,16 @@ function FormatList() {
   const qc = useQueryClient();
   const hide = useMutation({
     mutationFn: (b: { id: number; hidden: boolean }) => api.put(`/api/templates/${b.id}/hidden`, { hidden: b.hidden }),
-    onSuccess: (_r, b) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(b.hidden ? 'Hidden: not offered for new cases' : 'Offered for new cases again'); },
+    onSuccess: (_r, b) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(b.hidden ? 'Inactive: not offered for new cases. Existing cases keep it.' : 'Active: offered for new cases again'); },
   });
+  const [show, setShow] = useState<'all' | 'active' | 'inactive'>('all');
+  /** Active / Inactive switch; making the only active format for a bank and property type inactive asks first. */
+  const toggle = (t: Tpl) => {
+    const off = t.active !== false;
+    if (off && t.only_for?.length && !window.confirm(`${t.name} is the only active ${t.bank_code ?? ''} format for ${t.only_for.map(ptLabel).join(', ')}. New ${t.bank_code ?? ''} cases of that type will have no format to use until another is active. Make it inactive?`)) return;
+    hide.mutate({ id: t.id, hidden: off });
+  };
+  const rowsShown = (list.data ?? []).filter((t) => show === 'all' || (show === 'active') === (t.active !== false));
   const done = (r: { versionId: number; found: number; matched: number; ai?: boolean }) => {
     qc.invalidateQueries({ queryKey: ['templates'] });
     toast(r.ai ? 'Uploaded. The AI is reading the format; this takes about 1 to 2 minutes.' : `${r.found} fields found. ${r.matched} matched automatically; ${r.found - r.matched} need you.`);
@@ -144,29 +152,38 @@ function FormatList() {
         </Panel>
       )}
 
+      <div className="mb-2 flex flex-wrap items-center gap-2" role="group" aria-label="Show formats">
+        {(['all', 'active', 'inactive'] as const).map((k) => <button key={k} className={`btn sm ${show === k ? 'pri' : 'ghost'}`} aria-pressed={show === k} onClick={() => setShow(k)}>{k === 'all' ? 'All' : k === 'active' ? 'Active' : 'Inactive'}{list.data ? ` (${list.data.filter((t) => k === 'all' || (k === 'active') === (t.active !== false)).length})` : ''}</button>)}
+        <span className="sub">Inactive formats are not offered for new cases; cases already on them keep them.</span>
+      </div>
       <section className="panel">
         {list.isLoading ? <Loading /> : (
           <div className="tablewrap">
             <table className="list click">
-              <thead><tr><th>Bank</th><th>Format</th><th>Property types</th><th>Fields mapped</th><th>Status</th></tr></thead>
+              <thead><tr><th>Bank</th><th>Format</th><th>Property types</th><th>Fields mapped</th><th>Version</th><th>New cases</th></tr></thead>
               <tbody>
-                {(list.data ?? []).map((t) => {
+                {rowsShown.map((t) => {
                   const cur = t.versions.find((v) => v.status === 'draft') ?? t.versions.find((v) => v.status === 'published') ?? t.versions[0];
                   return [
                     <tr key={t.id} onClick={() => setOpen(open === t.id ? null : t.id)} aria-expanded={open === t.id}>
                       <td><b>{t.bank_code ?? '—'}</b><div className="sub">{t.bank_name}</div></td>
-                      <td>{t.name}<div className="sub">{t.branch_scope.includes('*') ? 'All branches' : t.branch_scope.join(', ')}{t.firm_id === null ? ' · platform format' : ' · your firm'}{t.hidden ? ' · hidden (not offered for new cases)' : ''}</div></td>
+                      <td>{t.name}<div className="sub">{t.branch_scope.includes('*') ? 'All branches' : t.branch_scope.join(', ')}{t.firm_id === null ? ' · platform format' : ' · your firm'}</div></td>
                       <td>{t.property_types.map(ptLabel).join(', ')}</td>
                       <td className="mono">{cur ? (cur.ai_status === 'reading' ? <span className="sub">AI reading…</span> : `${cur.confirmed ?? cur.mapped + cur.ignored}/${cur.slots}`) : '—'}{cur && !!cur.ignored && <div className="sub">{cur.ignored} fixed text</div>}</td>
                       <td><StatusCell t={t} /></td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+                        <label className="flex items-center gap-2 whitespace-nowrap">
+                          <input type="checkbox" role="switch" checked={t.active !== false} disabled={!can('config') || hide.isPending} onChange={() => toggle(t)} aria-label={`${t.name}: offered for new cases`} />
+                          <span className={`sev ${t.active !== false ? 'ok' : 'info'}`}>{t.active !== false ? 'Active' : 'Inactive'}</span>
+                        </label>
+                      </td>
                     </tr>,
                     open === t.id && (
-                      <tr key={`${t.id}-h`}><td colSpan={5} style={{ background: 'var(--sunk)', cursor: 'default' }} onClick={(e) => e.stopPropagation()}>
+                      <tr key={`${t.id}-h`}><td colSpan={6} style={{ background: 'var(--sunk)', cursor: 'default' }} onClick={(e) => e.stopPropagation()}>
                         <div className="grid gap-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <b>Version history</b>
                             <div className="btns">
-                              {can('config') && <button className="btn sm ghost" disabled={hide.isPending} onClick={() => hide.mutate({ id: t.id, hidden: !t.hidden })}>{t.hidden ? 'Offer for new cases again' : 'Hide for this firm'}</button>}
                               {can('config') && !t.versions.some((v) => v.status === 'draft') && <button className="btn sm" onClick={() => setRevise(t)}>Upload a revised version</button>}
                             </div>
                           </div>
@@ -186,12 +203,18 @@ function FormatList() {
                             </tbody>
                           </table>
                           <div className="sub">Published versions never change. Each case uses the version that was live when it was created, so a revision never alters past reports.</div>
+                          {!!t.history?.length && (
+                            <div>
+                              <b>Active / inactive history</b>
+                              <ul className="sub m-0 mt-1 grid gap-0.5 pl-4">{t.history.map((h, i) => <li key={i}>{fmtDate(h.at, true)} · {h.by ?? 'System'}: {h.summary}</li>)}</ul>
+                            </div>
+                          )}
                         </div>
                       </td></tr>
                     ),
                   ];
                 })}
-                {!list.data?.length && <tr><td colSpan={5} className="muted">No bank formats yet.</td></tr>}
+                {!rowsShown.length && <tr><td colSpan={6} className="muted">{list.data?.length ? 'No formats in this view.' : 'No bank formats yet.'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -325,6 +348,17 @@ function FormatSettings({ d, edit }: { d: VersionDetail; edit: boolean }) {
             onSave={(on, pages) => layout.mutate(on === '' ? { letterhead: null } : { letterhead: on, letterhead_pages: on === 'custom' ? pages : null })} />
         </Field>
         <label className="flex items-center gap-2"><input type="checkbox" checked={d.layout?.footer_sig !== false} disabled={!edit || !draft} onChange={(e) => layout.mutate({ footer_sig: e.target.checked })} /> Short signature and seal in the footer of every page (else only where the valuer signs)</label>
+        <Field label="Fonts" hint="Preview with a case below to see each choice before publishing">
+          <div className="grid gap-1.5" role="radiogroup" aria-label="Fonts">
+            {([['recommended', 'ValueMitra recommended', 'Times New Roman throughout: body 11 pt, tables 10 pt, rate chart 9 pt. Word and PDF break pages the same way.'], ['uploaded', 'Keep as uploaded', `The file's own fonts and sizes${d.fonts?.used?.length ? ` (${d.fonts.used.slice(0, 4).join(', ')})` : ''}.`]] as const).map(([k, label, note]) => (
+              <label key={k} className="flex items-start gap-2">
+                <input type="radio" name="fonts" className="mt-1" checked={(d.layout?.fonts ?? 'uploaded') === k} disabled={!edit || !draft || layout.isPending} onChange={() => layout.mutate({ fonts: k })} />
+                <span><b className="font-medium">{label}</b><span className="sub block">{note}</span></span>
+              </label>
+            ))}
+          </div>
+          {d.fonts?.reason && <p className="sub mb-0 mt-1" style={{ color: 'var(--warn)' }}>{d.fonts.reason} The recommended fonts are suggested for this file.</p>}
+        </Field>
         <div className="sub">This format's own rules (blank = the firm's rule for the bank). They apply to every case that uses the format.</div>
         <div className="grid grid-cols-2 gap-2">
           {RULE_LABELS.map(([k, label, ph]) => <Field key={k} label={label}><input inputMode="decimal" value={rules[k] ?? ''} placeholder={ph} disabled={!edit} onChange={(e) => setRules((r) => ({ ...r, [k]: e.target.value }))} /></Field>)}

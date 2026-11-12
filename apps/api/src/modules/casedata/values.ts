@@ -19,6 +19,10 @@ export interface CandidateInput {
   snippet?: string | null;
   snippetLang?: string | null;
   confidence?: number | null;
+  /** another reading of the same field from the same document (an earlier C.C. endorsement): kept beside the main one */
+  keep?: boolean;
+  /** the reading in use among several kept ones (the latest endorsement); the others stay on offer under "Use this" */
+  chosen?: boolean;
 }
 
 const toNum = (v: unknown) => {
@@ -41,7 +45,7 @@ export async function writeCandidates(assignmentId: number, firmId: number, item
       .where('source_type', '=', it.sourceType)
       .where('is_current', '=', 1);
     if (it.sourceType === 'document') q = it.partId ? q.where('part_id', '=', it.partId) : q.where('source_doc_type', '=', it.docType ?? '');
-    await q.execute();
+    if (!it.keep) await q.execute();
     await tx
       .insertInto('field_values')
       .values({
@@ -57,6 +61,7 @@ export async function writeCandidates(assignmentId: number, firmId: number, item
         snippet: it.snippet ?? null,
         snippet_lang: it.snippetLang ?? null,
         confidence: it.confidence ?? null,
+        is_chosen: it.chosen ? 1 : 0,
         status: 'proposed',
       })
       .execute();
@@ -90,6 +95,19 @@ export async function setManualValue(
   if (data.case.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
   const before = data.get(code);
   const clean = value === null ? null : String(value).trim();
+  // an enclosure line follows its checklist item: changing it here changes the checklist, so the two cannot disagree
+  const item = (f.rules as { checklist?: string } | null)?.checklist;
+  if (item) {
+    const state = clean === null || clean === '' ? null : /^not\s+appl|^n\.?\s*a\.?$/i.test(clean) ? 'na' : /^not\b|^no\b/i.test(clean) ? 'n' : /^(provided|yes|attached|received)/i.test(clean) ? 'y' : undefined;
+    if (state === undefined) throw badRequest(`${f.label} follows the document checklist: type Provided, Not Provided or Not Applicable`);
+    const row = await tx.selectFrom('checklist_items').selectAll().where('assignment_id', '=', assignmentId).where('item_code', '=', item).executeTakeFirst();
+    if (!row) throw badRequest('This case has no such item on its document checklist');
+    const next = state ?? row.auto_state;
+    await tx.updateTable('checklist_items').set({ state: next, overridden: next === row.auto_state ? 0 : 1, updated_by: actor.id ?? null }).where('id', '=', row.id).execute();
+    await audit(actor, { entityType: 'checklist', entityId: row.id, assignmentId, action: 'checklist.set', summary: `${row.label} marked ${{ y: 'received', n: 'not provided', na: 'not applicable' }[next]} (from ${f.label}). Checklist, enclosures and Remark 1 updated.`, reason: opts.reason ?? null }, tx);
+    await publish({ type: 'value.changed', firmId, entityType: 'assignment', entityId: assignmentId, payload: { code, checklist: row.id } }, tx);
+    return;
+  }
   if (clean !== null && NUMERIC.has(f.type) && toNum(clean) === null) throw badRequest(`${f.label} must be a number`);
   for (const v of f.validation) {
     if (clean === null) break;

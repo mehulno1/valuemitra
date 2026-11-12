@@ -98,6 +98,8 @@ async function classify(firmId: number, pages: any[], types: DocType[], images: 
     'Pages can be in English, Marathi, Hindi or Gujarati, scanned, photographed or partly handwritten.',
     'Identity documents (Aadhaar, PAN, passport, voter ID, photographs of people) are type "kyc" and must be kept separate.',
     'A photograph of the property itself (not of a document) is type "site_photo".',
+    'A document bound inside a larger one is still a document of its own: a floor plan, approved plan, commencement certificate, RERA certificate or Index II annexed to an agreement gets its own entry with its own pages, and the agreement keeps the rest.',
+    'An Index II is "index2" only when it is the registration of the property this file is about (same flat and parties as the agreement). An Index II of an earlier sale of the same flat is "index2_prev". An Index II of a different flat or building, given as a comparable sale, is "index2_comp".',
     'Document types:',
     ...types.map((t) => `- ${t.key}: ${t.label}. ${t.hint}`),
   ].join('\n');
@@ -134,6 +136,7 @@ export async function extractFields(firmId: number, docType: string, docLabel: s
       snippet: z.string().describe('The exact words from the page that support the value, in the original language and script, at most 200 characters'),
       snippet_language: z.string().describe('Language of the snippet, e.g. Marathi'),
       confidence: z.number().describe('0-100: how sure you are that the value is read correctly'),
+      rank: z.number().int().nullable().describe('Normally 1 or null. Only where the field asks for ranks (a certificate with several dated endorsements): 1 for the latest dated entry, 2, 3, … for each earlier one, as separate values of the same field'),
     })),
   });
   const content: Block[] = [];
@@ -145,10 +148,84 @@ export async function extractFields(firmId: number, docType: string, docLabel: s
     'Read OCR text together with the page images when given; prefer the image where OCR is garbled or handwritten.',
     'Marathi numerals (०-९) must be converted to digits. Transliterate Marathi names and places to English for the value; keep the snippet in the original script.',
     'Areas: give square feet. If only square metres are stated, convert ×10.764 and round. Built-up and carpet are different; only use what the document labels.',
-    'Report each field once, from the page that states it most clearly. Confidence reflects legibility and how explicit the document is.',
+    'Report each field once, from the page that states it most clearly, unless the field asks for ranked entries. Confidence reflects legibility and how explicit the document is.',
   ].join('\n');
   const r = await structured({ system, content, schema, effort: 'medium' });
   return { values: r.data.values, model: r.model };
+}
+
+/** Several readings of one field from one document (dated endorsements of a C.C.): the latest (rank 1) first and in
+ *  use; the earlier ones are kept beside it, on offer under "Use this". Fields read once pass through unchanged. */
+export function ranked<T extends { field_code: string; value: string; rank?: number | null }>(values: T[]): (T & { keep?: boolean; chosen?: boolean })[] {
+  const by = new Map<string, T[]>();
+  for (const v of values) by.set(v.field_code, [...(by.get(v.field_code) ?? []), v]);
+  const out: (T & { keep?: boolean; chosen?: boolean })[] = [];
+  for (const list of by.values()) {
+    const sorted = [...list].sort((x, y) => (x.rank ?? 1) - (y.rank ?? 1));
+    const distinct = sorted.filter((v, i) => sorted.findIndex((o) => o.value.trim().toLowerCase() === v.value.trim().toLowerCase()) === i);
+    distinct.forEach((v, i) => out.push(distinct.length > 1 ? { ...v, keep: i > 0, chosen: i === 0 } : v));
+  }
+  return out;
+}
+
+const normId = (s: unknown) => String(s ?? '').toLowerCase().replace(/\b(flat|unit|shop|office|no|number|room)\b/g, '').replace(/[^a-z0-9]/g, '');
+const nameTokens = (s: unknown) => new Set(String(s ?? '').toLowerCase().replace(/\b(mr|mrs|ms|miss|shri|smt|m\/s|and|pvt|ltd|llp)\b/g, ' ').split(/[^a-z]+/).filter((w) => w.length >= 3));
+
+/** An Index II that came with the file but belongs to another flat (a comparable sale) must not give this property's
+ *  agreement value, guideline value, floor or parties. Each "index2" document is matched with the agreement (flat
+ *  no., then buyer, then building); one that does not match is relabelled as a comparable: its values are withdrawn,
+ *  it leaves the documents annexure and its pages go to Market evidence, where they are read as a sale transaction. */
+export async function reconcileIndex2(assignmentId: number, firmId: number) {
+  const parts = await db.selectFrom('document_parts').selectAll().where('assignment_id', '=', assignmentId).where('excluded', '=', 0).execute();
+  const typeOf = (p: (typeof parts)[number]) => p.corrected_type ?? p.detected_type;
+  const a = await db.selectFrom('assignments').select(['borrower_name', 'signed_at']).where('id', '=', assignmentId).executeTakeFirstOrThrow();
+  if (a.signed_at) return;
+  const idx = parts.filter((p) => typeOf(p) === 'index2' && !p.corrected_type);
+  // read as a comparable's Index II straight away: only its pages still have to go to Market evidence
+  const direct = parts.filter((p) => typeOf(p) === 'index2_comp' && p.moved_to !== 'market_evidence');
+  if (!idx.length && !direct.length) return;
+  const vals = await db.selectFrom('field_values').select(['part_id', 'field_code', 'value_text']).where('assignment_id', '=', assignmentId).where('is_current', '=', 1).where('source_type', '=', 'document')
+    .where('field_code', 'in', ['DOC.AGREEMENT.BUYER', 'PROP.UNIT_NO', 'PROP.BUILDING']).execute();
+  const of = (partId: number, code: string) => vals.find((v) => v.part_id === partId && v.field_code === code)?.value_text ?? null;
+  const facts = (p: (typeof parts)[number]) => {
+    const k = json<any>(p.key_facts_json, {});
+    return { unit: normId(of(p.id, 'PROP.UNIT_NO') ?? k.unit_no), building: normId(of(p.id, 'PROP.BUILDING') ?? k.building), buyer: nameTokens(of(p.id, 'DOC.AGREEMENT.BUYER')) };
+  };
+  const agr = parts.find((p) => ['agreement', 'sale_deed'].includes(typeOf(p)));
+  const ref = agr ? facts(agr) : { unit: '', building: '', buyer: new Set<string>() };
+  if (!ref.buyer.size) ref.buyer = nameTokens(a.borrower_name);
+  const overlap = (x: Set<string>, y: Set<string>) => [...x].some((w) => y.has(w));
+  const mismatch = (p: (typeof parts)[number]) => {
+    const f = facts(p);
+    if (f.unit && ref.unit) return f.unit !== ref.unit;
+    if (f.buyer.size && ref.buyer.size && !overlap(f.buyer, ref.buyer)) return !(f.building && ref.building && f.building === ref.building);
+    return false;
+  };
+  // with no agreement to compare, two Index II of different flats: the one naming the borrower is the property's own
+  let other = idx.filter(mismatch);
+  if (!agr && !other.length && idx.length > 1) {
+    const mine = idx.find((p) => overlap(facts(p).buyer, ref.buyer));
+    if (mine) other = idx.filter((p) => p !== mine && facts(p).unit && facts(mine).unit && facts(p).unit !== facts(mine).unit);
+  }
+  if (other.length === idx.length && !agr) other = []; // nothing certain to compare with
+  const { retractPartCandidates } = await import('../casedata/values.js');
+  for (const p of [...other, ...direct]) {
+    await db.updateTable('document_parts').set({ ...(direct.includes(p) ? {} : { corrected_type: 'index2_comp' }), in_report_pages: toJson([]), moved_to: 'market_evidence' }).where('id', '=', p.id).execute();
+    await retractPartCandidates(assignmentId, p.id);
+    // its pages become a captured sale transaction on Market evidence
+    const pg = json<number[]>(p.pages_json, []);
+    const doc = await db.selectFrom('documents').select(['file_id']).where('id', '=', p.document_id).executeTakeFirstOrThrow();
+    const { file, buffer } = await readFile(doc.file_id, firmId);
+    let fileId = doc.file_id;
+    if (file.mime === 'application/pdf' && pg.length && pg.length < (await pdfPageCount(buffer))) {
+      fileId = (await saveFile({ firmId, purpose: 'evidence', folder: `a${assignmentId}/evidence`, buffer: await extractPages(buffer, pg), name: `Index II (comparable) p${pg[0]}.pdf`, mime: 'application/pdf' })).id;
+    }
+    const r = await db.insertInto('evidence_captures').values({ assignment_id: assignmentId, file_id: fileId, source_kind: 'igr', source_name: 'Index II received with the documents', status: 'uploaded' }).executeTakeFirstOrThrow();
+    await enqueue('evidence.read', { captureId: Number(r.insertId) }, { firmId });
+    await audit(systemActor(firmId), { entityType: 'document_part', entityId: p.id, assignmentId, action: 'document.index2_comparable', summary: `${p.title ?? 'Index II'} (p. ${pg.join(', ')}) is for another flat or other parties than the agreement: treated as a comparable sale. Its values are not used for this property; it is read on Market evidence and prints under Sale transactions.` });
+  }
+  if (other.length) await syncChecklist(assignmentId);
+  if (other.length) await publish({ type: 'document.read', firmId, entityType: 'assignment', entityId: assignmentId, payload: { index2: other.map((p) => p.id) } });
 }
 
 /** Pages whose OCR is weak, or handwritten-prone documents, are also sent as images. */
@@ -211,11 +288,12 @@ export async function readDocument(documentId: number) {
     const partPages = pages.filter((x) => sorted.includes(x.page_no)).map((x, i) => ({ ...x, page_no: i + 1, orig_page: x.page_no }));
     const imgs = await pageImages(partPages, (x) => weak(x) || ['oc', 'index2', 'index2_prev'].includes(p.doc_type), 6);
     const { values } = await extractFields(a.firm_id, p.doc_type, t?.label ?? p.doc_type, a.property_type, partPages, imgs);
-    await writeCandidates(a.id, a.firm_id, values.map((v) => ({
+    await writeCandidates(a.id, a.firm_id, ranked(values).map((v) => ({
       fieldCode: v.field_code, value: v.value, sourceType: 'document' as const, docType: p.doc_type, partId, documentId,
-      page: partPages[v.page - 1]?.orig_page ?? sorted[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence),
+      page: partPages[v.page - 1]?.orig_page ?? sorted[0], snippet: v.snippet, snippetLang: v.snippet_language, confidence: Math.round(v.confidence), keep: v.keep, chosen: v.chosen,
     })));
   }
+  await reconcileIndex2(a.id, a.firm_id);
   if (kycPages) await applyKyc(documentId, a.firm_id);
   // page numbers as the document list shows them: after KYC pages are taken out of the stored file
   const renumber = (n: number) => n - [...kycSet].filter((k) => k < n).length;

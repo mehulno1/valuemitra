@@ -32,6 +32,14 @@ interface ValView {
   readyReckoner?: { rate: unknown; year: unknown; zone: unknown; property: unknown; snippet: string | null; fromGuideline: boolean } | null;
   rera?: { number: unknown; date: unknown; project: unknown; carpet: unknown };
   history: { id: number; adopted_rate: unknown; proposed_rate: unknown; reason: string | null; draft_version: number; created_at: string; by: string | null; fmv: number }[];
+  locationNote?: { display: string | null; state: string; edited: boolean };
+  work?: WorkView;
+  rateFactors?: { label: string; avg: number; hint?: string }[];
+}
+interface WorkRow { key: string; label: string; weight: number; pct: number; note: string | null; weighted: number; per_floor: boolean }
+interface WorkView {
+  applies: boolean; pct: number | null; source: string | null; reason: string | null; rows: WorkRow[]; hasStages: boolean; stagesFrom: string | null;
+  raw: number | null; worked: number | null; step: number; printPresent: boolean; presentValue: number | null;
 }
 interface Custom { label: string; qty: string; rate: string }
 interface Factor { k: string; pct: string; note: string }
@@ -45,11 +53,13 @@ function composeReason(fs: Factor[], note: string) {
   const t = note.trim();
   return [parts.join('; '), t].filter(Boolean).join(parts.length && t ? '. ' : '') || '';
 }
-function parseReason(r: string | null): { fs: Factor[]; note: string } {
+function parseReason(r: string | null, names: string[] = FACTORS): { fs: Factor[]; note: string } {
   if (!r) return { fs: [], note: '' };
   const fs: Factor[] = [];
   let rest = r;
-  const re = new RegExp(`^(${FACTORS.map((f) => f.replace(/[/]/g, '\\/')).join('|')}) ([+−-]?[\\d.]+)%(?: \\(([^)]*)\\))?(?:; |\\. |$)`);
+  // longest names first, so "Interior & internal condition" is not cut at a shorter name
+  const alt = [...new Set([...names, ...FACTORS])].sort((a, b) => b.length - a.length).map((f) => f.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')).join('|');
+  const re = new RegExp(`^(${alt}) ([+−-]?[\\d.]+)%(?: \\(([^)]*)\\))?(?:; |\\. |$)`);
   for (let m = rest.match(re); m; m = rest.match(re)) { fs.push({ k: m[1], pct: m[2].replace('−', '-'), note: m[3] ?? '' }); rest = rest.slice(m[0].length); }
   return { fs, note: rest };
 }
@@ -100,7 +110,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
     // evidence is per sq.ft. built-up: convert it to the chosen area and unit
     const ev = n(d.proposal?.rate) !== null && opt?.sqft && bua0 ? Math.round((n(d.proposal!.rate)! * bua0 / inUnit(opt.sqft, d.unit)) / 100) * 100 : n(d.proposal?.rate);
     setRate(String(n(cur?.adopted_rate) ?? ev ?? ''));
-    const pr = parseReason(cur?.reason ?? null);
+    const pr = parseReason(cur?.reason ?? null, (d.rateFactors ?? []).map((f) => f.label));
     setFactors(pr.fs);
     setNote(pr.note);
     const ex = cur?.extras ?? [];
@@ -151,15 +161,23 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
   const differs = !!prop && !!rateN && Math.abs(diff) > 0.001;
   const outside = !!prop && !!rateN && Math.abs(diff) * 100 > r.rate_deviation_pct;
   const factorSum = factors.reduce((t, f) => t + (f.k ? pctOf(f.pct) : 0), 0);
+  // the firm's rate analysis sheet for this property type: factors with their usual % and what to look at
+  const sheet = d.rateFactors?.length ? d.rateFactors : FACTORS.map((label) => ({ label, avg: 0, hint: undefined as string | undefined }));
+  const factorNames = sheet.map((f) => f.label);
+  const sheetOf = (k: string) => sheet.find((f) => f.label === k);
+  // base rate (the evidence-backed rate on the chosen area) with the factors applied
+  const analysed = evRate && factors.some((f) => f.k && pctOf(f.pct)) ? Math.round((evRate * (1 + factorSum / 100)) / 100) * 100 : null;
   const explained = factors.some((f) => f.k && pctOf(f.pct)) || note.trim().length >= 15;
 
+  // insurance: the rate the server will use (the band for the building's upper floors, or this case's own rate)
+  const insRate = d.insurance?.rate ?? r.building_cost_per_sqft;
   // live preview with the same rules and rounding steps the server applies
   const extrasTotal = extras.reduce((t, e) => t + (e.amount ?? (e.qty ?? 1) * (e.rate ?? 0)), 0);
   const step = r.value_rounding_step || 1;
   const pv = area && rateN ? (() => {
     const unit = area * rateN;
     const fmv = roundTo(unit + extrasTotal, step);
-    return { unit, fmv, realizable: roundTo((fmv * r.realizable_pct) / 100, step), distress: roundTo((fmv * r.distress_pct) / 100, step), insurable: bua ? roundTo(bua * r.building_cost_per_sqft, step) : null, rent: roundTo((fmv * r.rental_yield_pct) / 100 / 12, r.rent_rounding_step) };
+    return { unit, fmv, realizable: roundTo((fmv * r.realizable_pct) / 100, step), distress: roundTo((fmv * r.distress_pct) / 100, step), insurable: bua ? roundTo(bua * insRate, step) : null, rent: roundTo((fmv * r.rental_yield_pct) / 100 / 12, r.rent_rounding_step) };
   })() : null;
   const roundingNote = `values to the nearest Rs. ${inr(step)}, rent to the nearest Rs. ${inr(r.rent_rounding_step || 1)} (${c.bank_code} rule)`;
 
@@ -259,15 +277,26 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
               <div className="text-[13px] font-semibold">Reason, if different from the evidence-backed rate{outside ? ' (required)' : ' (optional)'}</div>
               {factors.map((f, i) => (
                 <div key={i} className="grid grid-cols-[1fr_80px_auto] gap-2 sm:grid-cols-[1.2fr_80px_1.4fr_auto]">
-                  <select value={f.k} disabled={!canApply} aria-label="Factor" onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))}>
-                    {FACTORS.map((k) => <option key={k} value={k}>{k}</option>)}
+                  <select value={f.k} disabled={!canApply} aria-label="Factor" title={sheetOf(f.k)?.hint} onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))}>
+                    {[...new Set([...factorNames, f.k])].map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
-                  <input className="mono" inputMode="decimal" value={f.pct} disabled={!canApply} aria-label="Effect on the rate, %" placeholder="+5 %" onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, pct: e.target.value } : x)))} />
-                  <input className="col-span-3 sm:col-span-1" value={f.note} disabled={!canApply} aria-label="Details" placeholder="e.g. 8th floor, open creek view" onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))} />
+                  <input className="mono" inputMode="decimal" value={f.pct} disabled={!canApply} aria-label="Effect on the rate, %" placeholder={sheetOf(f.k)?.avg ? `usual ${sign(sheetOf(f.k)!.avg)}%` : '+5 %'} onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, pct: e.target.value } : x)))} />
+                  <input className="col-span-3 sm:col-span-1" value={f.note} disabled={!canApply} aria-label="Details" placeholder={sheetOf(f.k)?.hint ?? 'e.g. 8th floor, open creek view'} onChange={(e) => setFactors(factors.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))} />
                   {canApply && <button className="btn sm ghost row-start-1 col-start-3 sm:col-start-4" aria-label="Remove factor" onClick={() => setFactors(factors.filter((_, j) => j !== i))}>Remove</button>}
                 </div>
               ))}
-              {canApply && <div><button className="btn sm ghost" onClick={() => setFactors([...factors, { k: FACTORS.find((k) => !factors.some((f) => f.k === k)) ?? FACTORS[0], pct: '', note: '' }])}>Add a factor</button></div>}
+              {canApply && (
+                <div className="btns">
+                  <button className="btn sm ghost" onClick={() => setFactors([...factors, { k: factorNames.find((k) => !factors.some((f) => f.k === k)) ?? factorNames[0], pct: '', note: '' }])}>Add a factor</button>
+                  {!!d.rateFactors?.length && factors.length < factorNames.length && <button className="btn sm ghost" title="Every factor of the firm's rate analysis sheet, to fill in the ones that apply" onClick={() => setFactors([...factors, ...factorNames.filter((k) => !factors.some((f) => f.k === k)).map((k) => ({ k, pct: '', note: '' }))])}>Open the rate analysis sheet</button>}
+                </div>
+              )}
+              {analysed !== null && evRate !== null && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px]">
+                  <span>Rate analysis: base Rs. {inr(evRate)} {sign(Math.round(factorSum * 10) / 10)}% = <b>Rs. {inr(analysed)}</b> per {ul}</span>
+                  {canApply && analysed !== rateN && <button className="btn sm" onClick={() => setRate(String(analysed))}>Use Rs. {inr(analysed)}</button>}
+                </div>
+              )}
               {differs && factors.length > 0 && (
                 <div className="sub text-[12.5px]">Factors add up to {sign(Math.round(factorSum * 10) / 10)}% against a gap of {sign(Math.round(diff * 1000) / 10)}% from the evidence.</div>
               )}
@@ -317,7 +346,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
                   <Row label="Fair market value" working={`${fmtArea(area!, unit)} ${ul} × Rs. ${inr(rateN)}${extrasTotal ? ` + extras Rs. ${inr(extrasTotal)}` : ''}`} value={pv.fmv} strong />
                   <Row label={`Realizable · ${r.realizable_pct}%`} working={`FMV × ${r.realizable_pct}%`} value={pv.realizable} />
                   <Row label={`Distress · ${r.distress_pct}%`} working={`FMV × ${r.distress_pct}%`} value={pv.distress} />
-                  <Row label="Insurable" working={`Rs. ${inr(r.building_cost_per_sqft)} × BUA ${inr(bua)} sq.ft.`} value={pv.insurable} />
+                  <Row label="Insurable" working={`Rs. ${inr(insRate)} (${d.insurance?.label ?? 'building cost'}) × BUA ${inr(bua)} sq.ft.`} value={pv.insurable} />
                   <Row label="Rent p.m." working={`FMV × ${r.rental_yield_pct}% a year ÷ 12, nearest Rs. ${inr(r.rent_rounding_step || 1)}`} value={pv.rent} />
                 </tbody>
               </table>
@@ -360,6 +389,8 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
             )}
           </Panel>
 
+          {d.work?.applies && <WorkDone c={c} w={d.work} refresh={refresh} locked={locked} />}
+
           <CaseDefaults c={c} d={d} refresh={refresh} locked={locked} />
 
           <PrintedRange c={c} d={d} rate={n(cur?.adopted_rate)} refresh={refresh} locked={locked} />
@@ -369,7 +400,16 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
             {d.justification.state === 'filled' && d.justification.display
               ? <p className="m-0 font-report text-[14.5px] leading-relaxed">{d.justification.display}</p>
               : <Pending label={d.justification.pendingLabel ?? 'Awaiting valuation'} />}
-            <p className="sub mb-0 mt-2">{d.justification.edited ? 'Your wording, printed as written. ' : 'The firm\'s standard wording, printed as is. '}To change it, click it in the draft on the Report & sign-off tab.</p>
+            <p className="sub mb-0 mt-2">{d.justification.edited ? 'Your wording, printed as written. ' : 'The firm\'s standard wording, printed as is. '}Change it here or by clicking it in the draft on the Report & sign-off tab.</p>
+            <TextEdit c={c} code="VAL.JUSTIFICATION" label="Justification" value={d.justification.display} edited={d.justification.edited} refresh={refresh} locked={locked} />
+            {d.locationNote && (
+              <div className="mt-3 border-t border-line pt-3">
+                <div className="eyebrow mb-1">Location sentence printed after it</div>
+                {d.locationNote.display ? <p className="m-0 font-report text-[14.5px] leading-relaxed">{d.locationNote.display}</p> : <Pending label="Awaiting site visit" />}
+                <p className="sub mb-0 mt-2">{d.locationNote.edited ? 'Your wording, printed as written.' : 'Built from the nearest station and its distance on the site sheet.'}</p>
+                <TextEdit c={c} code="VAL.LOCATION_NOTE" label="Location sentence" value={d.locationNote.display} edited={d.locationNote.edited} refresh={refresh} locked={locked} />
+              </div>
+            )}
           </Panel>
         </div>
       </div>
@@ -509,6 +549,119 @@ function PrintedRange({ c, d, rate, refresh, locked }: { c: TabProps['c']; d: Va
       )}
       <p className="sub mb-0 mt-2">{pr.edited ? 'Entered by the valuer. ' : 'Worked out from the comparables, widened to take in the adopted rate. '}
         {pr.edited && may && <button className="linkbtn" disabled={reset.isPending} onClick={() => reset.mutate()}>Work it out from the comparables again</button>}</p>
+    </Panel>
+  );
+}
+
+/** Change a sentence the report prints (justification, location) in one place; the report's click-to-edit saves the same field. */
+function TextEdit({ c, code, label, value, edited, refresh, locked }: { c: TabProps['c']; code: string; label: string; value: string | null; edited: boolean; refresh: () => void; locked: boolean }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (v: string | null) => api.put(`/api/assignments/${c.id}/fields/${code}`, { value: v, reason: v === null ? 'Back to the standard wording' : 'Edited on the Valuation tab' }),
+    onSuccess: (_r, v) => { toast(v === null ? `${label}: standard wording again` : `${label} saved; draft updated`); setDraft(null); refresh(); },
+    onError: onErr,
+  });
+  if (!can('val') || locked) return null;
+  if (draft === null) return (
+    <div className="btns mt-2">
+      <button className="btn sm ghost" onClick={() => setDraft(value ?? '')}>Edit</button>
+      {edited && <button className="linkbtn" disabled={save.isPending} onClick={() => save.mutate(null)}>Use the standard wording</button>}
+    </div>
+  );
+  return (
+    <div className="mt-2 grid gap-2">
+      <textarea rows={4} autoFocus value={draft} aria-label={label} onChange={(e) => setDraft(e.target.value)} />
+      <div className="btns"><button className="btn pri sm" disabled={!draft.trim() || save.isPending} onClick={() => save.mutate(draft.trim())}>Save</button><button className="btn ghost sm" onClick={() => setDraft(null)}>Cancel</button></div>
+    </div>
+  );
+}
+
+/** A building under construction: the % of work completed worked out from the stage of each activity with the firm's
+ *  weightage table, the working activity by activity, the valuer's own figure with a reason, and whether the value as
+ *  per work completed prints in the report (off unless switched on). */
+function WorkDone({ c, w, refresh, locked }: { c: TabProps['c']; w: WorkView; refresh: () => void; locked: boolean }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const [open, setOpen] = useState(!w.hasStages);
+  const [stages, setStages] = useState<Record<string, string> | null>(null);
+  const [own, setOwn] = useState<{ pct: string; reason: string } | null>(null);
+  const may = can('edit') && !locked;
+  const put = (code: string, value: string | null, reason: string) => api.put(`/api/assignments/${c.id}/fields/${code}`, { value, reason });
+  const done = (msg: string) => () => { toast(msg); setStages(null); setOwn(null); refresh(); };
+  const saveStages = useMutation({
+    mutationFn: () => put('PHYS.WORK_STAGES', JSON.stringify(w.rows.map((r) => ({ key: r.key, pct: Math.max(0, Math.min(100, num(stages![r.key] ?? String(r.pct)))), note: stages![r.key] !== undefined && num(stages![r.key]) !== r.pct ? 'entered by hand' : r.note }))), 'Stage of each activity entered on the Valuation tab'),
+    onSuccess: done('Stages saved; % of work completed worked out again'), onError: onErr,
+  });
+  const saveOwn = useMutation({ mutationFn: () => put('PHYS.PCT_DONE', String(num(own!.pct)), own!.reason.trim()), onSuccess: done('% of work completed set'), onError: onErr });
+  const useWorked = useMutation({ mutationFn: () => put('PHYS.PCT_DONE', null, 'Back to the worked-out figure'), onSuccess: done('Worked-out figure in use again'), onError: onErr });
+  const print = useMutation({
+    mutationFn: (on: boolean) => put('VAL.PRINT_PRESENT', on ? 'Yes' : null, on ? 'Value as per work completed printed' : 'Value as per work completed not printed'),
+    onSuccess: (_r, on) => { toast(on ? 'The value as per work completed prints in the report' : 'The value as per work completed is left out of the report'); refresh(); }, onError: onErr,
+  });
+  // live total while the stages are being edited
+  const pctOfRow = (r: WorkRow) => (stages && stages[r.key] !== undefined ? Math.max(0, Math.min(100, num(stages[r.key]))) : r.pct);
+  const raw = Math.round(w.rows.reduce((t, r) => t + (r.weight * pctOfRow(r)) / 100, 0) * 100) / 100;
+  const rounded = Math.min(100, Math.floor(raw / (w.step || 1) + 0.5) * (w.step || 1));
+  const manual = w.source === 'manual';
+  return (
+    <Panel title="Work completed (under construction)" right={<button className="btn sm ghost" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide the working' : 'How it is worked out'}</button>}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {w.pct === null ? <Pending label="Stage of work not known yet" /> : <span className="text-[22px] font-semibold">{w.pct}%</span>}
+        <span className="sub">{manual ? `set by the valuer${w.reason ? `: ${w.reason}` : ''}${w.worked !== null ? ` · worked out: ${w.worked}%` : ''}` : w.source === 'derived' ? `worked out from the stage of each activity${w.stagesFrom === 'manual' ? ' (entered by hand)' : ' (site sheet)'}: ${w.raw}% → ${w.worked}%` : w.source === 'site_sheet' ? 'as stated on the site sheet' : 'enter the stage of each activity below'}</span>
+      </div>
+      {open && (
+        <div className="mt-3">
+          <div className="tablewrap">
+            <table className="list">
+              <thead><tr><th>Activity</th><th className="text-right">Weight %</th><th className="text-right">Completed %</th><th className="text-right">Counts</th></tr></thead>
+              <tbody>
+                {w.rows.map((r) => (
+                  <tr key={r.key}>
+                    <td>{r.label}{r.note && <div className="sub">{r.note}</div>}</td>
+                    <td className="n mono">{r.weight}</td>
+                    <td className="n mono">{stages ? <input className="inp text-right" style={{ maxWidth: 80 }} inputMode="decimal" aria-label={`${r.label}: % completed`} value={stages[r.key] ?? String(r.pct)} onChange={(e) => setStages({ ...stages, [r.key]: e.target.value })} /> : r.pct}</td>
+                    <td className="n mono">{(Math.round(r.weight * pctOfRow(r)) / 100).toFixed(2)}</td>
+                  </tr>
+                ))}
+                <tr><td className="font-semibold">Total</td><td className="n mono">{Math.round(w.rows.reduce((t, r) => t + r.weight, 0))}</td><td /><td className="n mono font-semibold">{raw.toFixed(2)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="sub mb-0 mt-2">Weight × completed, summed: {raw.toFixed(2)}%, rounded to the nearest {w.step}% (halves up) = <b>{rounded}%</b>. Per-floor activities count floors done ÷ floors of the building. The activities and weights are the firm's (Firm settings → Valuation rules).</p>
+          {may && (stages
+            ? <div className="btns mt-2"><button className="btn pri sm" disabled={saveStages.isPending} onClick={() => saveStages.mutate()}>Save stages</button><button className="btn ghost sm" onClick={() => setStages(null)}>Cancel</button></div>
+            : <div className="btns mt-2"><button className="btn sm" onClick={() => setStages({})}>Change the stages</button></div>)}
+        </div>
+      )}
+      {may && (own
+        ? (
+          <div className="mt-3 grid gap-2 border-t border-line pt-3">
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="Work completed, %"><input className="inp" style={{ maxWidth: 110 }} inputMode="decimal" value={own.pct} onChange={(e) => setOwn({ ...own, pct: e.target.value })} /></Field>
+              <Field label="Reason (required)"><input value={own.reason} onChange={(e) => setOwn({ ...own, reason: e.target.value })} placeholder="e.g. finishing of this wing is ahead of the rest" /></Field>
+            </div>
+            <div className="btns"><button className="btn pri sm" disabled={!(num(own.pct) > 0 && num(own.pct) <= 100) || own.reason.trim().length < 5 || saveOwn.isPending} onClick={() => saveOwn.mutate()}>Set this figure</button><button className="btn ghost sm" onClick={() => setOwn(null)}>Cancel</button></div>
+          </div>
+        ) : (
+          <div className="btns mt-3">
+            <button className="btn sm ghost" onClick={() => setOwn({ pct: String(w.pct ?? ''), reason: '' })}>Set the % myself</button>
+            {manual && w.worked !== null && <button className="linkbtn" disabled={useWorked.isPending} onClick={() => useWorked.mutate()}>Use the worked-out {w.worked}%</button>}
+          </div>
+        ))}
+      <div className="mt-3 border-t border-line pt-3">
+        <label className="flex items-start gap-2">
+          <input type="checkbox" className="mt-1" checked={w.printPresent} disabled={!can('val') || locked || print.isPending} onChange={(e) => print.mutate(e.target.checked)} />
+          <span><b className="font-medium">Print value as per work completed</b>
+            <span className="sub block">{w.printPresent
+              ? `Prints the "as per current stage of ${w.pct ?? '…'}% work completion" row, the "As on date" line and the remark${w.presentValue !== null ? `: Rs. ${inr(w.presentValue)}` : ''}.`
+              : 'Off: the value-today row, the "As on date is Fair Market value" line and the "At present only …% of the building work is completed" remark are left out. The % of work completed still prints in section 6.'}</span>
+          </span>
+        </label>
+      </div>
     </Panel>
   );
 }

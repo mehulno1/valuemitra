@@ -99,6 +99,15 @@ async function mergeIntoFirmVersions() {
     } else if (row.kind === 'profile' && row.ckey === 'flat') {
       const have = new Set((next.checklist ?? []).map((c: any) => c.code));
       for (const c of PROFILE_FLAT.checklist) if (!have.has(c.code)) (next.checklist ??= []).push(c);
+      // new properties of items the firm already has (optional title report, floor plan's document type, the
+      // field that marks a plan unreadable): added where the firm's item does not set them
+      for (const c of PROFILE_FLAT.checklist as any[]) {
+        const mine = (next.checklist ?? []).find((x: any) => x.code === c.code);
+        if (!mine) continue;
+        for (const k of ['optional', 'unreadable_field']) if (c[k] !== undefined && mine[k] === undefined) mine[k] = c[k];
+        if (c.doc_types?.length && !(mine.doc_types ?? []).length) mine.doc_types = c.doc_types;
+      }
+      for (const k of ['marks', 'sign_questions'] as const) if (!next[k] && (PROFILE_FLAT as any)[k]) next[k] = (PROFILE_FLAT as any)[k];
       const sf = new Set(next.site_sheet_fields ?? []);
       for (const f of PROFILE_FLAT.site_sheet_fields) if (!sf.has(f)) (next.site_sheet_fields ??= []).push(f);
       const ld = new Set((next.legal_documents ?? []).map((x: any) => x.key));

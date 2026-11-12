@@ -18,6 +18,7 @@ export interface ResolvedField {
 export interface FieldsResp {
   sections: { title: string; fields: ResolvedField[] }[]; filled: number; total: number; fromDocuments: number; signed: boolean;
   legal?: { items: { key: string; field: string }[]; skip: string[] };
+  marks?: { field: string; label: string; on: string[]; value: boolean }[];
 }
 
 const RULE_SOURCES = new Set(['derived', 'wording', 'case', 'firm', 'checklist', 'valuation', 'evidence']);
@@ -64,6 +65,16 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
     } catch (e) { err(e); }
   };
 
+  // ticks beside fields (a plan that cannot be read): each sets a Yes/No field
+  const markOf = (code: string) => (d.marks ?? []).find((m) => m.on.includes(code));
+  const setMark = async (m: { field: string; label: string }, on: boolean) => {
+    try {
+      await api.put(`/api/assignments/${c.id}/fields/${encodeURIComponent(m.field)}`, { value: on ? 'Yes' : null });
+      toast(on ? `Marked "${m.label}": the plan lines print "Not provided (clear copy required)"` : `"${m.label}" removed: printed as read`);
+      refresh();
+    } catch (e) { err(e); }
+  };
+
   return (
     <div>
       {d.fromDocuments === 0 && (
@@ -91,11 +102,18 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
               const listed = key ? !skip.includes(key) : true;
               return (
                 <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} canRules={canRules} docLabel={docLabel} refresh={refresh} goVal={() => go('val')}
-                  extra={key && f.state === 'filled' ? (
-                    <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="Listed under Legal documents in the report">
-                      <input type="checkbox" checked={listed} disabled={!editable} onChange={(e) => setListed(key, e.target.checked)} /> In report
-                    </label>
-                  ) : null} />
+                  extra={<>
+                    {markOf(f.code) && (
+                      <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="The copy received cannot be read: it is not cited, and a clear copy is asked for">
+                        <input type="checkbox" checked={markOf(f.code)!.value} disabled={!editable} onChange={(e) => setMark(markOf(f.code)!, e.target.checked)} /> {markOf(f.code)!.label}
+                      </label>
+                    )}
+                    {key && f.state === 'filled' ? (
+                      <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="Listed under Legal documents in the report">
+                        <input type="checkbox" checked={listed} disabled={!editable} onChange={(e) => setListed(key, e.target.checked)} /> In report
+                      </label>
+                    ) : null}
+                  </>} />
               );
             })}
           </section>

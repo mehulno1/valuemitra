@@ -311,6 +311,13 @@ export function keepTablesWithHeadings(doc: XDoc, longTable = 15): number {
       const next = rows[i + 1];
       if (!next || !headingRow(tr) || breaks(tr) || breaks(next)) return;
       children(tr, 'w:tc').forEach((tc) => children(tc, 'w:p').forEach(keepNext));
+      // the heading stays with its first three rows ("13 Enclosures" never ends a page with only row a) under it):
+      // the first two rows after it keep with the row that follows each
+      for (const lead of rows.slice(i + 1, i + 3)) {
+        const after = rows[rows.indexOf(lead) + 1];
+        if (!after || headingRow(lead) || els(lead, 'w:tbl').length || breaks(lead) || breaks(after) || headingRow(after)) break;
+        children(lead, 'w:tc').forEach((tc) => children(tc, 'w:p').forEach(keepNext));
+      }
     });
   }
   // inside a cell: a short heading line before a table ("Summary of Valuation") or ending in a colon

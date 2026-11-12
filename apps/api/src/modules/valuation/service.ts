@@ -16,7 +16,7 @@ import { DOCS, requireKind } from '../../lib/sniff.js';
 import { mapCoords, parseLatLng } from '../../lib/coords.js';
 import { getSettings, setSettings } from '../../platform/settings.js';
 import { inr } from '@vm/shared';
-import { caseData, type CaseData } from '../casedata/resolver.js';
+import { caseData, workPct, type CaseData } from '../casedata/resolver.js';
 import { writeCandidates } from '../casedata/values.js';
 import { assertCase } from '../documents/service.js';
 import { adjustComparable, computeValues, flagOutliers, floorNo, insuranceBand, propose, toBua, type Adjustment, type Extra } from './engine.js';
@@ -42,14 +42,18 @@ export async function lookupReadyReckoner(assignmentId: number, firmId: number) 
     .filter((r) => [r.village, ...(r.village_alt ?? '').split(',')].some((x) => norm(x) && (norm(x) === v || v.includes(norm(x)) || norm(x).includes(v))))
     .sort((a, b) => (a.year_label === year ? -1 : 0) - (b.year_label === year ? -1 : 0) || (norm(b.district) === district ? 1 : 0) - (norm(a.district) === district ? 1 : 0))[0];
   if (!hit) return null;
-  const snippet = `Ready reckoner ${hit.year_label}: Village ${hit.village}, ${hit.district}${hit.zone ? `, zone ${hit.zone}` : ''}, ${hit.category}: Rs. ${hit.rate_per_sqm}/sq.m.`;
+  // no row for the report's financial year: the latest year's rate carries forward and is labelled with the report's
+  // year (rule rr_carry_forward; the snippet says which year's table it came from)
+  const carried = hit.year_label !== year && !!(data.rules as { rr_carry_forward?: number }).rr_carry_forward;
+  const label = carried ? year : hit.year_label;
+  const snippet = `Ready reckoner ${label}${carried ? ` (rates unchanged from ${hit.year_label})` : ''}: Village ${hit.village}, ${hit.district}${hit.zone ? `, zone ${hit.zone}` : ''}, ${hit.category}: Rs. ${hit.rate_per_sqm}/sq.m.`;
   // the rate read from the case's own ready reckoner screenshot wins; the master is kept to compare (check rr_mismatch)
   const shot = data.get('VAL.RR_SHOT_SQM').state === 'filled';
   await writeCandidates(assignmentId, firmId, [
     { fieldCode: 'VAL.RR_MASTER_SQM', value: hit.rate_per_sqm, sourceType: 'evidence', snippet, confidence: 99 },
     ...(shot ? [] : [
       { fieldCode: 'VAL.RR_RATE_SQM', value: hit.rate_per_sqm, sourceType: 'evidence' as const, snippet, confidence: hit.year_label === year ? 99 : 80 },
-      { fieldCode: 'VAL.RR_YEAR', value: hit.year_label, sourceType: 'evidence' as const, snippet, confidence: 99 },
+      { fieldCode: 'VAL.RR_YEAR', value: label, sourceType: 'evidence' as const, snippet, confidence: carried ? 80 : 99 },
       ...(hit.zone ? [{ fieldCode: 'VAL.RR_ZONE', value: hit.zone, sourceType: 'evidence' as const, snippet, confidence: 99 }] : []),
     ]),
   ]);
@@ -93,6 +97,7 @@ const EntrySchema = z.object({
     description: z.string().describe('e.g. "1 BHK, G+7 building with lift"'),
     building: z.string().nullable(), society: z.string().nullable(), locality: z.string().nullable(), village: z.string().nullable(),
     reference: z.string().nullable().describe('Index II / document no., or listing id'),
+    site: z.string().nullable().describe('For a listing: the website it is from as people call it, e.g. "99acres", "Housing.com", "MagicBricks"; null for a registered sale'),
     date: z.string().nullable().describe('Registration date, or the listing posted date if shown, as YYYY-MM-DD'),
     area_sqft: z.number().describe('Area in sq.ft. as stated (convert sq.m. × 10.764). When the page gives carpet area as well as built-up / super area, give the carpet area'),
     area_basis: z.enum(['bua', 'carpet', 'saleable']).describe('What the stated area is: "Super built-up", "Super area" and "Saleable" are saleable; "Built-up" / "Plinth" is bua; "Carpet" is carpet'),
@@ -125,11 +130,12 @@ async function readCapture(captureId: number) {
     const bua = toBua(e.area_sqft, e.area_basis, rules);
     const comp = await db.insertInto('comparables').values({
       firm_id: a.firm_id, scope: 'private', source_type: e.kind === 'listing' ? 'listing' : c.source_kind === 'igr' || c.source_kind === 'proptrace' ? 'igr_search' : 'index2',
-      source_ref: e.reference ?? c.source_name ?? (c.source_kind === 'proptrace' ? 'PropTrace' : null), property_type: a.property_type, building: e.building, society: e.society, locality: e.locality, village: e.village,
+      // a listing is cited by its website (the rate indicators chart prints it); its id goes in the notes
+      source_ref: e.kind === 'listing' ? e.site ?? c.source_name ?? e.reference : e.reference ?? c.source_name ?? (c.source_kind === 'proptrace' ? 'PropTrace' : null), property_type: a.property_type, building: e.building, society: e.society, locality: e.locality, village: e.village,
       txn_date: e.date ? new Date(e.date) : e.kind === 'listing' ? new Date() : null, is_asking_price: e.kind === 'listing' ? 1 : 0,
       area_value: e.area_sqft, area_basis: e.area_basis, area_bua_sqft: Math.round(bua), price: e.price, rate_per_sqft: Math.round(e.price / bua),
       floor_no: e.floor, total_floors: e.total_floors, has_lift: e.has_lift === null ? null : e.has_lift ? 1 : 0, building_age: e.building_age, bhk: e.bhk,
-      notes: `${e.description}${e.area_basis !== 'bua' ? ` · ${e.area_basis} ${e.area_sqft} → built-up ${Math.round(bua)}` : ''}${e.kind === 'listing' ? ' · listing date is the capture date unless shown' : ''}`,
+      notes: `${e.description}${e.area_basis !== 'bua' ? ` · ${e.area_basis} ${e.area_sqft} → built-up ${Math.round(bua)}` : ''}${e.kind === 'listing' ? `${e.reference ? ` · listing ${e.reference}` : ''} · listing date is the capture date unless shown` : ''}`,
       file_id: c.file_id, origin_assignment_id: a.id,
     }).executeTakeFirstOrThrow();
     await db.insertInto('case_comparables').values({ assignment_id: a.id, comparable_id: Number(comp.insertId), capture_id: captureId, adjustments: toJson([]), adjusted_rate: 0, weight: 0, weight_label: 'Low' }).execute();
@@ -209,7 +215,8 @@ export async function resolveCaptureKind(actor: Actor, assignmentId: number, cap
     await db.updateTable('evidence_captures').set({ suggested_kind: null, check_note: null, in_report: 1 }).where('id', '=', c.id).execute();
   } else {
     const printOnly = PRINT_ONLY.has(to);
-    await db.updateTable('evidence_captures').set({ source_kind: to, suggested_kind: null, check_note: null, in_report: printOnly ? 1 : 0, status: printOnly ? 'read' : 'uploaded' }).where('id', '=', c.id).execute();
+    // the source name was typed for what it was uploaded as ("IGR e-ASR"): it would caption the page wrongly where it now prints
+    await db.updateTable('evidence_captures').set({ source_kind: to, source_name: null, suggested_kind: null, check_note: null, in_report: printOnly ? 1 : 0, status: printOnly ? 'read' : 'uploaded' }).where('id', '=', c.id).execute();
     await enqueue(printOnly ? 'evidence.check' : 'evidence.read', { captureId: c.id }, { firmId: a.firm_id });
   }
   await audit(actor, { entityType: 'evidence', entityId: c.id, assignmentId: a.id, action: 'evidence.kind_resolve', summary: action === 'keep' ? `Kept as ${CAPTURE_LABEL[c.source_kind as CaptureKind]} page.` : `Moved from ${CAPTURE_LABEL[c.source_kind as CaptureKind]} to ${CAPTURE_LABEL[to]}.` });
@@ -552,6 +559,34 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
   });
 }
 
+/** % of work completed for a building under construction: the working activity by activity (firm's weightage
+ *  table × the stage of each activity), the figure in use, and whether the value as per work completed prints. */
+function workView(data: CaseData) {
+  const applies = data.value('PHYS.BUILDING_STATUS') === 'Under construction' && !data.value('DOC.OC.NUMBER');
+  const weights = data.rules.work_weights ?? [];
+  const st = data.get('PHYS.WORK_STAGES');
+  const w = workPct(st.value, weights, data.rules.pct_done_rounding);
+  const total = weights.reduce((t, x) => t + (Number(x.weight) || 0), 0) || 1;
+  const p = data.get('PHYS.PCT_DONE');
+  const fmv = Number(data.value('VAL.FMV')) || null;
+  const pct = p.state === 'filled' ? Number(p.value) : null;
+  return {
+    applies,
+    pct,
+    // 'manual': set by the valuer; 'derived': worked out from the stages; 'site_sheet': a percentage the sheet stated
+    source: p.edited ? 'manual' : p.source,
+    reason: p.edited ? p.candidates.filter((c) => c.sourceType === 'manual' || c.sourceType === 'report_edit').at(-1)?.reason ?? null : null,
+    rows: w?.rows ?? weights.map((x) => ({ key: x.key, label: x.label, weight: Math.round((Number(x.weight) / total) * 10000) / 100, pct: 0, note: null as string | null, weighted: 0, per_floor: !!x.per_floor })),
+    hasStages: !!w,
+    stagesFrom: st.state !== 'filled' ? null : st.edited ? 'manual' : st.source,
+    raw: w?.raw ?? null,
+    worked: w?.pct ?? null,
+    step: data.rules.pct_done_rounding ?? 5,
+    printPresent: data.value('VAL.PRINT_PRESENT') === 'Yes',
+    presentValue: fmv && pct !== null ? Math.round((fmv * pct) / 100) : null,
+  };
+}
+
 export async function valuationView(firmId: number, assignmentId: number) {
   await assertCase(firmId, assignmentId);
   const data = await caseData(assignmentId, firmId);
@@ -583,6 +618,10 @@ export async function valuationView(firmId: number, assignmentId: number) {
     rera: { number: data.value('DOC.RERA.NUMBER'), date: data.value('DOC.RERA.DATE'), project: data.value('DOC.RERA.PROJECT'), carpet: data.value('AREA.RERA_CARPET') },
     current: current ? { ...current, values: json(current.values_json, {}), extras: json(current.extras_json, []) } : null,
     justification: data.get('VAL.JUSTIFICATION'),
+    // the sentence printed after the justification (distance from the station, amenities): editable here and in the report
+    locationNote: data.get('VAL.LOCATION_NOTE'),
+    work: workView(data),
+    rateFactors: data.rules.rate_factors?.[data.case.property_type] ?? data.rules.rate_factors?.flat ?? [],
     // the printed "rates in the nearby area" range: worked out from the comparables and the adopted rate, or the valuer's own
     printedRange: { lo: data.value('VAL.EVIDENCE_LO'), hi: data.value('VAL.EVIDENCE_HI'), edited: data.get('VAL.EVIDENCE_LO').edited || data.get('VAL.EVIDENCE_HI').edited },
     // parking read from the agreement or the site sheet, to prefill the extras

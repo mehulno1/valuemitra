@@ -5,7 +5,8 @@
 import type { Element as XEl } from '@xmldom/xmldom';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { children, els, openDocx, paragraphs, replaceInParagraph, replaceKeepingRuns, saveDocx, setCellText, setParagraphText, tables, textOf, unfloatTables, W_NS, type DocxParts } from './docx.js';
-import { singleField, templateKey } from './codes.js';
+import { conditionKey, singleField, templateKey } from './codes.js';
+import { recommendedFonts, REPORT_FONT } from './fonts.js';
 import type { Slot } from './detect.js';
 
 export const OPEN = '⟪';
@@ -37,6 +38,8 @@ export interface Layout {
   letterhead_pages?: string;
   /** short signature and seal in the footer of every page (else only at the signing blocks) */
   footer_sig?: boolean;
+  /** 'recommended': Times New Roman, body 11 pt, tables 10 pt, chart 9 pt; 'uploaded' (or unset): the file's own fonts */
+  fonts?: 'uploaded' | 'recommended';
 }
 
 const imageSlot = (code: string) =>
@@ -54,7 +57,8 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
     if (slot.kind !== 'placeholder' && slot.kind !== 'inline') continue;
     const p = ps[slot.location.p!];
     if (!p) continue;
-    if (slot.kind === 'placeholder') replaceKeepingRuns(doc, p, slot.location.find!, tagsFor(m));
+    if (slot.kind === 'placeholder' && slot.location.cond) { if (m.fieldCode) conditional(doc, p, slot.location.find!, m.fieldCode, slot.location.cond); }
+    else if (slot.kind === 'placeholder') replaceKeepingRuns(doc, p, slot.location.find!, tagsFor(m));
     else replaceInParagraph(p, slot.location.find!, tagsFor(m));
   }
   for (const m of mappings) {
@@ -74,7 +78,7 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
   // the annexure pages go where the format marks them ({{REPORT.ANNEXURES}} on its own line), else at the end
   const marker = layout.annexures ? paragraphs(doc).find((p) => /\{\{\s*REPORT\.ANNEXURES\s*\}\}/.test(textOf(p))) ?? null : null;
   // unmapped placeholders would print literally (a tag must never print, C2); blank them
-  const ANY_TAG = /\{\{\s*[A-Za-z][A-Za-z0-9_.]*\s*\}\}/g;
+  const ANY_TAG = /\{\{\??\s*(?:row\s+)?[A-Za-z][A-Za-z0-9_.]*\s*\}\}/g;
   for (const p of paragraphs(doc)) {
     if (p === marker) continue;
     for (let guard = 0, m: RegExpMatchArray | null; guard < 50 && (m = textOf(p).replace(/\n/g, '').match(ANY_TAG)); guard++) if (!replaceKeepingRuns(doc, p, m[0], '')) break;
@@ -82,6 +86,7 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
 
   // after every slot is written (slot indices are from the untouched document)
   unfloatTables(doc);
+  if (layout.fonts === 'recommended') recommendedFonts(parts);
   addSignatureSlot(doc, mappings.filter((m) => m.slot.kind === 'para' && /\{\{\s*FIRM\.VALUER_(NAME|BLOCK)\s*\}\}/.test(m.template ?? '')).map(tagsFor));
 
   const body = els(doc, 'w:body')[0];
@@ -121,6 +126,33 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
   dropUnusedImages(parts);
   scrubAuthor(parts);
   return saveDocx(parts);
+}
+
+/** A line or table row that prints only when a field has a value (other than "No"): the marker goes, and the
+ *  paragraph (or its whole row) is wrapped in a condition the renderer evaluates. A dropped paragraph of a numbered
+ *  list renumbers the rest; a dropped row leaves no gap. */
+function conditional(doc: any, p: XEl, find: string, code: string, scope: 'para' | 'row') {
+  replaceKeepingRuns(doc, p, find, '');
+  const key = conditionKey(code);
+  const tagRun = (t: string) => { const r = doc.createElementNS(W_NS, 'w:r'); const x = doc.createElementNS(W_NS, 'w:t'); x.setAttribute('xml:space', 'preserve'); x.textContent = t; r.appendChild(x); return r; };
+  let row: any = null;
+  if (scope === 'row') for (let n: any = p.parentNode; n; n = n.parentNode) if (n.nodeName === 'w:tr') { row = n; break; }
+  const cells = row ? children(row, 'w:tc') : [];
+  if (row && cells.length > 1) {
+    // open in the first cell, close in the last: the renderer repeats or drops the whole row
+    const firstP = children(cells[0], 'w:p')[0];
+    const lastP = children(cells[cells.length - 1], 'w:p').at(-1);
+    if (firstP && lastP) {
+      const pPr = children(firstP, 'w:pPr')[0];
+      firstP.insertBefore(tagRun(tag(`#${key}`)), pPr ? pPr.nextSibling : firstP.firstChild);
+      lastP.appendChild(tagRun(tag(`/${key}`)));
+      return;
+    }
+  }
+  // a paragraph: the condition tags sit alone in paragraphs before and after it (dropped whole at render)
+  const holder = (t: string) => { const h = doc.createElementNS(W_NS, 'w:p'); h.appendChild(tagRun(t)); return h; };
+  p.parentNode!.insertBefore(holder(tag(`#${key}`)), p);
+  p.parentNode!.insertBefore(holder(tag(`/${key}`)), p.nextSibling);
 }
 
 /** Paragraphs from..to: the first gets `text` (null removes it too); body-level elements between go.
@@ -213,7 +245,9 @@ function scrubAuthor(parts: DocxParts) {
 // Annexure pages: one loop of pages; each page holds a 3-, 2- or 1-column grid of images.
 
 const tr = (name: string) => run(tag(name));
-const run = (text: string, rpr = '') => `<w:r>${rpr ? `<w:rPr>${rpr}</w:rPr>` : ''}<w:t xml:space="preserve">${text}</w:t></w:r>`;
+// pages ValueMitra adds (annexures, header, footer) are set in the report font, so the PDF never falls back to a stand-in
+const FONT = `<w:rFonts w:ascii="${REPORT_FONT}" w:hAnsi="${REPORT_FONT}" w:cs="${REPORT_FONT}"/>`;
+const run = (text: string, rpr = '') => `<w:r><w:rPr>${FONT}${rpr}</w:rPr><w:t xml:space="preserve">${text}</w:t></w:r>`;
 const para = (inner: string, ppr = '') => `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${inner}</w:p>`;
 const cellXml = (inner: string, widthPct: number) =>
   `<w:tc><w:tcPr><w:tcW w:w="${Math.round(widthPct * 50)}" w:type="pct"/><w:tcBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/></w:tcBorders></w:tcPr>${inner}</w:tc>`;
@@ -225,7 +259,7 @@ function gridTable(cols: number) {
     .map((l, i) =>
       cellXml(
         para(`${i === 0 ? tr('#rows') : ''}${tr(`%${l}_img`)}`, '<w:spacing w:after="0"/><w:jc w:val="center"/>') +
-          para(run(tag(`${l}_cap`), '<w:sz w:val="18"/>') + (i === cols - 1 ? tr('/rows') : ''), '<w:spacing w:after="120"/><w:jc w:val="center"/>'),
+          para(run(tag(`${l}_cap`), '<w:sz w:val="18"/>') + (i === cols - 1 ? tr('/rows') : ''), '<w:spacing w:before="60" w:after="120"/><w:jc w:val="center"/>'),
         w,
       ),
     )
@@ -326,12 +360,12 @@ function letterheadOnPages(doc: any, pages: number[] | null) {
 }
 
 const FOOTER_PARA = para(
-  `${tr('#SIGNED')}${tr('%MINI_SIG')}${run('  ')}${tr('/SIGNED')}${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`,
+  `${tr('#SIGNED')}${tr('%MINI_SIG')}${run('  ')}${tr('/SIGNED')}${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr>${FONT}<w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`,
   '<w:spacing w:after="0"/><w:jc w:val="right"/>',
 );
 const FOOTER_SIG_PARA = para(`${tr('#SIGNED')}${tr('%MINI_SIG')}${tr('/SIGNED')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>');
 const FOOTER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PARA}</w:ftr>`;
-const FOOTER_PAGE_PARA = para(`${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`, '<w:spacing w:after="0"/><w:jc w:val="right"/>');
+const FOOTER_PAGE_PARA = para(`${run('Page ', '<w:sz w:val="18"/>')}<w:fldSimple w:instr=" PAGE "><w:r><w:rPr>${FONT}<w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>`, '<w:spacing w:after="0"/><w:jc w:val="right"/>');
 const FOOTER_PAGE_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}>${FOOTER_PAGE_PARA}</w:ftr>`;
 const EMPTY_FTR = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS_DECL}><w:p/></w:ftr>`;
 
