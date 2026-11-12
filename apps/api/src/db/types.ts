@@ -787,9 +787,11 @@ export interface Users {
   name: string;
   password_hash: string;
   phone: string | null;
+  print_name: string | null;
   qualifications: string | null;
-  role: "accounts" | "admin" | "checker" | "coordinator" | "maker" | "valuer";
+  role: "accounts" | "admin" | "checker" | "coord_accounts" | "coordinator" | "maker" | "valuer";
   status: Generated<"active" | "disabled">;
+  title: string | null;
   totp_enabled: Generated<number>;
   totp_secret_enc: Buffer | null;
   updated_at: Generated<Date>;

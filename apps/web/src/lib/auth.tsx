@@ -5,7 +5,7 @@ export interface SessionUser {
   id: number;
   name: string;
   email: string;
-  role: 'coordinator' | 'maker' | 'checker' | 'valuer' | 'accounts' | 'admin';
+  role: 'coordinator' | 'coord_accounts' | 'maker' | 'checker' | 'valuer' | 'accounts' | 'admin';
   firm_id: number;
   firm_name: string;
   firm_code: string;

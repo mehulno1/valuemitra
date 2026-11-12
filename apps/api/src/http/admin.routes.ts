@@ -6,7 +6,7 @@ import { db } from '../db/index.js';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { actorOf, authenticate, requirePerm } from '../platform/auth.js';
 import { configById, discardDraft, listConfig, publishConfig, saveDraft, type ConfigKind } from '../platform/config.js';
-import { FEATURE_FLAGS, flagsFor } from '../platform/settings.js';
+import { FEATURE_FLAGS, flagsFor, getSettings } from '../platform/settings.js';
 import { audit } from '../platform/audit.js';
 import * as firm from '../modules/firm/service.js';
 import { dictionary, fieldHistory, saveField } from '../modules/master/dictionary.js';
@@ -38,7 +38,8 @@ export async function adminRoutes(app: FastifyInstance) {
     engineers: await firm.engineers(req.auth!.firmId),
     flags: await flagsFor(req.auth!.firmId),
     // people a case can be assigned to (report maker / checker dropdowns)
-    team: await db.selectFrom('users').select(['id', 'name', 'role']).where('firm_id', '=', req.auth!.firmId).where('status', '=', 'active').where('role', 'in', ['maker', 'checker', 'valuer', 'coordinator']).orderBy('name').execute(),
+    workflow: { skipUnassigned: (await getSettings(req.auth!.firmId)).skip_unassigned_steps !== false },
+    team: await db.selectFrom('users').select(['id', 'name', 'role']).where('firm_id', '=', req.auth!.firmId).where('status', '=', 'active').where('role', 'in', ['maker', 'checker', 'valuer', 'coordinator', 'coord_accounts']).orderBy('name').execute(),
   }));
 
   // ---- firm settings ----

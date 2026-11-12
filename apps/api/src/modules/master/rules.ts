@@ -19,6 +19,8 @@ export interface Rules {
   value_rounding_step: number;
   fmv_rounding_step?: number;
   rate_rounding_step: number;
+  /** the printed range takes in the adopted rate with this margin either side */
+  range_margin_pct?: number;
   rent_rounding_step: number;
   measured_area_tolerance_pct: number;
   size_adjustments: { min_ratio?: number; max_ratio?: number; pct: number }[];

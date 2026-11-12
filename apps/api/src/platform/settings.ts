@@ -29,8 +29,10 @@ export interface FirmSettings {
   tally_ledgers: { sales: string; cgst: string; sgst: string; igst: string; round_off: string; bank: string; tds: string };
   area_basis_defaults: Record<string, { basis: string; unit: 'sqft' | 'sqm' }>;   // "SBI:flat" → area and unit the rate is quoted on
   checker_may_sign: boolean;      // a Report Checker sees Approve and sign (the report prints whoever signs)
+  skip_unassigned_steps: boolean; // a case may go past the report maker / checker when nobody is assigned (small firms)
   // report layout, firm default (a bank format may override): letterhead, footer stamp, annexure grids
-  letterhead_on: 'all' | 'cover' | 'page2' | 'none';
+  letterhead_on: 'all' | 'cover' | 'page2' | 'none' | 'custom';
+  letterhead_pages: string;       // with 'custom': "2", "1, 2", "2-4"
   footer_sig: boolean;
   docs_at_end: boolean;           // copies of documents attached at the end of the report
   min_photos: number;             // photos the report needs at least (the profile's maximum still applies)
@@ -64,7 +66,9 @@ export const DEFAULT_SETTINGS: FirmSettings = {
   tally_ledgers: { sales: 'Valuation Fees', cgst: 'Output CGST', sgst: 'Output SGST', igst: 'Output IGST', round_off: 'Round Off', bank: 'Bank Account', tds: 'TDS Receivable' },
   area_basis_defaults: {},
   checker_may_sign: false,
+  skip_unassigned_steps: true,
   letterhead_on: 'all',
+  letterhead_pages: '',
   footer_sig: true,
   docs_at_end: true,
   min_photos: 9,

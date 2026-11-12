@@ -251,8 +251,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     tx.selectFrom('firms').selectAll().where('id', '=', firmId).executeTakeFirstOrThrow(),
     // whoever signed (a Report Checker may sign); before signing, the firm's valuer
     c.signed_by
-      ? tx.selectFrom('users').select(['name', 'qualifications', 'ibbi_reg_no']).where('id', '=', c.signed_by).where('firm_id', '=', firmId).executeTakeFirst()
-      : tx.selectFrom('users').select(['name', 'qualifications', 'ibbi_reg_no']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst(),
+      ? tx.selectFrom('users').select(['name', 'title', 'print_name', 'qualifications', 'ibbi_reg_no', 'ibbi_valid_upto']).where('id', '=', c.signed_by).where('firm_id', '=', firmId).executeTakeFirst()
+      : tx.selectFrom('users').select(['name', 'title', 'print_name', 'qualifications', 'ibbi_reg_no', 'ibbi_valid_upto']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst(),
     getSettings(firmId, tx),
     tx.selectFrom('field_values').selectAll().where('assignment_id', '=', assignmentId).where('is_current', '=', 1).orderBy('id', 'asc').execute(),
     tx.selectFrom('checklist_items').selectAll().where('assignment_id', '=', assignmentId).orderBy('sort_order').execute(),
@@ -322,7 +322,10 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   const firmValues: Record<string, unknown> = {
     'FIRM.NAME': firm.name,
     'FIRM.ADDRESS': firm.address,
-    'FIRM.VALUER_NAME': valuer?.name ?? null,
+    // the full name as printed ("Manoj Kumar Sharma"); the login name may be shorter (#4)
+    'FIRM.VALUER_NAME': valuer?.print_name?.trim() || valuer?.name || null,
+    'FIRM.VALUER_TITLE': valuer?.title?.trim() || null,
+    'FIRM.VALUER_REG_VALID': valuer?.ibbi_valid_upto ? new Date(valuer.ibbi_valid_upto).toISOString().slice(0, 10) : null,
     'FIRM.VALUER_QUALS': valuer?.qualifications ?? null,
     'FIRM.VALUER_REG': valuer?.ibbi_reg_no ?? null,
     'FIRM.PLACE': settings.place || firm.city,
@@ -347,6 +350,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
     if (!st) continue;
     for (const dt of json<string[]>(i.doc_types, [])) if (docState.get(dt) !== 'provided') docState.set(dt, st);
   }
+  const itemState = new Map<string, 'provided' | 'not_provided' | 'na'>();
+  for (const i of checklist) itemState.set(String(i.item_code).toLowerCase(), i.state === 'y' ? 'provided' : i.state === 'na' ? 'na' : 'not_provided');
   const DOC_LIKE = (s: string) => !['manual', 'case', 'firm', 'checklist', 'derived', 'wording', 'valuation', 'evidence', 'site_sheet'].includes(s);
   const closedDoc = (dt: string) => { const st = docState.get(dt); return st === 'not_provided' || st === 'na'; };
 
@@ -362,6 +367,8 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
 
   const resolveIdent = (name: string): unknown => {
     if (name.startsWith('DOCSTATE.')) return docState.get(name.slice(9).toLowerCase()) ?? null;
+    // a checklist item as Remark 1 reads it (ticked = provided, crossed = not provided): enclosures use the same state
+    if (name.startsWith('CHECKLIST.')) return itemState.get(name.slice(10).toLowerCase()) ?? null;
     // a value stated in a document, on the site sheet or by a person: never one worked out by a derivation
     if (name.startsWith('STATED.')) { const r = fields.has(name.slice(7)) ? get(name.slice(7)) : null; return r && r.source !== 'derived' ? r.value : null; }
     if (name.startsWith('RULE.')) return Object.hasOwn(rules, name.slice(5)) ? (rules as any)[name.slice(5)] ?? null : null;

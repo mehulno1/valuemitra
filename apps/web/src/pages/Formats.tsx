@@ -1,5 +1,6 @@
 // Bank formats: the template engine. List formats and their versions, upload a bank's Word template,
 // confirm how each label maps to a master field, preview against a real case, and publish.
+import { LetterheadChoice } from '@/components/LetterheadChoice';
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
@@ -12,7 +13,7 @@ import FormatReview, { type AiInfo, type ReviewMapping } from './FormatReview';
 interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; confirmed?: number; change_note: string | null; ai_status?: string }
 interface Tpl { id: number; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
 type Mapping = ReviewMapping;
-interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; footer_sig?: boolean }; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
+interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; letterhead_pages?: string; footer_sig?: boolean }; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
 interface DictField { code: string; label: string; group: string; type: string; status: string; sources?: string[] }
 
 const ptLabel = (k: string) => PROPERTY_TYPES.find((p) => p.key === k)?.label ?? k;
@@ -313,9 +314,8 @@ function FormatSettings({ d, edit }: { d: VersionDetail; edit: boolean }) {
     <Panel title="Report layout and rules">
       <div className="grid gap-3">
         <Field label="Letterhead" hint="Where the firm's letterhead prints in this format">
-          <select value={d.layout?.letterhead ?? 'all'} disabled={!edit || !draft} onChange={(e) => layout.mutate({ letterhead: e.target.value })}>
-            <option value="all">Every page</option><option value="cover">Cover page only</option><option value="page2">Page 2 only</option><option value="none">Nowhere (pre-printed paper)</option>
-          </select>
+          <LetterheadChoice value={d.layout?.letterhead ?? ''} pages={d.layout?.letterhead_pages ?? ''} disabled={!edit || !draft || layout.isPending} firmDefault
+            onSave={(on, pages) => layout.mutate(on === '' ? { letterhead: null } : { letterhead: on, letterhead_pages: on === 'custom' ? pages : null })} />
         </Field>
         <label className="flex items-center gap-2"><input type="checkbox" checked={d.layout?.footer_sig !== false} disabled={!edit || !draft} onChange={(e) => layout.mutate({ footer_sig: e.target.checked })} /> Short signature and seal in the footer of every page (else only where the valuer signs)</label>
         <div className="sub">This format's own rules (blank = the firm's rule for the bank). They apply to every case that uses the format.</div>

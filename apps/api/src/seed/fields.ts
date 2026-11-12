@@ -40,6 +40,9 @@ export const FIELDS: FieldDef[] = [
   { code: 'FIRM.NAME', label: 'Firm name', group: 'FIRM', type: 'text', sources: ['firm'] },
   { code: 'FIRM.ADDRESS', label: 'Firm address', group: 'FIRM', type: 'text', sources: ['firm'] },
   { code: 'FIRM.VALUER_NAME', label: 'Name of valuer', group: 'FIRM', type: 'text', sources: ['firm'], aliases: ['Name of the valuer', 'Valuer'] },
+  { code: 'FIRM.VALUER_TITLE', label: 'Valuer title (Mr., Mrs., Dr.)', group: 'FIRM', type: 'text', sources: ['firm'] },
+  { code: 'FIRM.VALUER_NAME_TITLED', label: 'Name of valuer with title', group: 'FIRM', type: 'text', sources: ['derived'], derivation: "present(FIRM.VALUER_TITLE) ? FIRM.VALUER_TITLE + ' ' + FIRM.VALUER_NAME : FIRM.VALUER_NAME", aliases: ['Mr. Manoj Kumar Sharma'] },
+  { code: 'FIRM.VALUER_REG_VALID', label: 'IBBI registration valid up to', group: 'FIRM', type: 'date', sources: ['firm'] },
   { code: 'FIRM.VALUER_QUALS', label: 'Valuer qualifications', group: 'FIRM', type: 'text', sources: ['firm'] },
   { code: 'FIRM.VALUER_REG', label: 'Valuer registration no.', group: 'FIRM', type: 'text', sources: ['firm'], aliases: ['IBBI registration no.', 'Registration no.'] },
   { code: 'FIRM.VALUER_BLOCK', label: 'Name and address of valuer', group: 'FIRM', type: 'longtext', sources: ['wording'], aliases: ['Name & Address of Valuer'] },
@@ -181,7 +184,7 @@ export const FIELDS: FieldDef[] = [
 
   // ---- Registration values ----
   { code: 'REG.CONSIDERATION', label: 'Agreement value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'agreement', 'manual'], hint: 'मोबदला / consideration amount in rupees', aliases: ['Agreement value', 'Purchase price', 'Consideration'] },
-  { code: 'REG.GUIDELINE_VALUE', label: 'Government guideline value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'manual'], hint: 'बाजारभाव / market value per ready reckoner as stated in Index II', aliases: ['Value as per Government Approved Rates', 'Guideline value', 'Govt. value'] },
+  { code: 'REG.GUIDELINE_VALUE', label: 'Government guideline value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'stamp_valuation', 'manual'], hint: 'बाजारभाव / market value per ready reckoner as stated in Index II', aliases: ['Value as per Government Approved Rates', 'Guideline value', 'Govt. value'] },
 
   // ---- Valuation (from the valuation engine) ----
   { code: 'VAL.RR_RATE_SQM', label: 'Ready reckoner rate (per sq.m.)', group: 'VAL', type: 'money', unit: 'INR/sqm', sources: ['evidence', 'manual'], pending: 'Awaiting market evidence' },
@@ -200,8 +203,8 @@ export const FIELDS: FieldDef[] = [
   { code: 'VAL.RATE_BUA', label: 'Rate equivalent per sq.ft. built-up', group: 'VAL', type: 'money', unit: 'INR/sqft', sources: ['valuation'], hint: 'The adopted rate converted to the evidence basis (per sq.ft. built-up), for comparing with the evidence-backed rate' },
   { code: 'VAL.BASIS_FACTOR', label: 'Evidence to chosen area and unit', group: 'VAL', type: 'number', sources: ['valuation'], hint: 'Built-up area ÷ the area the rate is quoted on: a rate per sq.ft. built-up × this = the rate on the chosen area and unit' },
   { code: 'VAL.EVIDENCE_RATE', label: 'Evidence-backed rate on the chosen area', group: 'VAL', type: 'money', unit: 'VAL.RATE_UNIT', sources: ['derived'], derivation: 'round(VAL.PROPOSED_RATE * VAL.BASIS_FACTOR, RULE.rate_rounding_step)' },
-  { code: 'VAL.EVIDENCE_LO', label: 'Evidence range (low) on the chosen area', group: 'VAL', type: 'money', unit: 'VAL.RATE_UNIT', sources: ['derived'], derivation: 'floor(VAL.RANGE_LO * VAL.BASIS_FACTOR, RULE.rate_rounding_step)' },
-  { code: 'VAL.EVIDENCE_HI', label: 'Evidence range (high) on the chosen area', group: 'VAL', type: 'money', unit: 'VAL.RATE_UNIT', sources: ['derived'], derivation: 'ceil(VAL.RANGE_HI * VAL.BASIS_FACTOR, RULE.rate_rounding_step)' },
+  { code: 'VAL.EVIDENCE_LO', label: 'Rates in nearby area (low)', group: 'VAL', type: 'money', unit: 'VAL.RATE_UNIT', sources: ['manual', 'derived'], hint: 'Printed range: the comparables, widened to take in the adopted rate', derivation: "present(VAL.RANGE_LO) ? min(floor(VAL.RANGE_LO * VAL.BASIS_FACTOR, RULE.rate_rounding_step), floor(VAL.RATE * (1 - RULE.range_margin_pct / 100), RULE.rate_rounding_step)) : null" },
+  { code: 'VAL.EVIDENCE_HI', label: 'Rates in nearby area (high)', group: 'VAL', type: 'money', unit: 'VAL.RATE_UNIT', sources: ['manual', 'derived'], hint: 'Printed range: the comparables, widened to take in the adopted rate', derivation: "present(VAL.RANGE_HI) ? max(ceil(VAL.RANGE_HI * VAL.BASIS_FACTOR, RULE.rate_rounding_step), ceil(VAL.RATE * (1 + RULE.range_margin_pct / 100), RULE.rate_rounding_step)) : null" },
   { code: 'VAL.BASIS_LABEL', label: 'Area basis for valuation', group: 'VAL', type: 'text', sources: ['valuation'], pending: 'Awaiting valuation', aliases: ['Area basis'] },
   { code: 'VAL.BASIS_NOTE', label: 'How the area was arrived at', group: 'VAL', type: 'text', sources: ['valuation'] },
   { code: 'VAL.AREA_TEXT', label: 'Area used for valuation, with unit and basis', group: 'VAL', type: 'text', sources: ['valuation'], pending: 'Awaiting valuation', aliases: ['Present Value of the Flat | Area', 'Present Value of the Flat | Built-up area'] },
@@ -267,8 +270,8 @@ export const FIELDS: FieldDef[] = [
     derivation: "PHYS.BUILDING_STATUS == 'Under construction' && !present(DOC.OC.NUMBER) ? 'Not Applicable' : (present(DOC.OC.AUTHORITY) ? DOC.OC.AUTHORITY : (contains(['not_provided', 'na'], DOCSTATE.OC) ? 'Not Provided' : null))" },
   { code: 'APPR.OC_TEXT', label: 'O.C. (as printed)', group: 'APPR', type: 'longtext', applies: BUILT, sources: ['manual', 'wording'] },
   { code: 'DOC.LEGAL_AVAILABLE', label: 'Legal documents provided', group: 'DOC', type: 'enum', enum: ['Yes', 'No'], sources: ['manual', 'derived'], derivation: "present(DOC.AGREEMENT.DATE) || present(DOC.INDEX2.NUMBER) ? 'Yes' : null" },
-  { code: 'DOC.PLAN.ENCL', label: 'Approved plan enclosed', group: 'DOC', type: 'text', sources: ['manual', 'derived'], derivation: "DOCSTATE.APPROVED_PLAN == 'provided' || present(DOC.PLAN.NUMBER) ? 'Provided' : (present(DOCSTATE.APPROVED_PLAN) ? 'Not Provided' : null)" },
-  { code: 'DOC.FLOOR_PLAN', label: 'Floor plan', group: 'DOC', type: 'text', sources: ['manual', 'derived'], derivation: "'Not Provided'" },
+  { code: 'DOC.PLAN.ENCL', label: 'Approved plan enclosed', group: 'DOC', type: 'text', sources: ['manual', 'derived'], derivation: "CHECKLIST.PLAN == 'provided' ? 'Provided' : (CHECKLIST.PLAN == 'not_provided' ? 'Not Provided' : (CHECKLIST.PLAN == 'na' ? 'Not Applicable' : null))" },
+  { code: 'DOC.FLOOR_PLAN', label: 'Floor plan', group: 'DOC', type: 'text', sources: ['manual', 'derived'], derivation: "CHECKLIST.FPLAN == 'provided' ? 'Provided' : (CHECKLIST.FPLAN == 'na' ? 'Not Applicable' : 'Not Provided')" },
   { code: 'DOC.RERA.NUMBER', label: 'RERA registration no.', group: 'DOC', type: 'text', sources: ['rera_cert', 'agreement', 'manual'], hint: 'MahaRERA project registration number, e.g. "P51700054546"', aliases: ['RERA No.', 'RERA registration'] },
   { code: 'DOC.RERA.DATE', label: 'RERA registration date', group: 'DOC', type: 'date', sources: ['rera_cert', 'manual'] },
   { code: 'PHYS.BOUNDARY_DOC_E', label: 'Boundary east as per documents', group: 'PHYS', type: 'text', sources: ['agreement', 'sale_deed', 'manual'], hint: 'East boundary as written in the schedule of the agreement' },
@@ -318,5 +321,8 @@ export const FIELDS: FieldDef[] = [
     { code: `EVID.COMP${n}.VALUE`, label: `Comparable ${n}: value (Rs.)`, group: 'EVID', type: 'number' as const, sources: ['case', 'manual'] },
     { code: `EVID.COMP${n}.AREA`, label: `Comparable ${n}: area (sq.ft.)`, group: 'EVID', type: 'number' as const, sources: ['case', 'manual'] },
     { code: `EVID.COMP${n}.RATE`, label: `Comparable ${n}: rate per sq.ft.`, group: 'EVID', type: 'number' as const, sources: ['case', 'manual'] },
+    // with Indian commas (20,455), for formats whose chart prints them that way
+    { code: `EVID.COMP${n}.RATE_TEXT`, label: `Comparable ${n}: rate per sq.ft. (20,455)`, group: 'EVID', type: 'text' as const, sources: ['derived'], derivation: `inr(EVID.COMP${n}.RATE)` },
+    { code: `EVID.COMP${n}.VALUE_TEXT`, label: `Comparable ${n}: value (90,00,000)`, group: 'EVID', type: 'text' as const, sources: ['derived'], derivation: `inr(EVID.COMP${n}.VALUE)` },
   ]),
 ];

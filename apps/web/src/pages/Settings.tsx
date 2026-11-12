@@ -1,5 +1,6 @@
 // Firm settings: firm & valuer, branding, numbering, valuation rules (versioned), report layout,
 // field engineers, banks & branches, users & permissions, retention & privacy, features.
+import { LetterheadChoice } from '@/components/LetterheadChoice';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
@@ -17,7 +18,7 @@ interface FirmSettings {
 interface FirmProfile {
   firm: { id: number; code: string; name: string; address: string | null; city: string | null; state_code: string | null; gstin: string | null; phone: string | null; email: string | null; shared_pool_consent: number };
   settings: FirmSettings;
-  valuer: { id: number; name: string; qualifications: string | null; ibbi_reg_no: string | null; ibbi_valid_upto: string | null } | null;
+  valuer: { id: number; name: string; title: string | null; print_name: string | null; qualifications: string | null; ibbi_reg_no: string | null; ibbi_valid_upto: string | null } | null;
   nextCase: number; nextReport: number; fy: string;
 }
 interface Bank { id: number; code: string; name: string; short_name?: string }
@@ -59,7 +60,7 @@ function FirmSection() {
   const d = firm.data;
   const seed = d && {
     name: d.firm.name ?? '', address: d.firm.address ?? '', city: d.firm.city ?? '', state_code: d.firm.state_code ?? '', gstin: d.firm.gstin ?? '', phone: d.firm.phone ?? '', email: d.firm.email ?? '', place: d.settings.place ?? '',
-    qualifications: d.valuer?.qualifications ?? '', ibbi_reg_no: d.valuer?.ibbi_reg_no ?? '', ibbi_valid_upto: d.valuer?.ibbi_valid_upto ? String(d.valuer.ibbi_valid_upto).slice(0, 10) : '',
+    title: d.valuer?.title ?? '', print_name: d.valuer?.print_name ?? '', qualifications: d.valuer?.qualifications ?? '', ibbi_reg_no: d.valuer?.ibbi_reg_no ?? '', ibbi_valid_upto: d.valuer?.ibbi_valid_upto ? String(d.valuer.ibbi_valid_upto).slice(0, 10) : '',
   };
   const [f, setF, dirty] = useForm(seed);
   if (!f || !d) return <Loading />;
@@ -70,7 +71,7 @@ function FirmSection() {
       <form className="form" onSubmit={(e) => {
         e.preventDefault();
         save.mutate({ name: f.name, address: f.address, city: f.city, state_code: f.state_code, gstin: f.gstin, phone: f.phone, email: f.email, settings: { place: f.place },
-          ...(d.valuer ? { valuer: { qualifications: f.qualifications, ibbi_reg_no: f.ibbi_reg_no, ibbi_valid_upto: f.ibbi_valid_upto || null } } : {}) });
+          ...(d.valuer ? { valuer: { title: f.title || null, print_name: f.print_name || null, qualifications: f.qualifications, ibbi_reg_no: f.ibbi_reg_no, ibbi_valid_upto: f.ibbi_valid_upto || null } } : {}) });
       }}>
         {ro && <div className="full"><ReadOnlyNote /></div>}
         <h3>Firm</h3>
@@ -85,7 +86,11 @@ function FirmSection() {
         <h3>Valuer</h3>
         {d.valuer ? (
           <>
-            <Field label="Valuer name" hint="Change the name under Users & permissions"><input value={d.valuer.name} disabled /></Field>
+            <Field label="Valuer (login name)" hint="Change it under Users & permissions"><input value={d.valuer.name} disabled /></Field>
+            <Field label="Title" hint="Printed where the report has it, e.g. “I Mr. … do hereby affirm”">
+              <select value={f.title} onChange={set('title') as any} disabled={ro}><option value="">None</option>{['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Er.'].map((t) => <option key={t} value={t}>{t}</option>)}</select>
+            </Field>
+            <Field label="Full name as printed in reports" hint={`Blank = ${d.valuer.name}`}><input value={f.print_name} onChange={set('print_name')} disabled={ro} placeholder={d.valuer.name} /></Field>
             <Field label="Qualifications"><input value={f.qualifications} onChange={set('qualifications')} disabled={ro} /></Field>
             <Field label="IBBI registration no."><input className="mono" value={f.ibbi_reg_no} onChange={set('ibbi_reg_no')} disabled={ro} /></Field>
             <Field label="Registration valid up to"><input type="date" value={f.ibbi_valid_upto} onChange={set('ibbi_valid_upto')} disabled={ro} /></Field>
@@ -113,9 +118,9 @@ function BrandingSection() {
   if (!firm.data) return <Loading />;
   const s = firm.data.settings;
   const items = [
-    { kind: 'letterhead', title: 'Letterhead', hint: 'Wide strip about 6 : 1, at least 2000 × 340 px; printed 17 × 3 cm at the top of every report page', id: s.letterhead_file_id, h: 90 },
+    { kind: 'letterhead', title: 'Letterhead', hint: 'Wide strip about 6 : 1, at least 2000 × 340 px; printed 17 × 3 cm at the top of the pages chosen in Report layout → Letterhead', id: s.letterhead_file_id, h: 90 },
     { kind: 'signature', title: 'Signature', hint: 'About 600 × 230 px, PNG with a transparent background (a JPEG on plain white also works); printed about 3 × 2 cm', id: s.signature_file_id, h: 90 },
-    { kind: 'seal', title: 'Round seal', hint: 'Square, about 600 × 600 px, PNG with a transparent background; printed 2 cm beside the signature, small on every page', id: s.seal_file_id, h: 110 },
+    { kind: 'seal', title: 'Round seal', hint: 'Square, about 600 × 600 px, PNG with a transparent background; printed 2 cm beside the signature; where it prints (every page, or only where the valuer signs) follows Report layout → Stamp and short signature in the footer', id: s.seal_file_id, h: 110 },
   ];
   return (
     <Panel title="Letterhead, signature and seal">
@@ -218,6 +223,7 @@ const RULES: { k: string; label: string; hint?: string; step?: string; options?:
   { k: 'floor_max_pct', label: 'Floor adjustment cap, %', step: '0.5' },
   { k: 'report_max_days_after_inspection', label: 'Report within, days of inspection', hint: 'A check warns after this' },
   { k: 'rate_rounding_step', label: 'Evidence rate rounded to, Rs.', hint: 'e.g. 100: Rs. 12,840 → 12,800' },
+  { k: 'range_margin_pct', label: 'Printed rate range margin, %', hint: 'The "rates in the nearby area" range always takes in the adopted rate, with this margin' },
   { k: 'value_rounding_step', label: 'Values rounded to, Rs.', hint: 'FMV, realizable, distress, insurable; 1 = to the rupee' },
   { k: 'rent_rounding_step', label: 'Rent rounded to, Rs.' },
 ];
@@ -399,9 +405,8 @@ function LayoutSection() {
       {ro && <ReadOnlyNote />}
       <div className="form" style={{ padding: 0 }}>
         <Field label="Letterhead" hint="Firm default; a bank format can set its own">
-          <select value={(s as any).letterhead_on ?? 'all'} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { letterhead_on: e.target.value } })}>
-            <option value="all">Every page</option><option value="cover">Cover page only</option><option value="page2">Page 2 only</option><option value="none">Nowhere (pre-printed paper)</option>
-          </select>
+          <LetterheadChoice value={(s as any).letterhead_on ?? 'all'} pages={(s as any).letterhead_pages ?? ''} disabled={ro || save.isPending}
+            onSave={(on, pages) => save.mutate({ settings: { letterhead_on: on, ...(on === 'custom' ? { letterhead_pages: pages } : {}) } })} />
         </Field>
         <Field label="Stamp and short signature in the footer">
           <select value={(s as any).footer_sig === false ? 'sign' : 'all'} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { footer_sig: e.target.value === 'all' } })}>
@@ -623,6 +628,7 @@ function UsersSection() {
       </div>
       <div className="mx-4 my-3 grid gap-2">
         <label className="flex items-center gap-2"><input type="checkbox" checked={!!(firm.data?.settings as any)?.checker_may_sign} disabled={ro || saveFirm.isPending} onChange={(e) => saveFirm.mutate({ settings: { checker_may_sign: e.target.checked } }, { onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }) })} /> Report Checker may sign (the checker of a case sees Approve and sign; the report prints whoever signs)</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={(firm.data?.settings as any)?.skip_unassigned_steps !== false} disabled={ro || saveFirm.isPending} onChange={(e) => saveFirm.mutate({ settings: { skip_unassigned_steps: e.target.checked } }, { onSuccess: () => qc.invalidateQueries({ queryKey: ['meta'] }) })} /> A case may skip the report maker or checker when nobody is assigned (off: the coordinator must send every case to a report maker, then a checker)</label>
         <p className="sub m-0">Workflow: coordinator → Report Maker → Report Checker → valuer. The coordinator assigns the maker and checker on each case. A Report Checker can also make a case; nobody checks a case they made. Admins manage settings and master data but never sign.</p>
       </div>
       <Modal open={!!add} onClose={() => setAdd(null)} title="Add user"

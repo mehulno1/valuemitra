@@ -14,10 +14,11 @@ export const STAGES = [
 export type Stage = (typeof STAGES)[number]['key'];
 export const stageLabel = (k: string) => STAGES.find((s) => s.key === k)?.label ?? k;
 
-export const ROLES = ['coordinator', 'maker', 'checker', 'valuer', 'accounts', 'admin'] as const;
+export const ROLES = ['coordinator', 'coord_accounts', 'maker', 'checker', 'valuer', 'accounts', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 export const ROLE_LABEL: Record<Role, string> = {
   coordinator: 'Coordinator',
+  coord_accounts: 'Coordinator + Accounts',
   maker: 'Report Maker',
   checker: 'Report Checker',
   valuer: 'Valuer',
@@ -41,12 +42,16 @@ export type Permission = keyof typeof PERMISSIONS;
 
 export const DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
   coordinator: ['create', 'edit', 'exp', 'assign'],
+  coord_accounts: ['create', 'edit', 'exp', 'assign', 'bill'],
   maker: ['create', 'edit', 'val'],
   checker: ['create', 'edit', 'val', 'case_rules'],
   valuer: ['create', 'edit', 'val', 'sign', 'bill', 'exp', 'set', 'config', 'assign', 'case_rules'],
   accounts: ['bill', 'exp'],
   admin: ['create', 'edit', 'exp', 'set', 'config', 'bill'],
 };
+
+/** Coordinator work (intake, assigning, hand-over from the coordinator): the coordinator role, also when combined with accounts. */
+export const isCoordinator = (role: string | null | undefined) => role === 'coordinator' || role === 'coord_accounts';
 
 /** Only a registered valuer can sign; a Report Checker too when the firm allows it ("Report Checker may sign"). */
 export const canHoldPermission = (role: Role, p: Permission) => p !== 'sign' || role === 'valuer' || role === 'checker';

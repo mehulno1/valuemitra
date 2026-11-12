@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 12 Nov 2026 (Universal retest findings of 11 Nov, local only, see 3j). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -184,6 +184,30 @@ Review doc: `~/Downloads/ValueMitra — Review of Universal's 05 Nov Demo Feedba
 - Still open: C3 on live (firm code UCVLLP and next serial — waiting for the number), PropTrace licence/API, go-live
   security (own passwords, 2FA, real admin address), Universal's users are still all coordinators (set RM/RC roles in
   Users & permissions).
+
+## 3j. Universal retest findings of 11 Nov (12 Nov 2026, local; not deployed)
+Doc: `~/Downloads/ValueMitra — Retest Findings and Changes for Mehul_111126.pdf` (21 items). Previews and regenerated
+tagged templates: `~/Downloads/ValueMitra previews 12 Nov/` (specs still in the 06 Nov folder; `*.before-11nov.json` = old).
+- #1 Printed range `VAL.EVIDENCE_LO/HI` = comparables widened to take in the adopted rate ± `range_margin_pct` (5), or the
+  valuer's own figures (Valuation tab → "Rates in the nearby area, as printed"). Check `range_has_rate`.
+- #2 `VAL.JUSTIFICATION` platform wording = Universal's sentence, unchanged (no "Nearest station"); panel says what prints.
+- #4 `users.title`, `users.print_name` (migration 0013); `FIRM.VALUER_NAME` = print name, `FIRM.VALUER_NAME_TITLED`
+  ("I Mr. …", Annexure III, `REPORT.VALUER_IDENTITY`). Firm settings → Firm & valuer.
+- #5 `CHECKLIST.<item>` in expressions (ticked = provided, as Remark 1); `DOC.PLAN.ENCL`, `DOC.FLOOR_PLAN` use it.
+- #6 Role `coord_accounts` "Coordinator + Accounts" (coordinator + billing; `isCoordinator()` in shared).
+- #7 Firm setting `skip_unassigned_steps` (default on): off = coordinator → maker → checker → valuer, no skipping.
+- #9 Letterhead "Chosen pages…" (`custom` + `letterhead_pages` "2", "1, 2", "2-4") in firm and format layout; a format
+  can go back to the firm default. Format layout is still set on drafts only.
+- #11 `keepTablesWithHeadings` at render (published formats too): heading + short tables, heading rows, in-cell
+  headings before a sub-table / ending in ":". FC PDF clean; UC "Summary of Valuation" still at a page foot in
+  LibreOffice (in-cell before a nested table) — check in Word.
+- #12 `EVID.COMPn.RATE_TEXT` / `VALUE_TEXT` (Indian commas); UC spec uses RATE_TEXT. #15 fmt-apply drops unused images
+  (FC template 3.8 MB → 60 KB). #17 doc type `stamp_valuation`, sharper `rera_cert` hint, RERA checklist item
+  n/a when not a RERA project. #19 `/cases/:id/checks` etc. redirect. #20 help text. #21 check `ibbi_validity`.
+- Live steps still to do (need deploy + admin): remove FC realizable 90 override (#3); publish both formats from the
+  new tagged templates; set Universal: valuer title Mr. / print name, letterhead default page 2, skip_unassigned_steps
+  off; add Soni (needs email); upload MKS images (#10, files not on this Mac); cancel VM-2627-0001/0004, one case
+  prefix (#18); firm default factors back to 20% / 1.4 and discard Draft v5 (#16); Format-A for Universal (#14).
 
 ## 4. Left — by work package
 

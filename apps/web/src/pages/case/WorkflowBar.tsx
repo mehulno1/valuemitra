@@ -2,7 +2,7 @@
 // hand over with an optional note, or send back with a reason (Universal review A1, B5).
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { HOLDER_LABEL, type Holder } from '@vm/shared';
+import { HOLDER_LABEL, isCoordinator, type Holder } from '@vm/shared';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Field, Modal, useErrorToast, useToast } from '@/components/ui';
@@ -16,7 +16,7 @@ export default function WorkflowBar({ c, refresh }: { c: CaseHeader; refresh: ()
   const { user, can } = useAuth();
   const toast = useToast();
   const onErr = useErrorToast();
-  const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get<{ team: Person[] }>('/api/meta') });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get<{ team: Person[]; workflow?: { skipUnassigned: boolean } }>('/api/meta') });
   const team = meta.data?.team ?? [];
   const [dlg, setDlg] = useState<{ kind: 'handover' | 'back'; to: Holder } | null>(null);
   const [text, setText] = useState('');
@@ -28,9 +28,12 @@ export default function WorkflowBar({ c, refresh }: { c: CaseHeader; refresh: ()
 
   if (c.signed_at) return null;
   // the next step forward skips steps nobody is assigned to
-  const next = ORDER.slice(ORDER.indexOf(holder) + 1).find((h) => (h === 'maker' ? !!c.maker_id : h === 'checker' ? !!c.checker_id : true)) as Holder | undefined;
+  // (a firm that does not allow skipping always goes to the next step, which needs a person assigned)
+  const strict = meta.data?.workflow?.skipUnassigned === false;
+  const next = (strict ? ORDER[ORDER.indexOf(holder) + 1] : ORDER.slice(ORDER.indexOf(holder) + 1).find((h) => (h === 'maker' ? !!c.maker_id : h === 'checker' ? !!c.checker_id : true))) as Holder | undefined;
+  const nextMissing = next === 'maker' ? !c.maker_id : next === 'checker' ? !c.checker_id : false;
   const earlier = ORDER.slice(0, ORDER.indexOf(holder)).filter((h) => (h === 'maker' ? !!c.maker_id : h === 'checker' ? !!c.checker_id : true));
-  const mine = user?.role === 'valuer' || (holder === 'coordinator' ? ['coordinator', 'admin'].includes(user?.role ?? '') : holder === 'maker' ? user?.id === c.maker_id : holder === 'checker' ? user?.id === c.checker_id : false);
+  const mine = user?.role === 'valuer' || (holder === 'coordinator' ? isCoordinator(user?.role) || user?.role === 'admin' : holder === 'maker' ? user?.id === c.maker_id : holder === 'checker' ? user?.id === c.checker_id : false);
   const makers = team.filter((p) => ['maker', 'checker', 'valuer'].includes(p.role));
   const checkers = team.filter((p) => ['checker', 'valuer'].includes(p.role) && p.id !== c.maker_id);
   const assign = can('assign');
@@ -56,7 +59,8 @@ export default function WorkflowBar({ c, refresh }: { c: CaseHeader; refresh: ()
       </Field>
       {mine && can('edit') && (
         <div className="btns">
-          {next && <button className="btn pri sm" onClick={() => setDlg({ kind: 'handover', to: next })}>Send to {STEP[next].toLowerCase()}</button>}
+          {next && <button className="btn pri sm" disabled={nextMissing} title={nextMissing ? `Assign a ${STEP[next].toLowerCase()} first` : undefined} onClick={() => setDlg({ kind: 'handover', to: next })}>Send to {STEP[next].toLowerCase()}</button>}
+          {next && nextMissing && <span className="sub">Assign a {STEP[next].toLowerCase()} first</span>}
           {!!earlier.length && <button className="btn ghost sm" onClick={() => setDlg({ kind: 'back', to: earlier[earlier.length - 1] })}>Send back</button>}
         </div>
       )}

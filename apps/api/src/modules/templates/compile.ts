@@ -31,8 +31,10 @@ function tagsFor(m: CompileMapping): string {
 export interface Layout {
   cover_first_page: boolean;   // page 1 is a cover: letterhead but no page number / short signature
   annexures: boolean;          // append ValueMitra annexure pages
-  /** where the letterhead prints: every page (header), the cover only, at the top of page 2 only, or nowhere */
-  letterhead?: 'all' | 'cover' | 'page2' | 'none';
+  /** where the letterhead prints: every page (header), the cover only, at the top of page 2 only, nowhere, or on the
+   *  pages listed in `letterhead_pages` ("2", "1, 2", "2-4") */
+  letterhead?: 'all' | 'cover' | 'page2' | 'none' | 'custom';
+  letterhead_pages?: string;
   /** short signature and seal in the footer of every page (else only at the signing blocks) */
   footer_sig?: boolean;
 }
@@ -113,7 +115,8 @@ export function compileTemplate(source: Buffer, mappings: CompileMapping[], layo
     if (marker && marker.parentNode === body && !els(marker, 'w:sectPr').length) body.removeChild(marker);
   }
 
-  if (layout.letterhead === 'page2') letterheadOnPage2(doc);
+  if (layout.letterhead === 'page2') letterheadOnPages(doc, [2]);
+  else if (layout.letterhead === 'custom') letterheadOnPages(doc, parsePages(layout.letterhead_pages ?? ''));
   addHeaderFooter(parts, layout);
   dropUnusedImages(parts);
   scrubAuthor(parts);
@@ -183,7 +186,7 @@ export function addSignatureSlot(doc: any, blockTags: string[]): boolean {
 }
 
 /** Images no longer referenced (an earlier case's photos and maps) leave the package entirely. */
-function dropUnusedImages(parts: DocxParts) {
+export function dropUnusedImages(parts: DocxParts) {
   const relPath = 'word/_rels/document.xml.rels';
   const relXml = parts.zip.file(relPath)?.asText();
   if (!relXml) return;
@@ -276,28 +279,50 @@ export const HEADER_DRAFT_XML = `<?xml version="1.0" encoding="UTF-8" standalone
   para(`${tr('#IS_DRAFT')}${run(tag('DRAFT_LINE'), '<w:b/><w:color w:val="9A9A9A"/><w:sz w:val="16"/>')}${tr('/IS_DRAFT')}`, '<w:spacing w:after="0"/><w:jc w:val="right"/>')
 }</w:hdr>`;
 
-/** The letterhead at the top of the second page (Universal's reports: page 1 is the cover, page 2 the
- *  bank's form on letterhead). Page 2 starts after the first page break of the body. */
-function letterheadOnPage2(doc: any) {
-  const body = els(doc, 'w:body')[0];
-  let at: any = null;
-  for (const n of Array.from(body.childNodes as any) as any[]) {
-    if (n.nodeType !== 1) continue;
-    if (n.nodeName === 'w:p' && els(n, 'w:br').some((b) => b.getAttribute('w:type') === 'page')) { at = n.nextSibling; break; }
-    if (n.nodeName === 'w:p' && els(n, 'w:pageBreakBefore').length) { at = n; break; }
+/** Page numbers from "2", "1, 2" or "2-4" (en dash too); null when the text is not a page list. */
+export function parsePages(text: string): number[] | null {
+  const out = new Set<number>();
+  const parts = text.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  for (const part of parts) {
+    const m = part.match(/^(\d{1,3})(?:\s*(?:-|–|to)\s*(\d{1,3}))?$/);
+    if (!m) return null;
+    const a = Number(m[1]), b = Number(m[2] ?? m[1]);
+    if (a < 1 || b < a || b > 200) return null;
+    for (let k = a; k <= b; k++) out.add(k);
   }
-  if (!at) return;
+  return [...out].sort((x, y) => x - y);
+}
+
+/** The letterhead at the top of the listed body pages (Universal's reports: page 1 is the cover, page 2 the
+ *  bank's form on letterhead). A page starts at the top of the body or after a page break in the body. */
+function letterheadOnPages(doc: any, pages: number[] | null) {
+  if (!pages?.length) return;
+  const body = els(doc, 'w:body')[0];
+  // where each page starts: [node, opened by "page break before"]
+  const starts: [any, boolean][] = [];
+  const first = Array.from(body.childNodes as any).find((n: any) => n.nodeType === 1 && n.nodeName !== 'w:sectPr');
+  if (first) starts.push([first, false]);
+  for (const n of Array.from(body.childNodes as any) as any[]) {
+    if (n.nodeType !== 1 || n.nodeName !== 'w:p') continue;
+    if (n !== first && els(n, 'w:pageBreakBefore').length) starts.push([n, true]);
+    if (els(n, 'w:br').some((b) => b.getAttribute('w:type') === 'page') && n.nextSibling) starts.push([n.nextSibling, false]);
+  }
   const xml = [
     para(tr('#HAS_LETTERHEAD')),
     para(tr('%LETTERHEAD'), '<w:spacing w:after="0"/><w:jc w:val="center"/>'),
     para(tr('/HAS_LETTERHEAD')),
   ].join('');
-  // page 2 opened by "page break before": that paragraph keeps its text, the break moves in front of the
-  // letterhead as a break of its own (a condition paragraph may be dropped at render, so it cannot carry it)
-  const breakFirst = at.nodeName === 'w:p' && els(at, 'w:pageBreakBefore').length > 0;
-  if (breakFirst) els(at, 'w:pageBreakBefore').forEach((x: any) => x.parentNode.removeChild(x));
-  const frag = new DOMParser().parseFromString(`<root xmlns:w="${W_NS}">${breakFirst ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : ''}${xml}</root>`, 'text/xml');
-  for (const n of Array.from(frag.documentElement!.childNodes as any) as any[]) body.insertBefore(doc.importNode(n, true), at);
+  for (const k of pages) {
+    const s = starts[k - 1];
+    if (!s) continue;
+    const [at, breakBefore] = s;
+    // a page opened by "page break before": that paragraph keeps its text, the break moves in front of the
+    // letterhead as a break of its own (a condition paragraph may be dropped at render, so it cannot carry it)
+    if (breakBefore) els(at, 'w:pageBreakBefore').forEach((x: any) => x.parentNode.removeChild(x));
+    const frag = new DOMParser().parseFromString(`<root xmlns:w="${W_NS}">${breakBefore ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : ''}${xml}</root>`, 'text/xml');
+    for (const n of Array.from(frag.documentElement!.childNodes as any) as any[]) body.insertBefore(doc.importNode(n, true), at);
+  }
 }
 
 const FOOTER_PARA = para(

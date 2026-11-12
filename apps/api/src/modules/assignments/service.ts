@@ -173,7 +173,7 @@ export async function board(firmId: number, opts: { stage?: string; q?: string; 
   if (opts.mine) {
     const m = opts.mine;
     q = q.where((eb) => (m.role === 'valuer' ? eb('a.holder', '=', 'valuer')
-      : m.role === 'coordinator' ? eb('a.holder', '=', 'coordinator')
+      : m.role === 'coordinator' || m.role === 'coord_accounts' ? eb('a.holder', '=', 'coordinator')
       : eb.or([eb('a.maker_id', '=', m.id), eb('a.checker_id', '=', m.id)])));
   }
   if (opts.q) q = q.where((eb) => eb.or([eb('a.case_no', 'like', `%${opts.q}%`), eb('a.borrower_name', 'like', `%${opts.q}%`), eb('a.locality_hint', 'like', `%${opts.q}%`)]));

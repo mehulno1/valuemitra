@@ -277,3 +277,69 @@ export function regridTables(doc: XDoc): number {
   }
   return fixed;
 }
+
+/** Keep a section heading with the table under it, and a short table in one piece (#11 of the 11 Nov retest:
+ *  "Rate Indicators Chart" left at the foot of a page with its table on the next). The heading paragraph
+ *  (and any empty lines before the table) get "keep with next"; so do the rows of the table except the last
+ *  (only the first two rows of a long table). Tables that hold a page break are left alone. */
+export function keepTablesWithHeadings(doc: XDoc, longTable = 15): number {
+  const body = els(doc, 'w:body')[0];
+  if (!body) return 0;
+  const keepNext = (p: XEl) => {
+    let pPr = children(p, 'w:pPr')[0];
+    if (!pPr) { pPr = doc.createElementNS(W_NS, 'w:pPr') as XEl; p.insertBefore(pPr, p.firstChild); }
+    if (children(pPr, 'w:keepNext').length) return;
+    const k = doc.createElementNS(W_NS, 'w:keepNext');
+    const style = children(pPr, 'w:pStyle')[0];
+    pPr.insertBefore(k, style ? style.nextSibling : pPr.firstChild);
+  };
+  const breaks = (n: XEl) => els(n, 'w:br').some((b) => b.getAttribute('w:type') === 'page') || els(n, 'w:pageBreakBefore').length > 0 || els(n, 'w:sectPr').length > 0;
+  // a heading row inside a form table ("9 Valuation", "Summary of Valuation", "Justification …:"): one cell of
+  // short text, besides a serial ("9", "a)", "ii."); it keeps with the row after it
+  const SERIAL = /^\(?([0-9]{1,2}|[a-z]|[ivx]{1,4})[.)]?$/i;
+  const headingRow = (tr: XEl) => {
+    if (els(tr, 'w:tbl').length) return false;
+    const texts = children(tr, 'w:tc').map((tc) => textOf(tc).replace(/\s+/g, ' ').trim()).filter((t) => t && !SERIAL.test(t));
+    return texts.length === 1 && texts[0].length <= 80 && !/\d{3,}/.test(texts[0]);
+  };
+  let n = 0;
+  for (const tbl of els(doc, 'w:tbl')) {
+    const rows = children(tbl, 'w:tr');
+    rows.forEach((tr, i) => {
+      // not when the next row holds a table of its own (the valuation) or a page break: LibreOffice then moves
+      // whole blocks and leaves pages near empty
+      const next = rows[i + 1];
+      if (!next || !headingRow(tr) || breaks(tr) || breaks(next)) return;
+      children(tr, 'w:tc').forEach((tc) => children(tc, 'w:p').forEach(keepNext));
+    });
+  }
+  // inside a cell: a short heading line before a table ("Summary of Valuation") or ending in a colon
+  // ("Justification for 20% variation in FMV and GV:") stays with what follows it
+  for (const tc of els(doc, 'w:tc')) {
+    const kids = (Array.from(tc.childNodes as any) as XEl[]).filter((k: any) => k.nodeType === 1);
+    kids.forEach((k, i) => {
+      const nx = kids[i + 1];
+      if (k.nodeName !== 'w:p' || !nx || breaks(k)) return;
+      const t = textOf(k).replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 100) return;
+      if (nx.nodeName === 'w:tbl' || (/:$/.test(t) && nx.nodeName === 'w:p' && textOf(nx).trim())) keepNext(k);
+    });
+  }
+  for (const tbl of Array.from(body.childNodes as any) as XEl[]) {
+    if ((tbl as any).nodeType !== 1 || tbl.nodeName !== 'w:tbl' || breaks(tbl)) continue;
+    const rows = children(tbl, 'w:tr');
+    const upto = rows.length <= longTable ? rows.length - 1 : Math.min(2, rows.length - 1);
+    rows.slice(0, upto).forEach((tr) => els(tr, 'w:p').forEach(keepNext));
+    // the heading: the nearest paragraph with text before the table, if short (a heading, not a body paragraph)
+    for (let p: any = tbl.previousSibling; p; p = p.previousSibling) {
+      if (p.nodeType !== 1) continue;
+      if (p.nodeName !== 'w:p' || els(p, 'w:sectPr').length) break;
+      const t = textOf(p).trim();
+      if (t.length > 160) break;
+      keepNext(p);
+      if (t || els(p, 'w:drawing').length) break;
+    }
+    n++;
+  }
+  return n;
+}

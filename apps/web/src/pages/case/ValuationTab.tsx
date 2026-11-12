@@ -24,6 +24,7 @@ interface ValView {
   current: { adopted_rate: unknown; reason: string | null; values: Values; extras: Extra[]; draft_version: number; created_at: string; basis: string; rate_unit: Unit } | null;
   parking: { count: number; text: string | null; source: string | null } | null;
   justification: { display: string | null; state: string; pendingLabel: string | null; edited: boolean };
+  printedRange?: { lo: unknown; hi: unknown; edited: boolean };
   defaults?: Record<string, { value: number | null; origin: 'firm' | 'format' | 'case' }>;
   insurance?: { rate: number; label: string; floors: number | null; band: string | null };
   upperFloors?: { value: unknown; from: unknown };
@@ -361,12 +362,14 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
 
           <CaseDefaults c={c} d={d} refresh={refresh} locked={locked} />
 
-          <Panel title={<div><div className="eyebrow">Draft justification{sv && gv ? ` · FMV is ${Math.abs(Math.round(((sv.fmv - gv) / gv) * 1000) / 10)}% ${sv.fmv >= gv ? 'above' : 'below'} guideline value` : ''}</div></div>}
+          <PrintedRange c={c} d={d} rate={n(cur?.adopted_rate)} refresh={refresh} locked={locked} />
+
+          <Panel title={<div><div className="eyebrow">Justification as printed{sv && gv ? ` · FMV is ${Math.abs(Math.round(((sv.fmv - gv) / gv) * 1000) / 10)}% ${sv.fmv >= gv ? 'above' : 'below'} guideline value` : ''}</div></div>}
             right={<button className="btn sm ghost" onClick={() => go('rep')}>Edit in report</button>}>
             {d.justification.state === 'filled' && d.justification.display
               ? <p className="m-0 font-report text-[14.5px] leading-relaxed">{d.justification.display}</p>
               : <Pending label={d.justification.pendingLabel ?? 'Awaiting valuation'} />}
-            <p className="sub mb-0 mt-2">{d.justification.edited ? 'Edited in the report. ' : ''}The wording is edited in place on the Report & sign-off tab: click it in the draft.</p>
+            <p className="sub mb-0 mt-2">{d.justification.edited ? 'Your wording, printed as written. ' : 'The firm\'s standard wording, printed as is. '}To change it, click it in the draft on the Report & sign-off tab.</p>
           </Panel>
         </div>
       </div>
@@ -456,6 +459,56 @@ function CaseDefaults({ c, d, refresh, locked }: { c: TabProps['c']; d: ValView;
           <div className="btns"><button className="btn pri sm" disabled={reason.trim().length < 5 || save.isPending} onClick={() => save.mutate()}>Save for this case</button><button className="btn ghost sm" onClick={() => setEdit(null)}>Cancel</button></div>
         </div>
       )}
+    </Panel>
+  );
+}
+
+/** The "rates in the nearby area" range the report prints (#1): worked out from the comparables and widened to take in
+ *  the adopted rate, or the valuer's own figures. A Check warns when the adopted rate falls outside it. */
+function PrintedRange({ c, d, rate, refresh, locked }: { c: TabProps['c']; d: ValView; rate: number | null; refresh: () => void; locked: boolean }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const [edit, setEdit] = useState<{ lo: string; hi: string } | null>(null);
+  const pr = d.printedRange;
+  const put = async (lo: string | null, hi: string | null, reason: string) => {
+    await api.put(`/api/assignments/${c.id}/fields/VAL.EVIDENCE_LO`, { value: lo, reason });
+    await api.put(`/api/assignments/${c.id}/fields/VAL.EVIDENCE_HI`, { value: hi, reason });
+  };
+  const save = useMutation({
+    mutationFn: () => put(String(num(edit!.lo)), String(num(edit!.hi)), 'Range entered on the Valuation tab'),
+    onSuccess: () => { toast('Printed range saved'); setEdit(null); refresh(); },
+    onError: onErr,
+  });
+  const reset = useMutation({
+    mutationFn: () => put(null, null, 'Range worked out from the comparables again'),
+    onSuccess: () => { toast('Range worked out from the comparables'); refresh(); },
+    onError: onErr,
+  });
+  if (!pr) return null;
+  const lo = n(pr.lo), hi = n(pr.hi);
+  const unit = d.unit === 'sqm' ? 'sq.m.' : 'sq.ft.';
+  const outside = rate !== null && lo !== null && hi !== null && (rate < lo || rate > hi);
+  const may = can('val') && !locked;
+  const bad = edit && (!num(edit.lo) || !num(edit.hi) || num(edit.lo) > num(edit.hi));
+  return (
+    <Panel title={<div className="eyebrow">Rates in the nearby area, as printed</div>}
+      right={may && !edit && lo !== null && <button className="btn sm ghost" onClick={() => setEdit({ lo: String(lo), hi: String(hi ?? '') })}>Change</button>}>
+      {lo === null || hi === null
+        ? <Pending label="Awaiting market evidence" />
+        : !edit && <p className="m-0">Rs. {inr(lo)} to Rs. {inr(hi)} per {unit}{rate !== null ? ` · adopted Rs. ${inr(rate)}` : ''}</p>}
+      {outside && <p className="mb-0 mt-2 text-[13px]" style={{ color: "var(--crit)" }}>The adopted rate is outside this range. A bank reviewer will question it: change the range so it takes in the adopted rate.</p>}
+      {edit && (
+        <div className="mt-1 grid gap-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label={`From, Rs. per ${unit}`}><input className="inp" inputMode="numeric" value={edit.lo} onChange={(e) => setEdit({ ...edit, lo: e.target.value })} /></Field>
+            <Field label={`To, Rs. per ${unit}`}><input className="inp" inputMode="numeric" value={edit.hi} onChange={(e) => setEdit({ ...edit, hi: e.target.value })} /></Field>
+          </div>
+          <div className="btns"><button className="btn pri sm" disabled={!!bad || save.isPending} onClick={() => save.mutate()}>Save range</button><button className="btn ghost sm" onClick={() => setEdit(null)}>Cancel</button></div>
+        </div>
+      )}
+      <p className="sub mb-0 mt-2">{pr.edited ? 'Entered by the valuer. ' : 'Worked out from the comparables, widened to take in the adopted rate. '}
+        {pr.edited && may && <button className="linkbtn" disabled={reset.isPending} onClick={() => reset.mutate()}>Work it out from the comparables again</button>}</p>
     </Panel>
   );
 }

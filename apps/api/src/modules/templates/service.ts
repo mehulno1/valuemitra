@@ -13,7 +13,7 @@ import { dictionary, saveField, type FieldInput } from '../master/dictionary.js'
 import { READY, type NewField } from './aiconvert.js';
 import { singleField, templateCodes, versionFieldCodes } from './codes.js';
 import { AUTO_ACCEPT, mappingHistory, matchSlot } from './automap.js';
-import { compileTemplate, type Layout } from './compile.js';
+import { compileTemplate, parsePages, type Layout } from './compile.js';
 import { detectSlots, type Slot } from './detect.js';
 import { fixedNumbers } from './fixednumbers.js';
 
@@ -257,14 +257,21 @@ export async function answerMapping(actor: Actor, versionId: number, mappingId: 
 
 export async function setLayout(actor: Actor, versionId: number, layout: Partial<Layout>, tx: Tx = db) {
   const v = await assertDraft(actor.firmId, versionId, tx);
-  await tx.updateTable('template_versions').set({ layout_json: toJson({ ...json(v.layout_json, DEFAULT_LAYOUT), ...layout }) }).where('id', '=', versionId).execute();
+  if (layout.letterhead != null && !['all', 'cover', 'page2', 'none', 'custom'].includes(layout.letterhead)) throw badRequest('Letterhead: every page, cover, page 2, none or chosen pages');
+  if (layout.letterhead === 'custom' && !parsePages(layout.letterhead_pages ?? '')) throw badRequest('Letterhead pages: e.g. 2, or 1, 2, or 2-4');
+  // null clears a choice: the firm's Report layout default applies
+  const next: Record<string, unknown> = { ...json(v.layout_json, DEFAULT_LAYOUT), ...layout };
+  for (const k of Object.keys(next)) if (next[k] === null) delete next[k];
+  if (next.letterhead !== 'custom') delete next.letterhead_pages;
+  await tx.updateTable('template_versions').set({ layout_json: toJson(next) }).where('id', '=', versionId).execute();
 }
 
 /** A format's layout, with the firm's Report layout defaults for what the format leaves open (A2, A3). */
 async function layoutWithDefaults(firmId: number | null, l: Layout): Promise<Layout> {
   if (firmId === null) return l;
   const s = await getSettings(firmId);
-  return { ...l, letterhead: l.letterhead ?? s.letterhead_on ?? 'all', footer_sig: l.footer_sig ?? s.footer_sig ?? true };
+  const own = l.letterhead !== undefined && l.letterhead !== null;
+  return { ...l, letterhead: own ? l.letterhead : s.letterhead_on ?? 'all', letterhead_pages: own ? l.letterhead_pages : s.letterhead_pages ?? undefined, footer_sig: l.footer_sig ?? s.footer_sig ?? true };
 }
 
 /** Compile the draft (used for preview and on publish). */

@@ -1,5 +1,6 @@
 // Firm settings, users & permissions, banks/branches, engineers, ready reckoner import,
 // retention & privacy requests.
+import { parsePages } from '../templates/compile.js';
 import sharp from 'sharp';
 import { canHoldPermission, PERMISSIONS, ROLES, type Permission, type Role } from '@vm/shared';
 import { db, toJson } from '../../db/index.js';
@@ -17,11 +18,11 @@ export async function firmProfile(firmId: number) {
   const firm = await db.selectFrom('firms').selectAll().where('id', '=', firmId).executeTakeFirstOrThrow();
   const settings = await getSettings(firmId);
   const fy = financialYear().short;
-  const valuer = await db.selectFrom('users').select(['id', 'name', 'qualifications', 'ibbi_reg_no', 'ibbi_valid_upto']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst();
+  const valuer = await db.selectFrom('users').select(['id', 'name', 'title', 'print_name', 'qualifications', 'ibbi_reg_no', 'ibbi_valid_upto']).where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst();
   return { firm, settings, valuer, nextCase: await peekNumber(db, firmId, 'case', fy), nextReport: await peekNumber(db, firmId, 'report', reportSeries(settings.report_pattern, fy)), fy };
 }
 
-export async function updateFirm(actor: Actor, patch: { name?: string; address?: string; city?: string; state_code?: string; gstin?: string; phone?: string; email?: string; code?: string; settings?: Partial<FirmSettings>; nextCase?: number; nextReport?: number; valuer?: { qualifications?: string; ibbi_reg_no?: string; ibbi_valid_upto?: string | null } }) {
+export async function updateFirm(actor: Actor, patch: { name?: string; address?: string; city?: string; state_code?: string; gstin?: string; phone?: string; email?: string; code?: string; settings?: Partial<FirmSettings>; nextCase?: number; nextReport?: number; valuer?: { title?: string | null; print_name?: string | null; qualifications?: string; ibbi_reg_no?: string; ibbi_valid_upto?: string | null } }) {
   const firmId = actor.firmId!;
   const f: Record<string, unknown> = {};
   for (const k of ['name', 'address', 'city', 'state_code', 'gstin', 'phone', 'email', 'code'] as const) if (patch[k] !== undefined) f[k] = patch[k];
@@ -34,7 +35,9 @@ export async function updateFirm(actor: Actor, patch: { name?: string; address?:
     if (s.photo_grid !== undefined && ![4, 6, 9].includes(Number(s.photo_grid))) throw badRequest('Photos per page: 4, 6 or 9');
     if (s.evidence_per_page !== undefined && ![1, 2].includes(Number(s.evidence_per_page))) throw badRequest('Evidence per page: 1 or 2');
     if (s.min_photos !== undefined && !(Number.isInteger(Number(s.min_photos)) && Number(s.min_photos) >= 1 && Number(s.min_photos) <= 30)) throw badRequest('Minimum photos: 1 to 30');
-    if (s.letterhead_on !== undefined && !['all', 'cover', 'page2', 'none'].includes(String(s.letterhead_on))) throw badRequest('Letterhead: every page, cover, page 2 or none');
+    if (s.letterhead_on !== undefined && !['all', 'cover', 'page2', 'none', 'custom'].includes(String(s.letterhead_on))) throw badRequest('Letterhead: every page, cover, page 2, none or chosen pages');
+    if (s.letterhead_pages !== undefined && String(s.letterhead_pages).trim() && !parsePages(String(s.letterhead_pages))) throw badRequest('Letterhead pages: e.g. 2, or 1, 2, or 2-4');
+    if (s.letterhead_on === 'custom' && !parsePages(String(s.letterhead_pages ?? (await getSettings(firmId)).letterhead_pages ?? ''))) throw badRequest('Letterhead pages: e.g. 2, or 1, 2, or 2-4');
     if (s.retention_years !== undefined && ![3, 5, 7, 10].includes(Number(s.retention_years))) throw badRequest('Retention: 3, 5, 7 or 10 years');
     const allowed = Object.fromEntries(Object.entries(s).filter(([k]) => k in DEFAULT_SETTINGS && !k.endsWith('_file_id')));
     await setSettings(firmId, allowed, actor.id ?? null);
@@ -56,7 +59,7 @@ export async function updateFirm(actor: Actor, patch: { name?: string; address?:
   }
   if (patch.valuer) {
     const v = await db.selectFrom('users').select('id').where('firm_id', '=', firmId).where('role', '=', 'valuer').where('status', '=', 'active').orderBy('id').executeTakeFirst();
-    if (v) await db.updateTable('users').set({ qualifications: patch.valuer.qualifications, ibbi_reg_no: patch.valuer.ibbi_reg_no, ibbi_valid_upto: patch.valuer.ibbi_valid_upto ? new Date(patch.valuer.ibbi_valid_upto) : null }).where('id', '=', v.id).execute();
+    if (v) await db.updateTable('users').set({ ...(patch.valuer.title !== undefined ? { title: patch.valuer.title?.trim().slice(0, 12) || null } : {}), ...(patch.valuer.print_name !== undefined ? { print_name: patch.valuer.print_name?.trim().slice(0, 160) || null } : {}), qualifications: patch.valuer.qualifications, ibbi_reg_no: patch.valuer.ibbi_reg_no, ibbi_valid_upto: patch.valuer.ibbi_valid_upto ? new Date(patch.valuer.ibbi_valid_upto) : null }).where('id', '=', v.id).execute();
   }
   await audit(actor, { entityType: 'firm', entityId: firmId, action: 'firm.update', summary: `Firm settings changed: ${[...Object.keys(f), ...Object.keys(patch.settings ?? {}), ...(patch.nextCase ? ['next case no.'] : []), ...(patch.nextReport ? ['next report no.'] : []), ...(patch.valuer ? ['valuer'] : [])].join(', ')}`, after: patch });
 }

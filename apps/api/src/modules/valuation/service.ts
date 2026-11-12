@@ -583,6 +583,8 @@ export async function valuationView(firmId: number, assignmentId: number) {
     rera: { number: data.value('DOC.RERA.NUMBER'), date: data.value('DOC.RERA.DATE'), project: data.value('DOC.RERA.PROJECT'), carpet: data.value('AREA.RERA_CARPET') },
     current: current ? { ...current, values: json(current.values_json, {}), extras: json(current.extras_json, []) } : null,
     justification: data.get('VAL.JUSTIFICATION'),
+    // the printed "rates in the nearby area" range: worked out from the comparables and the adopted rate, or the valuer's own
+    printedRange: { lo: data.value('VAL.EVIDENCE_LO'), hi: data.value('VAL.EVIDENCE_HI'), edited: data.get('VAL.EVIDENCE_LO').edited || data.get('VAL.EVIDENCE_HI').edited },
     // parking read from the agreement or the site sheet, to prefill the extras
     parking: (() => { const p = data.get('PHYS.PARKING_COUNT'); return p.state === 'filled' ? { count: Number(p.value), text: data.value('PHYS.PARKING_TEXT') ?? null, source: p.sourceDocType ?? p.source } : null; })(),
     history: history.map((h) => ({ ...h, fmv: json<any>(h.values_json, {}).fmv, values_json: undefined })),

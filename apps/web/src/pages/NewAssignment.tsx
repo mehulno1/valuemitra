@@ -167,7 +167,7 @@ export default function NewAssignment() {
                 <div className="mono mt-1 text-[20px] font-semibold text-muted">{preview.data?.caseNo ? `${preview.data.caseNo.replace(/\d+$/, '')}…` : '…'}</div>
                 <div className="sub mt-1">The running number is reserved when you create the case, so two people creating cases at once never get the same ID. The real ID shows after saving.</div>
                 {caseParts.length >= 3 && (
-                  <div className="sub mt-1">{caseParts[0]} = system · {caseParts[1]} = FY {preview.data?.fy} · last part = running no.</div>
+                  <div className="sub mt-1">{caseParts[0]} = prefix (Settings → Case & report numbers) · {caseParts[1]} = FY {preview.data?.fy} · last part = running no.</div>
                 )}
               </div>
               <div>

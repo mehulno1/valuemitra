@@ -68,6 +68,11 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'hist', label: 'History' },
 ];
 
+export const TAB_ALIASES: Record<string, TabKey> = {
+  documents: 'docs', extracted: 'ext', details: 'ext', site_visit: 'site', 'site-visit': 'site', market: 'mkt', evidence: 'mkt',
+  valuation: 'val', checks: 'chk', report: 'rep', 'sign-off': 'rep', output: 'out', history: 'hist',
+};
+
 /** Query keys are always ['case', id, ...] so one invalidation refreshes the whole workspace. */
 export const caseKey = (id: number, ...rest: unknown[]) => ['case', id, ...rest];
 

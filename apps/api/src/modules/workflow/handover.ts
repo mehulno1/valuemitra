@@ -1,7 +1,8 @@
 // Case workflow (Universal review A1, B5): coordinator → Report Maker → Report Checker → valuer. Each
 // hand-over is one step with an optional note and runs only its own checks; anyone downstream can send the
 // case back with a reason. The stage still follows the facts of the case; `holder` says who has it now.
-import { HOLDER_LABEL, type Holder } from '@vm/shared';
+import { getSettings } from '../../platform/settings.js';
+import { HOLDER_LABEL, isCoordinator, type Holder } from '@vm/shared';
 import { db, type Tx } from '../../db/index.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { audit, type Actor } from '../../platform/audit.js';
@@ -58,7 +59,7 @@ export async function assignPeople(actor: Who, id: number, input: { makerId?: nu
 /** May this user act for the case's current holder? */
 function actsForHolder(actor: Who, a: { holder: string; maker_id: number | null; checker_id: number | null }) {
   if (actor.role === 'valuer') return true;
-  if (a.holder === 'coordinator') return actor.role === 'coordinator' || actor.role === 'admin';
+  if (a.holder === 'coordinator') return isCoordinator(actor.role) || actor.role === 'admin';
   if (a.holder === 'maker') return actor.id === a.maker_id;
   if (a.holder === 'checker') return actor.id === a.checker_id;
   return false;
@@ -73,7 +74,11 @@ export async function handOver(actor: Who, id: number, to: Exclude<Holder, 'coor
     if (ORDER.indexOf(to) <= ORDER.indexOf(a.holder as Holder)) throw badRequest('Use "Send back" to return the case to an earlier step');
     if (to === 'maker' && !a.maker_id) throw badRequest('Assign a report maker first');
     if (to === 'checker' && !a.checker_id) throw badRequest('Assign a report checker first');
-    // skipping a step is allowed only when nobody is assigned to it
+    // skipping a step is allowed only when nobody is assigned to it, and only when the firm allows it (#7)
+    if (ORDER.indexOf(to) > ORDER.indexOf(a.holder as Holder) + 1 && (await getSettings(actor.firmId!, tx)).skip_unassigned_steps === false) {
+      const step = ORDER[ORDER.indexOf(a.holder as Holder) + 1];
+      throw badRequest(step === 'maker' ? 'Assign a report maker and send the case to them first' : 'Assign a report checker and send the case to them first');
+    }
     for (const skipped of ORDER.slice(ORDER.indexOf(a.holder as Holder) + 1, ORDER.indexOf(to))) {
       if ((skipped === 'maker' && a.maker_id) || (skipped === 'checker' && a.checker_id)) throw badRequest(`The case goes to the ${skipped === 'maker' ? 'report maker' : 'report checker'} first`);
     }

@@ -6,7 +6,7 @@ import PizZip from 'pizzip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import sharp from 'sharp';
 import { CLOSE, HEADER_XML, OPEN } from './compile.js';
-import { openDocx, saveDocx, unfloatTables } from './docx.js';
+import { keepTablesWithHeadings, openDocx, saveDocx, unfloatTables } from './docx.js';
 
 export interface RenderImage {
   buffer: Buffer;
@@ -47,10 +47,13 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
 }
 
-/** Formats compiled before 28 Oct 2026 may keep the bank's floating tables (see unfloatTables). */
+/** Formats compiled before 28 Oct 2026 may keep the bank's floating tables (see unfloatTables); every format
+ *  keeps its section headings with their tables (keepTablesWithHeadings), published ones included. */
 function unfloat(compiled: Buffer): Buffer {
   const parts = openDocx(compiled);
-  return unfloatTables(parts.doc) ? saveDocx(parts) : compiled;
+  unfloatTables(parts.doc);
+  keepTablesWithHeadings(parts.doc);
+  return saveDocx(parts);
 }
 
 // CT_Compat is a sequence: these come before doNotExpandShiftReturn

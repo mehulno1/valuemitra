@@ -6,7 +6,7 @@ import { Loading, StageChip } from '@/components/ui';
 import { api } from '@/lib/api';
 import WorkflowBar from './WorkflowBar';
 import FormatChange from './FormatChange';
-import { caseKey, TABS, useCaseRefresh, type CaseHeader, type TabKey } from './context';
+import { caseKey, TAB_ALIASES, TABS, useCaseRefresh, type CaseHeader, type TabKey } from './context';
 
 const Documents = lazy(() => import('./DocumentsTab'));
 const Extracted = lazy(() => import('./ExtractedTab'));
@@ -81,6 +81,9 @@ export default function CaseWorkspace() {
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route index element={<Navigate to="docs" replace />} />
+          {/* readable names for the tabs (links shared as /cases/3/checks), and anything unknown, go to a real tab */}
+          {Object.entries(TAB_ALIASES).map(([from, to]) => <Route key={from} path={from} element={<Navigate to={`/cases/${id}/${to}`} replace />} />)}
+          <Route path="*" element={<Navigate to={`/cases/${id}/docs`} replace />} />
           {TABS.map((t) => {
             const C = COMPONENTS[t.key];
             return <Route key={t.key} path={t.key} element={<C c={c} go={go} refresh={refresh} locked={locked} />} />;
