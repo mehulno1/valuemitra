@@ -29,6 +29,7 @@ export interface FirmSettings {
   tally_ledgers: { sales: string; cgst: string; sgst: string; igst: string; round_off: string; bank: string; tds: string };
   area_basis_defaults: Record<string, { basis: string; unit: 'sqft' | 'sqm' }>;   // "SBI:flat" → area and unit the rate is quoted on
   checker_may_sign: boolean;      // a Report Checker sees Approve and sign (the report prints whoever signs)
+  hidden_templates: number[];     // platform formats this firm does not use (not offered for new cases)
   skip_unassigned_steps: boolean; // a case may go past the report maker / checker when nobody is assigned (small firms)
   // report layout, firm default (a bank format may override): letterhead, footer stamp, annexure grids
   letterhead_on: 'all' | 'cover' | 'page2' | 'none' | 'custom';
@@ -67,6 +68,7 @@ export const DEFAULT_SETTINGS: FirmSettings = {
   area_basis_defaults: {},
   checker_may_sign: false,
   skip_unassigned_steps: true,
+  hidden_templates: [],
   letterhead_on: 'all',
   letterhead_pages: '',
   footer_sig: true,

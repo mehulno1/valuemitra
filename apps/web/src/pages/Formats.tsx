@@ -11,7 +11,7 @@ import { Conf, Empty, Field, Loading, Modal, PageHead, Panel, fmtDate, useErrorT
 import FormatReview, { type AiInfo, type ReviewMapping } from './FormatReview';
 
 interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; confirmed?: number; change_note: string | null; ai_status?: string }
-interface Tpl { id: number; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
+interface Tpl { id: number; hidden?: boolean; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
 type Mapping = ReviewMapping;
 interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; letterhead_pages?: string; footer_sig?: boolean }; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
 interface DictField { code: string; label: string; group: string; type: string; status: string; sources?: string[] }
@@ -122,6 +122,10 @@ function FormatList() {
   const [adding, setAdding] = useState(false);
   const [revise, setRevise] = useState<Tpl | null>(null);
   const qc = useQueryClient();
+  const hide = useMutation({
+    mutationFn: (b: { id: number; hidden: boolean }) => api.put(`/api/templates/${b.id}/hidden`, { hidden: b.hidden }),
+    onSuccess: (_r, b) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(b.hidden ? 'Hidden: not offered for new cases' : 'Offered for new cases again'); },
+  });
   const done = (r: { versionId: number; found: number; matched: number; ai?: boolean }) => {
     qc.invalidateQueries({ queryKey: ['templates'] });
     toast(r.ai ? 'Uploaded. The AI is reading the format; this takes about 1 to 2 minutes.' : `${r.found} fields found. ${r.matched} matched automatically; ${r.found - r.matched} need you.`);
@@ -151,7 +155,7 @@ function FormatList() {
                   return [
                     <tr key={t.id} onClick={() => setOpen(open === t.id ? null : t.id)} aria-expanded={open === t.id}>
                       <td><b>{t.bank_code ?? '—'}</b><div className="sub">{t.bank_name}</div></td>
-                      <td>{t.name}<div className="sub">{t.branch_scope.includes('*') ? 'All branches' : t.branch_scope.join(', ')}{t.firm_id === null ? ' · platform format' : ' · your firm'}</div></td>
+                      <td>{t.name}<div className="sub">{t.branch_scope.includes('*') ? 'All branches' : t.branch_scope.join(', ')}{t.firm_id === null ? ' · platform format' : ' · your firm'}{t.hidden ? ' · hidden (not offered for new cases)' : ''}</div></td>
                       <td>{t.property_types.map(ptLabel).join(', ')}</td>
                       <td className="mono">{cur ? (cur.ai_status === 'reading' ? <span className="sub">AI reading…</span> : `${cur.confirmed ?? cur.mapped + cur.ignored}/${cur.slots}`) : '—'}{cur && !!cur.ignored && <div className="sub">{cur.ignored} fixed text</div>}</td>
                       <td><StatusCell t={t} /></td>
@@ -161,7 +165,10 @@ function FormatList() {
                         <div className="grid gap-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <b>Version history</b>
-                            {can('config') && !t.versions.some((v) => v.status === 'draft') && <button className="btn sm" onClick={() => setRevise(t)}>Upload a revised version</button>}
+                            <div className="btns">
+                              {can('config') && <button className="btn sm ghost" disabled={hide.isPending} onClick={() => hide.mutate({ id: t.id, hidden: !t.hidden })}>{t.hidden ? 'Offer for new cases again' : 'Hide for this firm'}</button>}
+                              {can('config') && !t.versions.some((v) => v.status === 'draft') && <button className="btn sm" onClick={() => setRevise(t)}>Upload a revised version</button>}
+                            </div>
                           </div>
                           <table className="list" style={{ background: 'var(--surface)', borderRadius: 6 }}>
                             <thead><tr><th>Version</th><th>Status</th><th>Effective from</th><th>Mapped</th><th>Note</th><th /></tr></thead>

@@ -13,7 +13,7 @@ interface Meta {
   engineers: { id: number; name: string; localities: string | null; phone: string | null }[];
   flags: Record<string, boolean>;
 }
-interface Tpl { id: number; firm_id: number | null; name: string; bank_code: string | null; property_types: string[]; branch_scope: string[]; versions: { status: string; version: number }[] }
+interface Tpl { id: number; firm_id: number | null; hidden?: boolean; name: string; bank_code: string | null; property_types: string[]; branch_scope: string[]; versions: { status: string; version: number }[] }
 
 /** Score an engineer by how many words of the locality appear in their localities. */
 function engineerScore(localities: string | null, hint: string) {
@@ -44,7 +44,7 @@ export default function NewAssignment() {
   useEffect(() => {
     if (!meta.data || !tpls.data || f.bankId) return;
     const withBranches = meta.data.banks.filter((b) => meta.data!.branches.some((br) => br.bank_id === b.id));
-    const live = (code: string) => tpls.data!.some((t) => t.bank_code === code && t.versions.some((v) => v.status === 'published'));
+    const live = (code: string) => tpls.data!.some((t) => !t.hidden && t.bank_code === code && t.versions.some((v) => v.status === 'published'));
     const first = withBranches.find((b) => live(b.code)) ?? withBranches[0];
     if (first) set('bankId', first.id);
   }, [meta.data, tpls.data, f.bankId]);
@@ -69,7 +69,7 @@ export default function NewAssignment() {
   // every published format for the bank, branch and property type; the most specific is suggested
   const formats = useMemo(() => {
     if (!bank || !tpls.data) return [];
-    const live = tpls.data.filter((t) => t.bank_code === bank.code && t.property_types.includes(f.propertyType) && t.versions.some((v) => v.status === 'published')
+    const live = tpls.data.filter((t) => !t.hidden && t.bank_code === bank.code && t.property_types.includes(f.propertyType) && t.versions.some((v) => v.status === 'published')
       && (t.branch_scope.includes('*') || (!!branch && t.branch_scope.includes(branch.code))));
     const rank = (t: Tpl) => (branch && t.branch_scope.includes(branch.code) ? 2 : 0) + (t.firm_id ? 1 : 0);
     return [...live].sort((a, b) => rank(b) - rank(a));

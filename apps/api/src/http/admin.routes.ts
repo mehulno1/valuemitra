@@ -176,6 +176,7 @@ export async function adminRoutes(app: FastifyInstance) {
     await tpl.rerunAi(actorOf(req), idParam(req));
     return { ok: true };
   });
+  app.put('/api/templates/:id/hidden', { preHandler: requirePerm('config') }, async (req) => { await tpl.setTemplateHidden(actorOf(req), idParam(req), !!(req.body as any)?.hidden); return { ok: true }; });
   app.patch('/api/templates/versions/:id/layout', { preHandler: requirePerm('config') }, async (req) => { await tpl.setLayout(actorOf(req), idParam(req), req.body as any); return { ok: true }; });
   app.patch('/api/templates/:id/rules', { preHandler: requirePerm('config') }, async (req) => {
     const b = body(req, z.record(z.string(), z.number().nullable()));

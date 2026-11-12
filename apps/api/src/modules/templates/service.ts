@@ -8,7 +8,7 @@ import { aiConfigured } from '../../ai/claude.js';
 import { enqueue } from '../../platform/jobs.js';
 import { activeConfig, publishConfig, saveDraft } from '../../platform/config.js';
 import { purgeFile, readFile, saveFile } from '../../platform/storage.js';
-import { getSettings } from '../../platform/settings.js';
+import { getSettings, setSettings } from '../../platform/settings.js';
 import { dictionary, saveField, type FieldInput } from '../master/dictionary.js';
 import { READY, type NewField } from './aiconvert.js';
 import { singleField, templateCodes, versionFieldCodes } from './codes.js';
@@ -41,8 +41,10 @@ export async function listTemplates(firmId: number) {
     .groupBy('template_version_id')
     .execute();
   const c = new Map(counts.map((x) => [x.template_version_id, x]));
+  const hidden = new Set((await getSettings(firmId)).hidden_templates ?? []);
   return rows.map((r) => ({
     ...r,
+    hidden: hidden.has(r.id),
     property_types: json(r.property_types, []),
     branch_scope: json(r.branch_scope, ['*']),
     rules: json<Record<string, number>>(r.rules_json, {}),
@@ -410,6 +412,16 @@ export async function discardDraftVersion(actor: Actor, versionId: number, tx: T
 }
 
 /** The version a new case uses: the published version of the format for this bank, branch and property type. */
+/** Hide a format from this firm's choices, or show it again (#14: Format-A for Universal). */
+export async function setTemplateHidden(actor: Actor, templateId: number, hide: boolean) {
+  const t = await db.selectFrom('report_templates').select(['id', 'name', 'firm_id']).where('id', '=', templateId).executeTakeFirst();
+  if (!t || (t.firm_id !== null && t.firm_id !== actor.firmId)) throw notFound('Format');
+  const cur = new Set((await getSettings(actor.firmId!)).hidden_templates ?? []);
+  if (hide) cur.add(templateId); else cur.delete(templateId);
+  await setSettings(actor.firmId!, { hidden_templates: [...cur] }, actor.id ?? null);
+  await audit(actor, { entityType: 'template', entityId: templateId, action: hide ? 'template.hide' : 'template.show', summary: `${t.name} ${hide ? 'hidden: not offered for new cases' : 'offered again for new cases'}` });
+}
+
 export async function pickTemplateVersion(firmId: number, bankId: number, branchCode: string, propertyType: string, tx: Tx = db, asOf = new Date(), templateId?: number | null) {
   const rows = await tx
     .selectFrom('template_versions as v')
@@ -422,7 +434,10 @@ export async function pickTemplateVersion(firmId: number, bankId: number, branch
     .where((eb) => eb.or([eb('v.effective_from', 'is', null), eb('v.effective_from', '<=', asOf)]))
     .orderBy('v.version', 'desc')
     .execute();
+  // platform formats the firm has hidden are never offered (cases already on them keep their version)
+  const hidden = new Set((await getSettings(firmId, tx)).hidden_templates ?? []);
   const fits = rows.filter((r) => {
+    if (hidden.has(r.template_id)) return false;
     const pt = json<string[]>(r.property_types, []);
     const scope = json<string[]>(r.branch_scope, ['*']);
     return (pt.includes(propertyType) || pt.includes('*')) && (scope.includes('*') || scope.includes(branchCode));
