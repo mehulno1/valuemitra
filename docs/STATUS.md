@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 12 Nov 2026 (Universal retest findings of 11 Nov, local only, see 3j). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 12 Nov 2026 (Universal retest findings of 11 Nov, live, see 3j). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -185,7 +185,7 @@ Review doc: `~/Downloads/ValueMitra — Review of Universal's 05 Nov Demo Feedba
   security (own passwords, 2FA, real admin address), Universal's users are still all coordinators (set RM/RC roles in
   Users & permissions).
 
-## 3j. Universal retest findings of 11 Nov (12 Nov 2026, local; not deployed)
+## 3j. Universal retest findings of 11 Nov (12 Nov 2026, live)
 Doc: `~/Downloads/ValueMitra — Retest Findings and Changes for Mehul_111126.pdf` (21 items). Previews and regenerated
 tagged templates: `~/Downloads/ValueMitra previews 12 Nov/` (specs still in the 06 Nov folder; `*.before-11nov.json` = old).
 - #1 Printed range `VAL.EVIDENCE_LO/HI` = comparables widened to take in the adopted rate ± `range_margin_pct` (5), or the
@@ -204,10 +204,16 @@ tagged templates: `~/Downloads/ValueMitra previews 12 Nov/` (specs still in the 
 - #12 `EVID.COMPn.RATE_TEXT` / `VALUE_TEXT` (Indian commas); UC spec uses RATE_TEXT. #15 fmt-apply drops unused images
   (FC template 3.8 MB → 60 KB). #17 doc type `stamp_valuation`, sharper `rera_cert` hint, RERA checklist item
   n/a when not a RERA project. #19 `/cases/:id/checks` etc. redirect. #20 help text. #21 check `ibbi_validity`.
-- Live steps still to do (need deploy + admin): remove FC realizable 90 override (#3); publish both formats from the
-  new tagged templates; set Universal: valuer title Mr. / print name, letterhead default page 2, skip_unassigned_steps
-  off; add Soni (needs email); upload MKS images (#10, files not on this Mac); cancel VM-2627-0001/0004, one case
-  prefix (#18); firm default factors back to 20% / 1.4 and discard Draft v5 (#16); Format-A for Universal (#14).
+- Bank formats → "Hide for this firm" (firm setting `hidden_templates`; hidden formats are not offered for new cases).
+- Live, 12 Nov (DB backup `~/backups/valuemitra-v2-before-retest-20261112.sql.gz`): the 90% on Flat Completed came from the
+  platform SBI rule (Universal's rule set was an unpublished draft v5 with UC factors as firm defaults). Draft discarded;
+  Universal rule set v7 = platform v6 + SBI realizable 98 published (#3, #16). Valuer Mr. / Manoj Kumar Sharma;
+  letterhead default page 2; skip_unassigned_steps off; Flat Completed v3 (#12) and Under Construction v2 (#13)
+  published from the 12 Nov tagged templates; VM-2627-0003 on Flat Completed and moved to rules v7 / checks v7 /
+  wording v9 (unsigned); Format-A hidden; empty VM-2627-0001 and 0004 deleted (audit rows); firm profile flat v5
+  (RERA item n/a unless a RERA project). Case prefix stays UC- (VM-2627-0002/0003 are test cases).
+- Still open: Soni (needs email; role Coordinator + Accounts), MKS letterhead/signature/seal files (#10), IBBI validity
+  date (#21), report number series before go-live (#8), field engineer name "Pramod Penta" has no "Mr." on live.
 
 ## 4. Left — by work package
 
