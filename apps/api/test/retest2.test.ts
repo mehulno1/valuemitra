@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DOMParser } from '@xmldom/xmldom';
 import PizZip from 'pizzip';
 import { EXPR_FNS, formatValue, listingSite, workPct } from '../src/modules/casedata/resolver';
-import { ranked } from '../src/modules/documents/reader';
+import { otherProperty, ranked, regNo, unitNo } from '../src/modules/documents/reader';
 import { compileTemplate } from '../src/modules/templates/compile';
 import { detectSlots } from '../src/modules/templates/detect';
 import { els, openDocx, textOf } from '../src/modules/templates/docx';
@@ -191,5 +191,31 @@ describe('lines and rows printed only when a field says so (T6, T12)', () => {
     expect(t).toContain('Title Report dated 16/09/2023.');
     expect(t).toContain('As per current stage the value of property is');
     expect(t).toContain('Rs. 60/-');
+  });
+});
+
+describe("an Index II of another flat is a comparable, the property's own never is (R6)", () => {
+  const f = (unit: string, reg: string, building = '', buyer: string[] = []) => ({ unit: unitNo(unit), reg: regNo(reg), building, buyer: new Set(buyer) });
+  it('reads flat and registration numbers however they are written', () => {
+    expect(unitNo('B-2303')).toBe('2303');
+    expect(unitNo('Flat 1001, 10th floor')).toBe('1001');
+    expect(unitNo('3102, 31st floor')).toBe('3102');
+    expect(regNo('TNN2/11700/2021')).toBe('11700/2021');
+    expect(regNo('THN1-13802-2026')).toBe('13802/2026');
+    expect(regNo('6863/2024')).toBe('6863/2024');
+  });
+  it('the same flat with a wing letter, or the same registration, is the property itself', () => {
+    expect(otherProperty(f('2303', '11700/2021'), f('B-2303', 'TNN2/11700/2021'))).toBe(false);
+    expect(otherProperty(f('Flat 1001, 10th floor', 'THN1-13802-2026'), f('Flat 1001, 10th floor', 'THN1-13802-2026'))).toBe(false);
+    expect(otherProperty(f('', '11700/2021'), f('2303', 'TNN2/11700/2021'))).toBe(false);
+    expect(otherProperty(f('2303', ''), f('B-2303', ''))).toBe(false);
+  });
+  it('another flat or another registration of another flat is a comparable', () => {
+    expect(otherProperty(f('3102, 31st floor', '6863/2024'), f('Flat 1001, 10th floor', 'THN1-13802-2026'))).toBe(true);
+    expect(otherProperty(f('3102', ''), f('1001', ''))).toBe(true);
+    // an earlier registration of the same flat is not another property (it is the previous Index II)
+    expect(otherProperty(f('1001', '4411/2019'), f('1001', '13802/2026'))).toBe(false);
+    expect(otherProperty(f('', '', 's2', ['patil']), f('', '', 's1', ['sharma']))).toBe(true);
+    expect(otherProperty(f('', '', '', []), f('1001', '13802/2026'))).toBe(false);
   });
 });

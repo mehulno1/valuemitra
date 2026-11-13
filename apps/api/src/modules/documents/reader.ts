@@ -168,7 +168,20 @@ export function ranked<T extends { field_code: string; value: string; rank?: num
   return out;
 }
 
-const normId = (s: unknown) => String(s ?? '').toLowerCase().replace(/\b(flat|unit|shop|office|no|number|room)\b/g, '').replace(/[^a-z0-9]/g, '');
+/** The flat's own number from "B-2303", "Flat 1001, 10th floor" or "3102, 31st floor": the first run of digits
+ *  (the wing letter and the floor written after it are not part of it). */
+export const unitNo = (s: unknown) => /\d+/.exec(String(s ?? '').replace(/\d+\s*(st|nd|rd|th)\b/gi, ' '))?.[0].replace(/^0+(?=\d)/, '') ?? '';
+/** Serial and year of a registration number: "TNN2/11700/2021", "THN1-13802-2026" and "11700/2021" → "11700/2021". */
+export const regNo = (s: unknown) => { const m = /(\d{3,6})\s*[/\-]\s*((?:19|20)\d{2})\b/.exec(String(s ?? '')); return m ? `${Number(m[1])}/${m[2]}` : ''; };
+/** Is an Index II for another property than the agreement? The same registration number settles it (same document);
+ *  else different flat numbers; else, with no flat number to compare, different buyers in a different building. */
+export function otherProperty(idx: { unit: string; reg: string; building: string; buyer: Set<string> }, ref: { unit: string; reg: string; building: string; buyer: Set<string> }): boolean {
+  if (idx.reg && ref.reg) return idx.reg !== ref.reg && !(idx.unit && idx.unit === ref.unit);
+  if (idx.unit && ref.unit) return idx.unit !== ref.unit;
+  if (idx.buyer.size && ref.buyer.size && ![...idx.buyer].some((w) => ref.buyer.has(w))) return !(idx.building && ref.building && idx.building === ref.building);
+  return false;
+}
+const normId = (s: unknown) => String(s ?? '').toLowerCase().replace(/\b(flat|unit|shop|office|no|number|room|building|bldg|wing)\b/g, '').replace(/[^a-z0-9]/g, '');
 const nameTokens = (s: unknown) => new Set(String(s ?? '').toLowerCase().replace(/\b(mr|mrs|ms|miss|shri|smt|m\/s|and|pvt|ltd|llp)\b/g, ' ').split(/[^a-z]+/).filter((w) => w.length >= 3));
 
 /** An Index II that came with the file but belongs to another flat (a comparable sale) must not give this property's
@@ -189,18 +202,13 @@ export async function reconcileIndex2(assignmentId: number, firmId: number) {
   const of = (partId: number, code: string) => vals.find((v) => v.part_id === partId && v.field_code === code)?.value_text ?? null;
   const facts = (p: (typeof parts)[number]) => {
     const k = json<any>(p.key_facts_json, {});
-    return { unit: normId(of(p.id, 'PROP.UNIT_NO') ?? k.unit_no), building: normId(of(p.id, 'PROP.BUILDING') ?? k.building), buyer: nameTokens(of(p.id, 'DOC.AGREEMENT.BUYER')) };
+    return { unit: unitNo(of(p.id, 'PROP.UNIT_NO') ?? k.unit_no), reg: regNo(k.registration_no), building: normId(of(p.id, 'PROP.BUILDING') ?? k.building), buyer: nameTokens(of(p.id, 'DOC.AGREEMENT.BUYER')) };
   };
   const agr = parts.find((p) => ['agreement', 'sale_deed'].includes(typeOf(p)));
-  const ref = agr ? facts(agr) : { unit: '', building: '', buyer: new Set<string>() };
+  const ref = agr ? facts(agr) : { unit: '', reg: '', building: '', buyer: new Set<string>() };
   if (!ref.buyer.size) ref.buyer = nameTokens(a.borrower_name);
   const overlap = (x: Set<string>, y: Set<string>) => [...x].some((w) => y.has(w));
-  const mismatch = (p: (typeof parts)[number]) => {
-    const f = facts(p);
-    if (f.unit && ref.unit) return f.unit !== ref.unit;
-    if (f.buyer.size && ref.buyer.size && !overlap(f.buyer, ref.buyer)) return !(f.building && ref.building && f.building === ref.building);
-    return false;
-  };
+  const mismatch = (p: (typeof parts)[number]) => otherProperty(facts(p), ref);
   // with no agreement to compare, two Index II of different flats: the one naming the borrower is the property's own
   let other = idx.filter(mismatch);
   if (!agr && !other.length && idx.length > 1) {
