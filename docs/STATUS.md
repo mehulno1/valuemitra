@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 12 Nov 2026 (second retest of 12 Nov built locally, see 3k; 11 Nov retest live, see 3j). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 12 Nov 2026 (second retest of 12 Nov live on 13 Nov, see 3k). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -215,7 +215,7 @@ tagged templates: `~/Downloads/ValueMitra previews 12 Nov/` (specs still in the 
 - Still open: Soni (needs email; role Coordinator + Accounts), MKS letterhead/signature/seal files (#10), IBBI validity
   date (#21), report number series before go-live (#8), field engineer name "Pramod Penta" has no "Mr." on live.
 
-## 3k. Universal second retest of 12 Nov (built 12 Nov 2026, NOT yet committed or deployed)
+## 3k. Universal second retest of 12 Nov (live 13 Nov 2026)
 Doc: `~/Downloads/ValueMitra — Retest Findings and Changes for Mehul_12Nov26.pdf` (N1–N10, R1–R11, T1–T12, D1–D10) and
 `Percentage completion & Rate analysis-Working sheet-1.xlsx`. Previews and tagged templates: `~/Downloads/ValueMitra previews
 12 Nov (second retest)/` (specs in the 06 Nov folder; `*.before-12nov.json` = old). No migration.
@@ -248,10 +248,17 @@ Doc: `~/Downloads/ValueMitra — Retest Findings and Changes for Mehul_12Nov26.p
   in the report. T10 Bank formats: Active / Inactive switch, filter, history, warning for the only active format.
   R11 rule `rate_factors` drives the reason factors ("Open the rate analysis sheet").
 - FC spec: doubled serial numbers in the valuation table removed.
-- To do on deploy: seed (new platform config; firm profile/rules merged), publish Flat Completed v4 and Under Construction v3
-  from the new tagged templates (fonts = recommended), move UC-2627-0005 to the new versions and re-read its documents and
-  site sheet, install fonts on EC2. Not done: N10 (branch full name: check the branch's name on live), #17 re-read of
-  VM-2627-0003, #18 prefix, side-by-side font previews at upload (Preview with a case shows the chosen fonts).
+- Live, 13 Nov (DB backup `~/backups/valuemitra-v2-before-retest2-20261112.sql.gz`; scripts `scripts/dev/live-retest2.mts`,
+  `live-fix-idx3.mts`, `live-pdf.mts`): Times New Roman installed on EC2 (`ttf-mscorefonts-installer`); Flat Completed v4 (#14)
+  and Under Construction v3 (#15) published, fonts recommended; UC-2627-0005 and VM-2627-0003 moved to them and to profile v6 /
+  rules v8 / checks v8 / wording v10, checklists refreshed, documents and site sheet read again (floor plan split out,
+  latest C.C. chosen, 95% worked out; the tester's hand-set 90% and station text still win until reset). Live draft PDFs
+  embed Times New Roman only (+ OpenSymbol for the bank's bullets, Times-Bold for the PREVIEW mark).
+- Index II matching fixed after the first live run took VM-2627-0003's own Index II ("2303" vs "B-2303") as a comparable:
+  `unitNo` / `regNo` / `otherProperty` (same registration or same flat number = the property itself); case repaired.
+- Still open: N10 (live branch is named "Thane"; rename it to "Home Loan Centre, Thane" in Firm settings → Banks & branches if
+  Universal wants that printed), #18 prefix, podium row of the weightage sheet (Universal to confirm), side-by-side font
+  previews at upload, Wingdings on EC2 (bullets print in OpenSymbol), UC-2627-0005 has one open conflict (C.C. issued by).
 
 ## 4. Left — by work package
 
