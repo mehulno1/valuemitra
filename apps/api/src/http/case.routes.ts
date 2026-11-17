@@ -46,7 +46,7 @@ export async function caseRoutes(app: FastifyInstance) {
     return db.transaction().execute((tx) => asg.addCaseSource(actorOf(req), b.name, tx));
   });
   app.post('/api/branches/quick', { preHandler: can('edit') }, async (req) => {
-    const b = body(req, z.object({ bankId: z.number().int(), name: z.string().max(150), code: z.string().max(30).nullish(), contactName: z.string().max(150).nullish(), contactPhone: z.string().max(30).nullish(), contactEmail: z.string().max(150).nullish() }));
+    const b = body(req, z.object({ bankId: z.number().int(), name: z.string().max(150), code: z.string().max(30).nullish(), contactName: z.string().max(150).nullish(), contactPhone: z.string().max(30).nullish() }));
     return db.transaction().execute((tx) => asg.quickBranch(actorOf(req), b, tx));
   });
   app.get('/api/assignments/:id', async (req) => asg.assignmentHeader(req.auth!.firmId, idParam(req)));

@@ -56,7 +56,7 @@ export async function quickBranch(actor: Actor, input: { bankId: number; name: s
   const code = (input.code?.trim() || name.replace(/[^A-Za-z0-9]+/g, '').slice(0, 12)).toUpperCase();
   const same = await tx.selectFrom('bank_branches').select(['id', 'name']).where('firm_id', '=', actor.firmId!).where('bank_id', '=', bank.id).where((eb) => eb.or([eb('code', '=', code), eb('name', '=', name)])).executeTakeFirst();
   if (same) throw badRequest(`${bank.code} already has a branch "${same.name}" with that name or code`);
-  const r = await tx.insertInto('bank_branches').values({ firm_id: actor.firmId!, bank_id: bank.id, code, name, contact_name: input.contactName?.trim() || null, contact_phone: input.contactPhone?.trim() || null, contact_email: input.contactEmail?.trim() || null, default_payer: 'bank', billing_cycle: 'case' }).executeTakeFirstOrThrow();
+  const r = await tx.insertInto('bank_branches').values({ firm_id: actor.firmId!, bank_id: bank.id, code, name, contact_name: input.contactName?.trim() || null, contact_phone: input.contactPhone?.trim() || null, contact_email: null /* the email reports go to is set by an admin in Banks & branches */, default_payer: 'bank', billing_cycle: 'case' }).executeTakeFirstOrThrow();
   await audit(actor, { entityType: 'branch', entityId: Number(r.insertId), action: 'branch.add', summary: `Branch ${bank.code} ${name} (${code}) added from a case form` }, tx);
   return { id: Number(r.insertId), code, name, bank_id: bank.id };
 }

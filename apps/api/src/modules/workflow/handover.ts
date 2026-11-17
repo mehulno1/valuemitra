@@ -46,6 +46,13 @@ export async function assignPeople(actor: Actor, id: number, input: { makerId?: 
   await check(input.checkerId, ['checker', 'valuer'], 'Report checker');
   if (input.makerId !== undefined) set.maker_id = input.makerId;
   if (input.checkerId !== undefined) set.checker_id = input.checkerId;
+  // segregation of duties: the case's own report maker or checker cannot change who checks or makes it (only someone
+  // with "assign", or the valuer)
+  const perms = actor.id ? (await tx.selectFrom('user_permissions').select('perm').where('user_id', '=', actor.id).execute()).map((p) => p.perm) : [];
+  const role = actor.id ? (await tx.selectFrom('users').select('role').where('id', '=', actor.id).executeTakeFirst())?.role : null;
+  const mayAssign = perms.includes('assign') || role === 'valuer' || role === 'admin';
+  if (!mayAssign && actor.id && (actor.id === a.maker_id || actor.id === a.checker_id) && ((set.checker_id !== undefined && set.checker_id !== a.checker_id) || (set.maker_id !== undefined && set.maker_id !== a.maker_id)))
+    throw forbidden('The report maker or checker of a case cannot change who makes or checks it. Ask the coordinator or the valuer.');
   const maker = set.maker_id !== undefined ? set.maker_id : a.maker_id;
   const checker = set.checker_id !== undefined ? set.checker_id : a.checker_id;
   if (maker && checker && maker === checker) throw badRequest('A report maker cannot check their own case. Choose another checker.');
