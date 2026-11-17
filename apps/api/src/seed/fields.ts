@@ -332,9 +332,9 @@ export const FIELDS: FieldDef[] = [
   ...[1, 2, 3, 4].flatMap((n) => [
     { code: `EVID.COMP${n}.SOURCE`, label: `Comparable ${n}: source`, group: 'EVID', type: 'text' as const, sources: ['case', 'manual'] },
     { code: `EVID.COMP${n}.DESC`, label: `Comparable ${n}: property`, group: 'EVID', type: 'text' as const, sources: ['case', 'manual'] },
-    { code: `EVID.COMP${n}.VALUE`, label: `Comparable ${n}: value (Rs.)`, group: 'EVID', type: 'number' as const, sources: ['case', 'manual'] },
+    { code: `EVID.COMP${n}.VALUE`, label: `Comparable ${n}: value (Rs.)`, group: 'EVID', type: 'money' as const, sources: ['case', 'manual'] },
     { code: `EVID.COMP${n}.AREA`, label: `Comparable ${n}: area (sq.ft.)`, group: 'EVID', type: 'number' as const, sources: ['case', 'manual'] },
-    { code: `EVID.COMP${n}.RATE`, label: `Comparable ${n}: rate per sq.ft.`, group: 'EVID', type: 'number' as const, sources: ['case', 'manual'] },
+    { code: `EVID.COMP${n}.RATE`, label: `Comparable ${n}: rate per sq.ft.`, group: 'EVID', type: 'money' as const, sources: ['case', 'manual'] },
     // with Indian commas (20,455), for formats whose chart prints them that way
     { code: `EVID.COMP${n}.RATE_TEXT`, label: `Comparable ${n}: rate per sq.ft. (20,455)`, group: 'EVID', type: 'text' as const, sources: ['derived'], derivation: `inr(EVID.COMP${n}.RATE)` },
     { code: `EVID.COMP${n}.VALUE_TEXT`, label: `Comparable ${n}: value (90,00,000)`, group: 'EVID', type: 'text' as const, sources: ['derived'], derivation: `inr(EVID.COMP${n}.VALUE)` },

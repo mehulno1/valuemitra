@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import { CLOSE, HEADER_XML, OPEN } from './compile.js';
 import { keepTablesWithHeadings, openDocx, saveDocx, unfloatTables } from './docx.js';
 import { fitCells, fitCover, styleSizes } from './fit.js';
+import { borderPictureGrids, fitComparableRows, splitSingleColumnGrids, type CompPrint } from './grids.js';
 
 export interface RenderImage {
   buffer: Buffer;
@@ -31,7 +32,7 @@ export function renderDocx(compiled: Buffer, data: RenderData, images: Map<strin
       return [img.width, img.height];
     },
   });
-  const zip = new PizZip(unfloat(compiled));
+  const zip = new PizZip(prepare(compiled, data));
   upgradeHeaders(zip);
   keepBrokenLinesShort(zip);
   const doc = new Docxtemplater(zip, {
@@ -59,11 +60,15 @@ function fitText(zip: PizZip) {
   if (changed) zip.file('word/document.xml', new XMLSerializer().serializeToString(doc));
 }
 
-/** Formats compiled before 28 Oct 2026 may keep the bank's floating tables (see unfloatTables); every format
- *  keeps its section headings with their tables (keepTablesWithHeadings), published ones included. */
-function unfloat(compiled: Buffer): Buffer {
+/** Before the values go in. Formats compiled before 28 Oct 2026 may keep the bank's floating tables (see
+ *  unfloatTables); every format keeps its section headings with their tables (keepTablesWithHeadings), published
+ *  ones included; the comparables chart has the rows the case's choice asks for; picture pages are bordered grids. */
+function prepare(compiled: Buffer, data: RenderData): Buffer {
   const parts = openDocx(compiled);
   unfloatTables(parts.doc);
+  fitComparableRows(parts.doc, (data.COMP_PRINT as CompPrint) ?? 'filled', new Set((data.COMP_EMPTY as number[] | undefined) ?? []));
+  splitSingleColumnGrids(parts.doc, `${OPEN}%a_img${CLOSE}`);
+  borderPictureGrids(parts.doc, `${OPEN}%a_img${CLOSE}`);
   keepTablesWithHeadings(parts.doc);
   return saveDocx(parts);
 }
