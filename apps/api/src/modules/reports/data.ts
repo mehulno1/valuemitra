@@ -184,7 +184,7 @@ async function annexPages(data: CaseData, firmId: number, settings: Parameters<t
   for (const c of caps) { const f = firstBySha.get(c.sha256); if (f) sameAs.set(c.id, f); else firstBySha.set(c.sha256, c.id); }
   // the comparables each capture gave (a sale instance is captioned with its building and registration date)
   const linked = await tx.selectFrom('case_comparables as cc').innerJoin('comparables as cp', 'cp.id', 'cc.comparable_id')
-    .select(['cc.capture_id', 'cp.building', 'cp.society', 'cp.locality', 'cp.txn_date', 'cp.price'])
+    .select(['cc.capture_id', 'cp.building', 'cp.society', 'cp.locality', 'cp.txn_date', 'cp.price', 'cp.source_type'])
     .where('cc.assignment_id', '=', data.case.id).where('cc.capture_id', 'is not', null).orderBy('cc.id').execute();
   // a capture's own comparables, else those of the copy it duplicates
   const compsOf = (id: number) => {
@@ -210,9 +210,15 @@ async function annexPages(data: CaseData, firmId: number, settings: Parameters<t
     if (c.source_kind === 'listing') return `Property listing${c.source_name ? `: ${c.source_name}` : ''}${c.url ? ` · ${c.url}` : ''}`;
     return `${c.source_name || 'Ready reckoner'}${c.url ? ` · ${c.url}` : ''}`;
   };
+  // a page uploaded as "Other" counts as what its comparables are (a listing read from a Square Yards page)
+  const kindOf = (x: { id: number; source_kind: string }) => {
+    if (x.source_kind !== 'other') return x.source_kind;
+    const t = linked.find((l) => l.capture_id === x.id)?.source_type;
+    return t === 'listing' ? 'listing' : t === 'index2' || t === 'igr_search' ? 'igr' : 'other';
+  };
   const captured = async (kinds: string[]) => {
     const imgs: { buf: Buffer; cap: string }[] = [];
-    for (const c of caps.filter((x) => kinds.includes(x.source_kind) && !sameAs.has(x.id))) {
+    for (const c of caps.filter((x) => kinds.includes(kindOf(x)) && !sameAs.has(x.id))) {
       const cap = caption(c);
       for (const b of await pictures(c)) imgs.push({ buf: b, cap });
     }
