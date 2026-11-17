@@ -10,6 +10,7 @@ import { readFile } from '../../platform/storage.js';
 import { caseData, type CaseData } from '../casedata/resolver.js';
 import { fitImage, type RenderData, type RenderImage } from '../templates/render.js';
 import { conditionKey, fillTemplate, templateKey, versionConditions, versionFieldCodes, versionTemplates } from '../templates/codes.js';
+import { keepAnnexures, pageLayout } from '../templates/layout.js';
 import { mapImages } from './maps.js';
 
 // final_preview: the final layout before signing (no draft line; the signature is not placed)
@@ -97,7 +98,9 @@ export async function buildRenderData(assignmentId: number, firmId: number, mode
   out.IS_DRAFT = !signed && mode !== 'final_preview';
   out.DRAFT_LINE = `DRAFT v${data.case.draft_version} – not for submission`;
 
-  out.ANNEX_PAGES = await annexPages(data, firmId, settings, images, tx);
+  // photos / documents / evidence per page: the format's own choice over the firm default (H3)
+  const pl = await pageLayout(firmId, tplVersion, tx);
+  out.ANNEX_PAGES = keepAnnexures(await annexPages(data, firmId, { ...settings, ...pl }, images, tx), pl.annex_off);
   snapshot.annex = (out.ANNEX_PAGES as any[]).map((p) => ({ title: p.title, images: [...JSON.stringify(p).matchAll(/"([a-z]_img)":"([^"]+)"/g)].length }));
   return { data: out, images, snapshot };
 }

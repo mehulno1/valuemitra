@@ -18,7 +18,7 @@ interface DictField { code: string; label: string; sources?: string[] }
 
 export const READY = 85;
 type Filter = 'all' | 'match' | 'new' | 'needs' | 'clear';
-const PILL: Record<string, [string, string]> = { match: ['ok', 'Matched'], new: ['new', 'New field'], needs: ['warn', 'Needs you'], clear: ['info', 'Cleared'], fixed: ['info', "Bank's text"] };
+const PILL: Record<string, [string, string]> = { match: ['ok', 'Ready'], new: ['new', 'New field'], needs: ['warn', 'Question for you'], clear: ['info', 'Cleared'], fixed: ['info', "Bank's text"] };
 const SOURCE: Record<string, string> = { site_sheet: 'Site sheet (engineer)', manual: 'Entered by you', derived: 'Standard wording', wording: 'Standard wording', valuation: 'Valuation tab', evidence: 'Market evidence', case: 'Case details', firm: 'Firm settings' };
 const TAG_RE = /\{\{\s*([A-Z][A-Z0-9_]*(?:\.[A-Z0-9_]+)+)\s*\}\}/g;
 
@@ -76,9 +76,9 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
     <div className="grid gap-4">
       <div className="rv-tiles">
         {tile('all', 'Items found')}
-        {tile('match', 'Matched to existing fields')}
+        {tile('match', 'Ready: existing fields')}
         {tile('new', 'Get new fields')}
-        {tile('needs', 'Need you')}
+        {tile('needs', 'Questions for you')}
         {tile('clear', 'Earlier-case text cleared')}
       </div>
       {ai.summary.filled_report && (
@@ -101,7 +101,7 @@ export default function FormatReview({ vid, ai, mappings, fields, edit, onChange
         <section className="panel min-w-0 rv-paper" style={{ paddingBottom: 10 }}>
           <div className="border-b border-line px-4 py-3" style={{ fontFamily: 'var(--f-body)' }}>
             <b>{ai.summary.title}</b>
-            <div className="sub">As read from the uploaded file · click any line</div>
+            <div className="sub">The bank's form as it reads · click any line to see what prints and where the value comes from</div>
           </div>
           {sections.map((sec) => (
             <div key={sec}>

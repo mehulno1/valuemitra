@@ -761,6 +761,7 @@ export interface TemplateVersions {
   fixed_ok_json: Json | null;
   id: Generated<number>;
   layout_json: Json | null;
+  rules_json: Json | null;
   published_at: Date | null;
   published_by: number | null;
   source_file_id: number;

@@ -1,19 +1,28 @@
 // Bank formats: the template engine. List formats and their versions, upload a bank's Word template,
 // confirm how each label maps to a master field, preview against a real case, and publish.
 import { LetterheadChoice } from '@/components/LetterheadChoice';
+import { DocxPages } from '@/components/DocxPages';
+import { FirstPages } from '@/components/FirstPages';
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { PROPERTY_TYPES } from '@vm/shared';
-import { api } from '@/lib/api';
+import { api, downloadUrl } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Conf, Empty, Field, Loading, Modal, PageHead, Panel, fmtDate, useErrorToast, useToast } from '@/components/ui';
 import FormatReview, { type AiInfo, type ReviewMapping } from './FormatReview';
+import FormAsItReads from './FormAsItReads';
 
 interface Version { id: number; version: number; status: 'draft' | 'published' | 'retired'; effective_from: string | null; published_at: string | null; created_at?: string; slots: number; mapped: number; ignored: number; confirmed?: number; change_note: string | null; ai_status?: string }
 interface Tpl { id: number; hidden?: boolean; active?: boolean; only_for?: string[]; history?: { summary: string; by: string | null; at: string }[]; code: string; name: string; bank_code: string | null; bank_name: string | null; property_types: string[]; branch_scope: string[]; firm_id: number | null; status?: string; versions: Version[] }
 type Mapping = ReviewMapping;
-interface VersionDetail { id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: { letterhead?: string; letterhead_pages?: string; footer_sig?: boolean; fonts?: 'uploaded' | 'recommended' }; fonts?: { used: string[]; unsafe: string[]; reason: string | null } | null; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null }
+interface FormatLayout { letterhead?: string; letterhead_pages?: string; footer_sig?: boolean; fonts?: 'uploaded' | 'recommended'; photo_grid?: number; doc_grid?: number; evidence_per_page?: number; docs_at_end?: boolean; min_photos?: number; annex_off?: string[] }
+interface VersionDetail {
+  id: number; version: number; status: string; name: string; bank_code: string | null; bank_name?: string | null; template_id: number; layout?: FormatLayout;
+  firm_layout?: { letterhead: string; letterhead_pages: string | null; footer_sig: boolean; photo_grid: number; doc_grid: number; evidence_per_page: number; docs_at_end: boolean; min_photos: number };
+  annex_sections?: { key: string; label: string }[]; revisable?: boolean; draft_id?: number | null; source_kept?: boolean; firm_id: number | null;
+  fonts?: { used: string[]; unsafe: string[]; reason: string | null } | null; rules?: Record<string, number>; effective_from: string | null; change_note: string | null; property_types: string[]; mappings: Mapping[]; ai_status: string; ai_error: string | null; ai: AiInfo | null;
+}
 interface DictField { code: string; label: string; group: string; type: string; status: string; sources?: string[] }
 
 const ptLabel = (k: string) => PROPERTY_TYPES.find((p) => p.key === k)?.label ?? k;
@@ -288,33 +297,41 @@ function NewFieldModal({ open, label, fields, onClose, onSave }: { open: boolean
   );
 }
 
-function PreviewBox({ versionId }: { versionId: number }) {
+/** The filled report on screen, page by page, with Word and PDF downloads (H1). */
+function PreviewBox({ versionId, name }: { versionId: number; name: string }) {
   const onErr = useErrorToast();
   const cases = useQuery({ queryKey: ['board', '', ''], queryFn: () => api.get<{ rows: { id: number; case_no: string; borrower_name: string | null }[] }>('/api/assignments?stage=&q=') });
   const [aid, setAid] = useState<number>(0);
-  const [link, setLink] = useState<{ href: string; name: string } | null>(null);
+  const [shown, setShown] = useState<{ aid: number; buf: ArrayBuffer } | null>(null);
+  const rows = cases.data?.rows ?? [];
+  const pick = aid || rows[0]?.id || 0;
+  const caseNo = rows.find((r) => r.id === pick)?.case_no ?? String(pick);
   const run = useMutation({
-    mutationFn: async () => {
-      const buf = await api.binary(`/api/templates/versions/${versionId}/preview?assignmentId=${aid}`);
-      const c = cases.data?.rows.find((r) => r.id === aid);
-      if (link) URL.revokeObjectURL(link.href);
-      const href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-      setLink({ href, name: `Preview v${versionId} ${c?.case_no ?? aid}.docx` });
-    },
+    mutationFn: async () => setShown({ aid: pick, buf: await api.binary(`/api/templates/versions/${versionId}/preview?assignmentId=${pick}`) }),
     onError: onErr,
   });
-  const rows = cases.data?.rows ?? [];
+  const pdf = useMutation({ mutationFn: () => downloadUrl(`/api/templates/versions/${versionId}/preview?assignmentId=${pick}&pdf=1`, `${name} preview ${caseNo}.pdf`), onError: onErr });
+  const saveDocx = () => {
+    if (!shown) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([shown.buf], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    a.download = `${name} preview ${caseNo}.docx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
   return (
-    <div className="grid gap-2">
-      <div className="sub">Fill this version with one of your cases to check the layout before publishing.</div>
-      <select className="inp" value={aid} onChange={(e) => { setAid(Number(e.target.value)); setLink(null); }}>
-        <option value={0}>{rows.length ? 'Choose a case' : 'No cases yet'}</option>
-        {rows.map((r) => <option key={r.id} value={r.id}>{r.case_no}{r.borrower_name ? ` · ${r.borrower_name}` : ''}</option>)}
-      </select>
-      <div className="btns">
-        <button className="btn sm" disabled={!aid || run.isPending} onClick={() => run.mutate()}>{run.isPending ? 'Preparing…' : 'Prepare preview'}</button>
-        {link && <a className="btn sm pri" href={link.href} download={link.name}>Download .docx</a>}
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="inp" style={{ maxWidth: 320 }} value={pick} onChange={(e) => setAid(Number(e.target.value))} aria-label="Case to preview with">
+          {!rows.length && <option value={0}>No cases yet</option>}
+          {rows.map((r) => <option key={r.id} value={r.id}>{r.case_no}{r.borrower_name ? ` · ${r.borrower_name}` : ''}</option>)}
+        </select>
+        <button className="btn sm pri" disabled={!pick || run.isPending} onClick={() => run.mutate()}>{run.isPending ? <span className="dots">Preparing</span> : shown?.aid === pick ? 'Show again' : 'Show the filled report'}</button>
+        <button className="btn sm" disabled={!shown || shown.aid !== pick} onClick={saveDocx}>Download .docx</button>
+        <button className="btn sm" disabled={!pick || pdf.isPending} onClick={() => pdf.mutate()}>{pdf.isPending ? <span className="dots">Making the PDF</span> : 'Download PDF'}</button>
+        <span className="sub">As the report will be issued: no edit marks, signature placed at sign-off.</span>
       </div>
+      {shown && <DocxPages buf={shown.buf} />}
     </div>
   );
 }
@@ -324,46 +341,117 @@ const RULE_LABELS: [string, string, string][] = [
   ['loading_pct', 'Plinth / built-up = carpet + %', 'e.g. 10'], ['saleable_factor', 'Saleable = carpet ×', 'e.g. 1.35'],
   ['building_cost_per_sqft', 'Building cost for insurance (Rs./sq.ft.)', 'e.g. 1500'], ['fmv_rounding_step', 'Round FMV to the nearest Rs.', 'e.g. 1000'],
 ];
+const PAGE_CHOICES: { key: keyof FormatLayout; label: string; options: [string, string][] }[] = [
+  { key: 'photo_grid', label: 'Site photos per page', options: [['9', '9 (3×3)'], ['6', '6 (3×2)'], ['4', '4 (2×2)']] },
+  { key: 'min_photos', label: 'Minimum photos in a report', options: [['6', '6'], ['8', '8'], ['9', '9'], ['12', '12'], ['15', '15'], ['18', '18']] },
+  { key: 'doc_grid', label: 'Document pages per page', options: [['9', '9 (3×3)'], ['4', '4 (2×2)'], ['1', '1 (full page)']] },
+  { key: 'evidence_per_page', label: 'Listings and evidence per page', options: [['2', '2 (one above the other)'], ['1', '1 (full page)']] },
+  { key: 'docs_at_end', label: 'Copies of documents at the end', options: [['true', 'Yes'], ['false', 'No']] },
+];
+const LH_LABEL: Record<string, string> = { all: 'every page', cover: 'cover page only', page2: 'page 2 only', none: 'nowhere', custom: 'chosen pages' };
+const pageText = (k: string, v: unknown) => (v === undefined || v === null ? '' : k === 'docs_at_end' ? (v ? 'Yes' : 'No') : PAGE_CHOICES.find((c) => c.key === k)?.options.find((o) => o[0] === String(v))?.[1] ?? String(v));
 
-/** Layout of the issued report, the format's own rules, and figures left as fixed text (checked before publishing). */
+/**
+ * Layout of the issued report and the format's own rules. On a draft every choice saves at once. On the active
+ * version (H2) the choices are collected and saved together as the next version, effective from a chosen date;
+ * cases already on the format keep their version. The Word file is uploaded again only when the bank's layout changes.
+ */
 function FormatSettings({ d, edit }: { d: VersionDetail; edit: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const onErr = useErrorToast();
   const draft = d.status === 'draft';
+  const staged = !draft && !!d.revisable && edit;
+  const canChange = (draft && edit) || staged;
+  const [pending, setPending] = useState<Record<string, unknown>>({});
+  const [rules, setRules] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(d.rules ?? {}).map(([k, v]) => [k, String(v)])));
+  const [eff, setEff] = useState(today());
+  const [note, setNote] = useState('');
   const fixed = useQuery({ queryKey: ['tplfixed', d.id, d.mappings.map((m: any) => `${m.field_code}:${m.ignored}`).join()], queryFn: () => api.get<{ value: string; context: string; ok: boolean }[]>(`/api/templates/versions/${d.id}/fixed-numbers`), enabled: draft && d.ai_status !== 'reading' });
   const keep = useMutation({ mutationFn: (values: string[]) => api.post(`/api/templates/versions/${d.id}/fixed-numbers`, { values }), onSuccess: () => qc.invalidateQueries({ queryKey: ['tplfixed', d.id] }), onError: onErr });
   const layout = useMutation({ mutationFn: (l: Record<string, unknown>) => api.patch(`/api/templates/versions/${d.id}/layout`, l), onSuccess: () => { qc.invalidateQueries({ queryKey: ['tplv', d.id] }); toast('Layout saved'); }, onError: onErr });
-  const [rules, setRules] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(d.rules ?? {}).map(([k, v]) => [k, String(v)])));
+  const rulesPatch = () => Object.fromEntries(RULE_LABELS.map(([k]) => [k, rules[k]?.trim() ? Number(rules[k]) : null]).filter(([k, v]) => (d.rules?.[k as string] ?? null) !== v));
   const saveRules = useMutation({
-    mutationFn: () => api.patch(`/api/templates/${d.template_id}/rules`, Object.fromEntries(RULE_LABELS.map(([k]) => [k, rules[k]?.trim() ? Number(rules[k]) : null]))),
+    mutationFn: () => api.patch(`/api/templates/versions/${d.id}/rules`, rulesPatch()),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['tplv', d.id] }); toast('Format rules saved'); }, onError: onErr,
   });
+  const nav = useNavigate();
+  const revise = useMutation({
+    mutationFn: () => api.post<{ versionId: number; version: number; effectiveFrom: string; note: string }>(`/api/templates/versions/${d.id}/revise`, { layout: Object.keys(pending).length ? pending : undefined, rules: Object.keys(rulesPatch()).length ? rulesPatch() : undefined, effectiveFrom: eff, note: note || null }),
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(`Saved as v${r.version}, effective ${fmtDate(r.effectiveFrom)}. Cases already on v${d.version} keep it.`); setPending({}); nav(`/formats/v/${r.versionId}`); },
+    onError: onErr,
+  });
+  /** a choice: saved at once on a draft, collected for the next version on the active one */
+  const change = (patch: Record<string, unknown>) => (draft ? layout.mutate(patch) : setPending((p) => ({ ...p, ...patch })));
+  const cur = <K extends keyof FormatLayout>(k: K): FormatLayout[K] | undefined => (Object.hasOwn(pending, k) ? (pending[k] ?? undefined) as FormatLayout[K] : d.layout?.[k]);
+  const fl = d.firm_layout;
   const left = (fixed.data ?? []).filter((x) => !x.ok);
+  const rChanged = Object.keys(rulesPatch()).length;
+  const lChanged = Object.entries(pending).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify((d.layout as any)?.[k] ?? null)).length;
+  const dirty = staged && (rChanged > 0 || lChanged > 0);
+  const compileChange = ['letterhead', 'letterhead_pages', 'footer_sig', 'fonts'].some((k) => Object.hasOwn(pending, k) && JSON.stringify(pending[k] ?? null) !== JSON.stringify((d.layout as any)?.[k] ?? null));
+  const busy = layout.isPending || revise.isPending;
   return (
     <Panel title="Report layout and rules">
       <div className="grid gap-3">
-        <Field label="Letterhead" hint="Where the firm's letterhead prints in this format">
-          <LetterheadChoice value={d.layout?.letterhead ?? ''} pages={d.layout?.letterhead_pages ?? ''} disabled={!edit || !draft || layout.isPending} firmDefault
-            onSave={(on, pages) => layout.mutate(on === '' ? { letterhead: null } : { letterhead: on, letterhead_pages: on === 'custom' ? pages : null })} />
+        {!draft && (staged
+          ? <p className="sub m-0">This is the active version (v{d.version}). Change anything below and save it as <b>v{d.version + 1}</b>: same Word file, effective from the date you choose. Cases already on v{d.version} keep it.</p>
+          : <p className="sub m-0">{d.status === 'retired' ? 'A retired version: open the active version to change the layout or rules.' : d.draft_id ? <>This format has a draft. <Link to={`/formats/v/${d.draft_id}`}>Open the draft</Link> to change the layout or rules.</> : d.firm_id === null ? 'A platform format: upload a revised version to get your own copy, then change its layout and rules.' : 'Needs the “Master data & templates” permission to change.'}</p>)}
+        <Field label="Letterhead" hint={`Where the firm's letterhead prints in this format${fl ? `. Firm default: ${LH_LABEL[fl.letterhead] ?? fl.letterhead}${fl.letterhead === 'custom' && fl.letterhead_pages ? ` (${fl.letterhead_pages})` : ''}` : ''}`}>
+          <LetterheadChoice value={cur('letterhead') ?? ''} pages={cur('letterhead_pages') ?? ''} disabled={!canChange || busy} firmDefault
+            onSave={(on, pages) => change(on === '' ? { letterhead: null } : { letterhead: on, letterhead_pages: on === 'custom' ? pages : null })} />
         </Field>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={d.layout?.footer_sig !== false} disabled={!edit || !draft} onChange={(e) => layout.mutate({ footer_sig: e.target.checked })} /> Short signature and seal in the footer of every page (else only where the valuer signs)</label>
-        <Field label="Fonts" hint="Preview with a case below to see each choice before publishing">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={cur('footer_sig') !== false} disabled={!canChange || busy} onChange={(e) => change({ footer_sig: e.target.checked })} /> Short signature and seal in the footer of every page (else only where the valuer signs)</label>
+        <Field label="Fonts" hint="Preview with a case to see each choice">
           <div className="grid gap-1.5" role="radiogroup" aria-label="Fonts">
-            {([['recommended', 'ValueMitra recommended', 'Times New Roman throughout: body 11 pt, tables 10 pt, rate chart 9 pt. Word and PDF break pages the same way.'], ['uploaded', 'Keep as uploaded', `The file's own fonts and sizes${d.fonts?.used?.length ? ` (${d.fonts.used.slice(0, 4).join(', ')})` : ''}.`]] as const).map(([k, label, note]) => (
+            {([['recommended', 'ValueMitra recommended', 'Times New Roman throughout: body 11 pt, tables 10 pt, rate chart 9 pt. Word and PDF break pages the same way.'], ['uploaded', 'Keep as uploaded', `The file's own fonts and sizes${d.fonts?.used?.length ? ` (${d.fonts.used.slice(0, 4).join(', ')})` : ''}.`]] as const).map(([k, label, n]) => (
               <label key={k} className="flex items-start gap-2">
-                <input type="radio" name="fonts" className="mt-1" checked={(d.layout?.fonts ?? 'uploaded') === k} disabled={!edit || !draft || layout.isPending} onChange={() => layout.mutate({ fonts: k })} />
-                <span><b className="font-medium">{label}</b><span className="sub block">{note}</span></span>
+                <input type="radio" name={`fonts${d.id}`} className="mt-1" checked={(cur('fonts') ?? 'uploaded') === k} disabled={!canChange || busy} onChange={() => change({ fonts: k })} />
+                <span><b className="font-medium">{label}</b><span className="sub block">{n}</span></span>
               </label>
             ))}
           </div>
           {d.fonts?.reason && <p className="sub mb-0 mt-1" style={{ color: 'var(--warn)' }}>{d.fonts.reason} The recommended fonts are suggested for this file.</p>}
         </Field>
-        <div className="sub">This format's own rules (blank = the firm's rule for the bank). They apply to every case that uses the format.</div>
+        {staged && compileChange && !d.source_kept && <p className="sub m-0 text-crit">The letterhead, footer and fonts are set when the Word file is prepared, and this format's original file was deleted (it held an earlier case). Upload the Word file again to change them.</p>}
+
         <div className="grid grid-cols-2 gap-2">
-          {RULE_LABELS.map(([k, label, ph]) => <Field key={k} label={label}><input inputMode="decimal" value={rules[k] ?? ''} placeholder={ph} disabled={!edit} onChange={(e) => setRules((r) => ({ ...r, [k]: e.target.value }))} /></Field>)}
+          {PAGE_CHOICES.map((c) => {
+            const v = cur(c.key);
+            const def = fl ? pageText(c.key, (fl as any)[c.key]) : '';
+            return (
+              <Field key={c.key} label={c.label}>
+                <select value={v === undefined || v === null ? '' : String(v)} disabled={!canChange || busy}
+                  onChange={(e) => change({ [c.key]: e.target.value === '' ? null : c.key === 'docs_at_end' ? e.target.value === 'true' : Number(e.target.value) })}>
+                  <option value="">Firm default{def ? ` (${def})` : ''}</option>
+                  {c.options.map(([val, lab]) => <option key={val} value={val}>{lab}</option>)}
+                </select>
+              </Field>
+            );
+          })}
         </div>
-        {edit && <div className="btns"><button className="btn" disabled={saveRules.isPending} onClick={() => saveRules.mutate()}>Save rules</button></div>}
+        <FirstPages versionId={d.id} layout={Object.keys(pending).length ? pending : null} label={dirty ? 'Show the first pages with these changes' : 'Show the first pages'} />
+
+        <div className="sub">This format's own rules (blank = the firm's rule for the bank). Cases on this version use them.</div>
+        <div className="grid grid-cols-2 gap-2">
+          {RULE_LABELS.map(([k, label, ph]) => <Field key={k} label={label}><input inputMode="decimal" value={rules[k] ?? ''} placeholder={ph} disabled={!canChange || busy} onChange={(e) => setRules((r) => ({ ...r, [k]: e.target.value }))} /></Field>)}
+        </div>
+        {draft && edit && <div className="btns"><button className="btn" disabled={saveRules.isPending || !rChanged} onClick={() => saveRules.mutate()}>Save rules</button></div>}
+
+        {staged && (
+          <div className="grid gap-2 rounded-[var(--r)] border border-line p-3" style={dirty ? { background: 'var(--warn-soft)' } : undefined}>
+            <b>{dirty ? `${rChanged + lChanged} change(s) not saved` : 'No changes yet'}</b>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Effective from" hint="New cases from this date use the new version"><input type="date" value={eff} onChange={(e) => setEff(e.target.value)} /></Field>
+              <Field label="Note (optional)"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Bank asked for 95% realizable" /></Field>
+            </div>
+            <div className="btns">
+              <button className="btn pri" disabled={!dirty || busy || (compileChange && !d.source_kept)} onClick={() => revise.mutate()}>{revise.isPending ? 'Saving…' : `Save as v${d.version + 1}`}</button>
+              {dirty && <button className="btn ghost" disabled={busy} onClick={() => { setPending({}); setRules(Object.fromEntries(Object.entries(d.rules ?? {}).map(([k, v]) => [k, String(v)]))); }}>Discard changes</button>}
+            </div>
+          </div>
+        )}
+
         {draft && (
           <div className="grid gap-2">
             <b>Figures left as fixed text</b>
@@ -412,6 +500,14 @@ function MappingScreen() {
     onSuccess: () => { toast(`Published. New ${v.data?.bank_code ?? ''} cases from ${fmtDate(eff)} use it automatically.`); qc.invalidateQueries({ queryKey: ['templates'] }); qc.invalidateQueries({ queryKey: ['tplv', vid] }); nav('/formats'); },
     onError: onErr,
   });
+  /** a standard section left out or printed again: at once on a draft, as the next version on the active one */
+  const annex = useMutation({
+    mutationFn: async (off: string[]) => (v.data!.status === 'draft'
+      ? (await api.patch(`/api/templates/versions/${vid}/layout`, { annex_off: off }), null)
+      : api.post<{ versionId: number; version: number }>(`/api/templates/versions/${vid}/revise`, { layout: { annex_off: off } })),
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['tplv', vid] }); qc.invalidateQueries({ queryKey: ['templates'] }); if (r) { toast(`Saved as v${r.version}`); nav(`/formats/v/${r.versionId}`); } },
+    onError: onErr,
+  });
   const discard = useMutation({
     mutationFn: () => api.del(`/api/templates/versions/${vid}`),
     onSuccess: () => { toast('Draft discarded'); qc.invalidateQueries({ queryKey: ['templates'] }); nav('/formats'); },
@@ -437,7 +533,7 @@ function MappingScreen() {
         eyebrow={<Link to="/formats" className="text-inherit no-underline">Bank formats</Link>}
         title={<>{d.bank_code} · {d.name} <span className="mono text-[18px] font-medium">v{d.version}</span></>}
         actions={<div className="flex flex-wrap items-center gap-2">
-          {d.ai && d.ai_status === 'done' && <button className="btn sm" onClick={() => setAdvanced((x) => !x)}>{advanced ? 'Back to review' : 'Advanced: full mapping table'}</button>}
+          {d.ai && d.ai_status === 'done' && <button className="btn sm" onClick={() => setAdvanced((x) => !x)}>{advanced ? 'Back to review' : 'For admin: mapping table'}</button>}
           <span className={`sev ${draft ? 'warn' : d.status === 'published' ? 'ok' : 'info'}`}>{reading ? 'AI reading' : draft ? `Draft · ${pct}% reviewed` : d.status === 'published' ? 'Active' : 'Retired'}</span>
         </div>}
       />
@@ -464,107 +560,96 @@ function MappingScreen() {
           {edit && <button className="btn" disabled={rerun.isPending} onClick={() => rerun.mutate()}>Read with the AI again</button>}
         </Panel>
       )}
-      {review && d.ai && (
+      {review && d.ai && <FormatReview vid={vid} ai={d.ai} mappings={d.mappings} fields={fields.data ?? []} edit={edit} onChange={(nd) => qc.setQueryData(['tplv', vid], nd)} Picker={picker} />}
+      {!review && !reading && (
         <div className="grid gap-4">
-          <FormatReview vid={vid} ai={d.ai} mappings={d.mappings} fields={fields.data ?? []} edit={edit} onChange={(nd) => qc.setQueryData(['tplv', vid], nd)} Picker={picker} />
+          {!advanced && (
+            <FormAsItReads vid={vid} mappings={d.mappings} edit={edit} annexOff={d.layout?.annex_off ?? []} annexSections={d.annex_sections ?? []}
+              annexBusy={annex.isPending} onAnnex={(off) => (draft ? annex.mutate(off) : d.revisable && can('config') ? window.confirm(`This saves v${d.version + 1} of the format, effective today. Cases already on v${d.version} keep it. Continue?`) && annex.mutate(off) : undefined)} />
+          )}
+          <details className="panel" open={advanced || undefined}>
+            <summary className="cursor-pointer px-4 py-3"><b>For admin: mapping table</b> <span className="sub">· {d.mappings.length} items{open.length ? `, ${open.length} need you` : ''}. Field codes and how each was matched.</span></summary>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-y border-line px-4 py-3">
+              <div className="tabs" style={{ margin: 0, border: 0 }}>
+                <button className={filter === 'need' ? 'on' : ''} onClick={() => setFilter('need')}>Needs you {open.length > 0 && <span className="badge">{open.length}</span>}</button>
+                <button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All {d.mappings.length}</button>
+              </div>
+              <input className="inp" style={{ maxWidth: 240 }} type="search" placeholder="Filter labels or fields" value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            <div className="tablewrap">
+              <table className="list">
+                <thead><tr><th>Label in bank template</th><th>Master field</th><th>Match</th>{edit && <th />}</tr></thead>
+                <tbody>
+                  {rows.map((m) => (
+                    <tr key={m.id} style={!m.confirmed ? { background: 'var(--warn-soft)' } : undefined}>
+                      <td style={{ maxWidth: 320 }}>
+                        <b className="font-semibold">{m.label}</b>
+                        {m.template && m.template !== `{{${m.field_code}}}` && <div className="sub mono">{m.template}</div>}
+                        {m.context && m.context !== m.label && <div className="sub">{m.context}</div>}
+                        {m.sample && <div className="snip" style={{ fontSize: 12.5 }}>{m.sample}</div>}
+                        {m.kind && m.kind !== 'label' && <span className="tag mt-1 inline-block">{m.kind}</span>}
+                      </td>
+                      <td>
+                        {m.ignored ? <span className="tag">Fixed text</span> : (
+                          <FieldPicker fields={fields.data ?? []} value={m.field_code} suggestions={m.suggestions} disabled={!edit || patch.isPending} onPick={(code) => patch.mutate({ mid: m.id, body: { fieldCode: code } })} />
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap">
+                        {m.confirmed ? <span className="sev ok">Confirmed</span> : m.field_code ? <Conf value={m.confidence} /> : <span className="sev crit">Needs you</span>}
+                        {m.method && <div className="sub">{METHOD[m.method] ?? m.method}</div>}
+                      </td>
+                      {edit && (
+                        <td>
+                          <div className="grid gap-1 justify-items-start">
+                            {!m.confirmed && m.field_code && !m.ignored && <button className="btn sm pri" disabled={patch.isPending} onClick={() => patch.mutate({ mid: m.id, body: { fieldCode: m.field_code } })}>Confirm</button>}
+                            {!m.ignored ? <button className="linkbtn" disabled={patch.isPending} onClick={() => patch.mutate({ mid: m.id, body: { ignore: true } })}>Keep as fixed text</button>
+                              : <span className="sub">Choose a field to map it</span>}
+                            <button className="linkbtn" onClick={() => setNewFor(m)}>Add new master field</button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {!rows.length && <tr><td colSpan={4} className="muted">{filter === 'need' ? 'Nothing needs you. Every label is confirmed.' : 'No labels match.'}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
+
+      {!reading && (
+        <div className="mt-4 grid gap-4">
           <div className="split">
-            {can('config') && <Panel title="Preview with a case"><PreviewBox versionId={vid} /></Panel>}
-            {can('config') && <FormatSettings key={`fs${vid}`} d={d} edit={edit} />}
             {draft && (
               <Panel title="Publish">
                 <div className="grid gap-3">
-                  {open.length ? <div className="sub"><b className="text-warn">{open.length} item(s) not accepted yet.</b></div> : <div className="sub text-ok">Everything accepted. New fields are created and site questions added to the engineer's sheet when you publish.</div>}
+                  {open.length ? <div className="sub"><b className="text-warn">{open.length} item(s) not accepted yet.</b> Answer or accept them above.</div> : <div className="sub text-ok">Everything accepted. New fields are created and site questions added to the engineer's sheet when you publish.</div>}
                   <Field label="Effective from" hint="New cases created on or after this date use this version"><input type="date" value={eff} onChange={(e) => setEff(e.target.value)} disabled={!edit} /></Field>
                   {edit && (
                     <div className="btns">
                       <button className="btn pri" disabled={!!open.length || publish.isPending} onClick={() => publish.mutate()}>{publish.isPending ? 'Publishing…' : 'Publish format'}</button>
                       <button className="btn danger" disabled={discard.isPending} onClick={() => window.confirm('Discard this draft and its mappings?') && discard.mutate()}>Discard draft</button>
-                      <button className="btn ghost" disabled={rerun.isPending} onClick={() => window.confirm('Read the format with the AI again? Your choices on this draft are replaced.') && rerun.mutate()}>Read again</button>
+                      {d.ai && <button className="btn ghost" disabled={rerun.isPending} onClick={() => window.confirm('Read the format with the AI again? Your choices on this draft are replaced.') && rerun.mutate()}>Read again</button>}
                     </div>
                   )}
+                  {!can('config') && <div className="sub">Needs the “Master data & templates” permission to edit.</div>}
                 </div>
               </Panel>
             )}
+            {can('config') && <FormatSettings key={`fs${vid}`} d={d} edit={can('config')} />}
+            <Panel title="How versions work">
+              <ul className="sub m-0 grid gap-1.5 pl-4">
+                <li>Each case keeps the version that was live when it was created, so old reports reprint exactly.</li>
+                <li>Layout and rules of the active version can be changed here: they are saved as the next version, effective from the date you choose. Upload the Word file again only when the bank's layout itself changes.</li>
+                <li>A version with a future date keeps the current one live until then.</li>
+                {d.change_note && <li>Note on this version: {d.change_note}</li>}
+              </ul>
+            </Panel>
           </div>
+          {can('config') && <Panel title="Preview with a case"><PreviewBox versionId={vid} name={`${d.bank_code ?? ''} ${d.name} v${d.version}`.trim()} /></Panel>}
         </div>
       )}
-      {!review && !reading && <div className="cols">
-        <section className="panel min-w-0">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-            <div className="tabs" style={{ margin: 0, border: 0 }}>
-              <button className={filter === 'need' ? 'on' : ''} onClick={() => setFilter('need')}>Needs you {open.length > 0 && <span className="badge">{open.length}</span>}</button>
-              <button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All {d.mappings.length}</button>
-            </div>
-            <input className="inp" style={{ maxWidth: 240 }} type="search" placeholder="Filter labels or fields" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div className="tablewrap">
-            <table className="list">
-              <thead><tr><th>Label in bank template</th><th>Master field</th><th>Match</th>{edit && <th />}</tr></thead>
-              <tbody>
-                {rows.map((m) => (
-                  <tr key={m.id} style={!m.confirmed ? { background: 'var(--warn-soft)' } : undefined}>
-                    <td style={{ maxWidth: 320 }}>
-                      <b className="font-semibold">{m.label}</b>
-                      {m.template && m.template !== `{{${m.field_code}}}` && <div className="sub mono">{m.template}</div>}
-                      {m.context && m.context !== m.label && <div className="sub">{m.context}</div>}
-                      {m.sample && <div className="snip" style={{ fontSize: 12.5 }}>{m.sample}</div>}
-                      {m.kind && m.kind !== 'label' && <span className="tag mt-1 inline-block">{m.kind}</span>}
-                    </td>
-                    <td>
-                      {m.ignored ? <span className="tag">Fixed text</span> : (
-                        <FieldPicker fields={fields.data ?? []} value={m.field_code} suggestions={m.suggestions} disabled={!edit || patch.isPending} onPick={(code) => patch.mutate({ mid: m.id, body: { fieldCode: code } })} />
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap">
-                      {m.confirmed ? <span className="sev ok">Confirmed</span> : m.field_code ? <Conf value={m.confidence} /> : <span className="sev crit">Needs you</span>}
-                      {m.method && <div className="sub">{METHOD[m.method] ?? m.method}</div>}
-                    </td>
-                    {edit && (
-                      <td>
-                        <div className="grid gap-1 justify-items-start">
-                          {!m.confirmed && m.field_code && !m.ignored && <button className="btn sm pri" disabled={patch.isPending} onClick={() => patch.mutate({ mid: m.id, body: { fieldCode: m.field_code } })}>Confirm</button>}
-                          {!m.ignored ? <button className="linkbtn" disabled={patch.isPending} onClick={() => patch.mutate({ mid: m.id, body: { ignore: true } })}>Keep as fixed text</button>
-                            : <span className="sub">Choose a field to map it</span>}
-                          <button className="linkbtn" onClick={() => setNewFor(m)}>Add new master field</button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-                {!rows.length && <tr><td colSpan={4} className="muted">{filter === 'need' ? 'Nothing needs you. Every label is confirmed.' : 'No labels match.'}</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <aside className="grid gap-3">
-          {draft && (
-            <Panel title="Publish">
-              <div className="grid gap-3">
-                {open.length ? <div className="sub"><b className="text-warn">{open.length} left to map.</b> Confirm each, keep it as fixed text, or add a new master field.</div> : <div className="sub text-ok">All {d.mappings.length} labels confirmed.</div>}
-                <Field label="Effective from" hint="New cases created on or after this date use this version"><input type="date" value={eff} onChange={(e) => setEff(e.target.value)} disabled={!edit} /></Field>
-                {edit && (
-                  <div className="btns">
-                    <button className="btn pri" disabled={!!open.length || publish.isPending} onClick={() => publish.mutate()}>{publish.isPending ? 'Publishing…' : 'Publish format'}</button>
-                    <button className="btn danger" disabled={discard.isPending} onClick={() => window.confirm('Discard this draft and its mappings?') && discard.mutate()}>Discard draft</button>
-                  </div>
-                )}
-                {!can('config') && <div className="sub">Needs the “Master data & templates” permission to edit.</div>}
-              </div>
-            </Panel>
-          )}
-          {can('config') && <Panel title="Preview with a case"><PreviewBox versionId={vid} /></Panel>}
-          {can('config') && <FormatSettings key={`fs${vid}`} d={d} edit={edit} />}
-          <Panel title="How versions work">
-            <ul className="sub m-0 grid gap-1.5 pl-4">
-              <li>A published version never changes. To change a format, upload a revised version; it starts from this mapping.</li>
-              <li>Each case keeps the version that was live when it was created, so old reports reprint exactly.</li>
-              <li>Publishing with a future date keeps the current version live until then.</li>
-              {d.change_note && <li>Note on this version: {d.change_note}</li>}
-            </ul>
-          </Panel>
-        </aside>
-      </div>}
 
       <NewFieldModal
         open={!!newFor}

@@ -18,9 +18,10 @@ import { detectSlots, type Slot } from './detect.js';
 import { openDocx } from './docx.js';
 import { fontReport } from './fonts.js';
 import { fixedNumbers } from './fixednumbers.js';
+import { ANNEX_SECTIONS, checkPageLayout, PAGE_KEYS, type PageLayout } from './layout.js';
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-const DEFAULT_LAYOUT: Layout = { cover_first_page: true, annexures: true };
+const DEFAULT_LAYOUT: Layout & Record<string, unknown> = { cover_first_page: true, annexures: true };
 
 export async function listTemplates(firmId: number) {
   const rows = await db
@@ -111,9 +112,13 @@ export async function uploadTemplate(
   const file = await saveFile({ firmId, purpose: 'template', buffer: input.buffer, name: input.fileName, mime: DOCX, userId: actor.id }, tx);
   const maxV = await tx.selectFrom('template_versions').select((eb) => eb.fn.max('version').as('v')).where('template_id', '=', templateId).executeTakeFirst();
   const version = Number(maxV?.v ?? 0) + 1;
+  // a revised Word file keeps the live version's layout choices and rules (H2); the fonts follow the new file
+  const live = await tx.selectFrom('template_versions').select(['layout_json', 'rules_json']).where('template_id', '=', templateId).where('status', '=', 'published').orderBy('version', 'desc').executeTakeFirst();
+  const { fonts: _f, ...liveLayout } = json<Record<string, unknown>>(live?.layout_json, {});
   const v = await tx.insertInto('template_versions').values({
     template_id: templateId, version, status: 'draft', effective_from: input.effectiveFrom ? new Date(input.effectiveFrom) : null,
-    source_file_id: file.id, detect_json: toJson({ stats, fonts }), layout_json: toJson({ ...DEFAULT_LAYOUT, fonts: fonts.reason ? 'recommended' : 'uploaded' }), change_note: input.note ?? null, created_by: actor.id ?? null,
+    source_file_id: file.id, detect_json: toJson({ stats, fonts }), layout_json: toJson({ ...DEFAULT_LAYOUT, ...liveLayout, fonts: fonts.reason ? 'recommended' : 'uploaded' }),
+    rules_json: live?.rules_json ? toJson(json(live.rules_json, {})) : tpl.rules_json ? toJson(json(tpl.rules_json, {})) : null, change_note: input.note ?? null, created_by: actor.id ?? null,
     ai_status: ai ? 'reading' : 'none',
   }).executeTakeFirstOrThrow();
   const versionId = Number(v.insertId);
@@ -155,7 +160,7 @@ export async function versionDetail(firmId: number, versionId: number) {
     .selectFrom('template_versions as v')
     .innerJoin('report_templates as t', 't.id', 'v.template_id')
     .leftJoin('banks as b', 'b.id', 't.bank_id')
-    .select(['v.id', 'v.version', 'v.status', 'v.effective_from', 'v.published_at', 'v.layout_json', 'v.detect_json', 't.rules_json', 'v.source_file_id', 'v.compiled_file_id', 'v.change_note', 'v.ai_status', 'v.ai_json', 'v.ai_error',
+    .select(['v.id', 'v.version', 'v.status', 'v.effective_from', 'v.published_at', 'v.layout_json', 'v.detect_json', 't.rules_json', 'v.rules_json as v_rules', 'v.source_file_id', 'v.compiled_file_id', 'v.change_note', 'v.ai_status', 'v.ai_json', 'v.ai_error',
       't.id as template_id', 't.name', 't.code', 't.firm_id', 't.property_types', 'b.code as bank_code', 'b.name as bank_name'])
     .where('v.id', '=', versionId)
     .executeTakeFirst();
@@ -163,13 +168,31 @@ export async function versionDetail(firmId: number, versionId: number) {
   const mappings = await db.selectFrom('template_mappings').selectAll().where('template_version_id', '=', versionId).orderBy('sort_order').orderBy('id').execute();
   const fields = await dictionary(firmId);
   const history = await mappingHistory(firmId);
+  const settings = await getSettings(firmId);
+  const [newer, draft, source] = await Promise.all([
+    db.selectFrom('template_versions').select('id').where('template_id', '=', v.template_id).where('version', '>', v.version).where('status', '!=', 'draft').executeTakeFirst(),
+    db.selectFrom('template_versions').select(['id', 'version']).where('template_id', '=', v.template_id).where('status', '=', 'draft').executeTakeFirst(),
+    db.selectFrom('files').select('purged_at').where('id', '=', v.source_file_id).executeTakeFirst(),
+  ]);
   return {
     ...v,
+    v_rules: undefined,
     layout: json(v.layout_json, DEFAULT_LAYOUT),
+    // what a format that leaves a page choice open follows (Settings → Report layout)
+    firm_layout: {
+      letterhead: settings.letterhead_on ?? 'all', letterhead_pages: settings.letterhead_pages ?? null, footer_sig: settings.footer_sig ?? true,
+      photo_grid: settings.photo_grid ?? 9, doc_grid: settings.doc_grid ?? 9, evidence_per_page: settings.evidence_per_page ?? 2, docs_at_end: settings.docs_at_end ?? true, min_photos: settings.min_photos ?? 9,
+    },
+    annex_sections: ANNEX_SECTIONS.map((x) => ({ key: x.key, label: x.label })),
+    // a published version that is the newest: its layout and rules can be changed, which saves the next version (H2)
+    revisable: v.status === 'published' && !newer && !draft && v.firm_id !== null,
+    draft_id: draft?.id ?? null,
+    // the Word file the format was prepared from is kept (an uploaded past report is deleted on publishing)
+    source_kept: !!source && !source.purged_at,
     // fonts the uploaded file names, and why the recommended set is suggested (null: its own fonts are fine)
     fonts: json<any>(v.detect_json, {}).fonts ?? null,
     detect_json: undefined,
-    rules: json<Record<string, number>>(v.rules_json, {}),
+    rules: json<Record<string, number>>(v.v_rules ?? v.rules_json, {}),
     property_types: json(v.property_types, []),
     ai: json<any>(v.ai_json, null),
     ai_json: undefined,
@@ -273,16 +296,42 @@ export async function answerMapping(actor: Actor, versionId: number, mappingId: 
 }
 
 
-export async function setLayout(actor: Actor, versionId: number, layout: Partial<Layout>, tx: Tx = db) {
-  const v = await assertDraft(actor.firmId, versionId, tx);
-  if (layout.letterhead != null && !['all', 'cover', 'page2', 'none', 'custom'].includes(layout.letterhead)) throw badRequest('Letterhead: every page, cover, page 2, none or chosen pages');
-  if (layout.letterhead === 'custom' && !parsePages(layout.letterhead_pages ?? '')) throw badRequest('Letterhead pages: e.g. 2, or 1, 2, or 2-4');
-  if (layout.fonts != null && !['uploaded', 'recommended'].includes(layout.fonts)) throw badRequest('Fonts: keep as uploaded, or ValueMitra recommended');
+/** Layout choices a version may hold: compile-time (letterhead, footer, fonts) and page counts read at render (H3). */
+function mergeLayout(cur: Record<string, unknown>, patch: Record<string, unknown>) {
+  const l = patch as Partial<Layout> & PageLayout;
+  if (l.letterhead != null && !['all', 'cover', 'page2', 'none', 'custom'].includes(l.letterhead)) throw badRequest('Letterhead: every page, cover, page 2, none or chosen pages');
+  if (l.letterhead === 'custom' && !parsePages(l.letterhead_pages ?? '')) throw badRequest('Letterhead pages: e.g. 2, or 1, 2, or 2-4');
+  if (l.fonts != null && !['uploaded', 'recommended'].includes(l.fonts)) throw badRequest('Fonts: keep as uploaded, or ValueMitra recommended');
+  if (l.footer_sig != null && typeof l.footer_sig !== 'boolean') throw badRequest('Footer signature: on or off');
+  const bad = checkPageLayout(patch);
+  if (bad) throw badRequest(bad);
+  const known = new Set<string>(['letterhead', 'letterhead_pages', 'footer_sig', 'fonts', ...PAGE_KEYS, 'annex_off']);
+  for (const k of Object.keys(patch)) if (!known.has(k)) throw badRequest(`Unknown layout choice ${k}`);
   // null clears a choice: the firm's Report layout default applies
-  const next: Record<string, unknown> = { ...json(v.layout_json, DEFAULT_LAYOUT), ...layout };
+  const next: Record<string, unknown> = { ...cur, ...patch };
+  for (const k of PAGE_KEYS) if (next[k] != null) next[k] = k === 'docs_at_end' ? !!next[k] : Number(next[k]);
   for (const k of Object.keys(next)) if (next[k] === null) delete next[k];
   if (next.letterhead !== 'custom') delete next.letterhead_pages;
+  if (Array.isArray(next.annex_off) && !next.annex_off.length) delete next.annex_off;
+  return next;
+}
+
+export async function setLayout(actor: Actor, versionId: number, layout: Record<string, unknown>, tx: Tx = db) {
+  const v = await assertDraft(actor.firmId, versionId, tx);
+  const before = json<Record<string, unknown>>(v.layout_json, DEFAULT_LAYOUT);
+  const next = mergeLayout(before, layout);
   await tx.updateTable('template_versions').set({ layout_json: toJson(next) }).where('id', '=', versionId).execute();
+  const changed = describeLayout(before, next);
+  if (changed.length) await audit(actor, { entityType: 'template_version', entityId: versionId, action: 'template.layout', summary: `${v.name} v${v.version} (draft): ${changed.join('; ')}`, before, after: next }, tx);
+}
+
+const LAYOUT_LABEL: Record<string, string> = {
+  letterhead: 'letterhead', letterhead_pages: 'letterhead pages', footer_sig: 'footer signature', fonts: 'fonts', photo_grid: 'photos per page',
+  doc_grid: 'document pages per page', evidence_per_page: 'evidence per page', docs_at_end: 'documents at the end', min_photos: 'minimum photos', annex_off: 'standard sections left out',
+};
+const show = (v: unknown) => (v === undefined || v === null ? 'firm default' : Array.isArray(v) ? (v.length ? v.join(', ') : 'none') : typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v));
+function describeLayout(a: Record<string, unknown>, b: Record<string, unknown>) {
+  return Object.keys(LAYOUT_LABEL).filter((k) => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null)).map((k) => (k === 'annex_off' ? `${LAYOUT_LABEL[k]} ${show(a[k] ?? [])} → ${show(b[k] ?? [])}` : `${LAYOUT_LABEL[k]} ${show(a[k])} → ${show(b[k])}`));
 }
 
 /** A format's layout, with the firm's Report layout defaults for what the format leaves open (A2, A3). */
@@ -294,10 +343,13 @@ async function layoutWithDefaults(firmId: number | null, l: Layout): Promise<Lay
 }
 
 /** Compile the draft (used for preview and on publish). */
-export async function compileVersion(firmId: number | null, versionId: number, tx: Tx = db) {
+/** `override`: layout choices not saved yet (Report layout's first-pages preview); the kept original is prepared
+ *  again with them, else the version's own prepared file is used. */
+export async function compileVersion(firmId: number | null, versionId: number, tx: Tx = db, override?: Record<string, unknown> | null) {
   const v = await tx.selectFrom('template_versions').selectAll().where('id', '=', versionId).executeTakeFirstOrThrow();
+  const kept = override ? !(await tx.selectFrom('files').select('purged_at').where('id', '=', v.source_file_id).executeTakeFirst())?.purged_at : false;
   // a published version is its compiled file (the source may hold an earlier case and be purged)
-  if (v.status !== 'draft' && v.compiled_file_id) return { compiled: (await readFile(v.compiled_file_id, firmId, tx)).buffer, mappedFields: await versionFieldCodes(versionId, tx) };
+  if (v.status !== 'draft' && v.compiled_file_id && !kept) return { compiled: (await readFile(v.compiled_file_id, firmId, tx)).buffer, mappedFields: await versionFieldCodes(versionId, tx) };
   const { buffer } = await readFile(v.source_file_id, firmId, tx);
   const maps = (await tx.selectFrom('template_mappings').selectAll().where('template_version_id', '=', versionId).where('ignored', '=', 0).execute())
     .filter((m) => m.field_code || m.slot_kind === 'para' || json<any>(m.location_json, {}).template);
@@ -318,7 +370,7 @@ export async function compileVersion(firmId: number | null, versionId: number, t
         template: repeatsRemark(m) ? null : loc.template ?? null,
       };
     }),
-    await layoutWithDefaults(firmId, json(v.layout_json, DEFAULT_LAYOUT)),
+    await layoutWithDefaults(firmId, kept ? mergeLayout(json(v.layout_json, DEFAULT_LAYOUT), override!) as unknown as Layout : json(v.layout_json, DEFAULT_LAYOUT)),
   );
   return { compiled, mappedFields: await versionFieldCodes(versionId, tx) };
 }
@@ -357,21 +409,93 @@ async function createProposedFields(actor: Actor, v: { ai_json: unknown; propert
 }
 
 /** Rules a format brings (realizable / distress %, area factors): they overlay the firm's rules for the bank
- *  on every case that uses the format. A blank value removes the format's own figure. */
+ *  on every case that uses the format version. A blank value removes the format's own figure. */
 export const FORMAT_RULE_KEYS = ['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'building_cost_per_sqft', 'fmv_rounding_step'] as const;
-export async function setFormatRules(actor: Actor, templateId: number, patch: Record<string, number | null>, tx: Tx = db) {
-  const t = await tx.selectFrom('report_templates').select(['id', 'firm_id', 'name', 'rules_json']).where('id', '=', templateId).executeTakeFirst();
-  if (!t || t.firm_id === null || t.firm_id !== actor.firmId) throw notFound('Format');
-  const cur: Record<string, number> = json(t.rules_json, {});
+function mergeRules(cur: Record<string, number>, patch: Record<string, number | null>) {
+  const next = { ...cur };
   for (const [k, v] of Object.entries(patch)) {
     if (!(FORMAT_RULE_KEYS as readonly string[]).includes(k)) throw badRequest(`Unknown rule ${k}`);
-    if (v === null) delete cur[k];
+    if (v === null) delete next[k];
     else if (!(Number.isFinite(v) && v >= 0 && v <= (k === 'building_cost_per_sqft' || k === 'fmv_rounding_step' ? 100000 : k === 'saleable_factor' ? 3 : 100))) throw badRequest(`${k}: out of range`);
-    else cur[k] = v;
+    else next[k] = v;
   }
-  await tx.updateTable('report_templates').set({ rules_json: toJson(cur) }).where('id', '=', templateId).execute();
-  await audit(actor, { entityType: 'template', entityId: templateId, action: 'template.rules', summary: `${t.name}: format rules ${Object.entries(cur).map(([k, v]) => `${k} ${v}`).join(', ') || 'cleared'}`, before: json(t.rules_json, {}), after: cur }, tx);
-  return cur;
+  return next;
+}
+const RULE_LABEL: Record<string, string> = { realizable_pct: 'realizable %', distress_pct: 'distress %', loading_pct: 'loading %', saleable_factor: 'saleable factor', building_cost_per_sqft: 'building cost per sq.ft.', fmv_rounding_step: 'FMV rounding' };
+const describeRules = (a: Record<string, number>, b: Record<string, number>) =>
+  FORMAT_RULE_KEYS.filter((k) => (a[k] ?? null) !== (b[k] ?? null)).map((k) => `${RULE_LABEL[k]} ${a[k] ?? 'firm rule'} → ${b[k] ?? 'firm rule'}`);
+
+/** Rules on a draft version: they apply to cases once it is published. */
+export async function setVersionRules(actor: Actor, versionId: number, patch: Record<string, number | null>, tx: Tx = db) {
+  const v = await assertDraft(actor.firmId, versionId, tx);
+  if (v.firm_id === null) throw badRequest('Platform formats cannot be changed by a firm');
+  const row = await tx.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['v.rules_json', 't.rules_json as t_rules']).where('v.id', '=', versionId).executeTakeFirstOrThrow();
+  const before = json<Record<string, number>>(row.rules_json ?? row.t_rules, {});
+  const next = mergeRules(before, patch);
+  await tx.updateTable('template_versions').set({ rules_json: toJson(next) }).where('id', '=', versionId).execute();
+  const changed = describeRules(before, next);
+  if (changed.length) await audit(actor, { entityType: 'template_version', entityId: versionId, action: 'template.rules', summary: `${v.name} v${v.version} (draft): ${changed.join('; ')}`, before, after: next }, tx);
+  return next;
+}
+
+const COMPILE_KEYS = ['letterhead', 'letterhead_pages', 'footer_sig', 'fonts'];
+
+/**
+ * Change the layout or rules of a published format (H2): saved as the next version, same Word file, effective
+ * from the chosen date. Cases already on the format keep their version. Letterhead, footer and fonts are set
+ * when the Word file is prepared, so the file is prepared again from the kept original; page counts and rules
+ * are read at render and the prepared file is reused.
+ */
+export async function reviseVersion(actor: Actor, versionId: number, input: { layout?: Record<string, unknown>; rules?: Record<string, number | null>; effectiveFrom?: string | null; note?: string | null }, tx: Tx = db) {
+  const v = await tx.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id')
+    .select(['v.id', 'v.template_id', 'v.version', 'v.status', 'v.source_file_id', 'v.compiled_file_id', 'v.layout_json', 'v.rules_json', 'v.detect_json', 'v.ai_json', 'v.ai_status', 'v.fixed_ok_json', 't.firm_id', 't.name', 't.rules_json as t_rules'])
+    .where('v.id', '=', versionId).executeTakeFirst();
+  if (!v || (v.firm_id !== null && v.firm_id !== actor.firmId)) throw notFound('Template version');
+  if (v.firm_id === null) throw badRequest('This is a platform format. Upload a revised version to get your firm\'s own copy, then change its layout and rules.');
+  if (v.status !== 'published') throw conflict(v.status === 'draft' ? 'A draft is changed directly; publish it when ready.' : 'Only the active version can be changed.');
+  const newer = await tx.selectFrom('template_versions').select(['version', 'status']).where('template_id', '=', v.template_id).where('version', '>', v.version).executeTakeFirst();
+  if (newer) throw conflict(newer.status === 'draft' ? `This format has a draft (v${newer.version}). Publish or discard it first.` : `v${newer.version} is newer. Change that one.`);
+  const beforeLayout = json<Record<string, unknown>>(v.layout_json, DEFAULT_LAYOUT);
+  const layout = input.layout ? mergeLayout(beforeLayout, input.layout) : beforeLayout;
+  const beforeRules = json<Record<string, number>>(v.rules_json ?? v.t_rules, {});
+  const rules = input.rules ? mergeRules(beforeRules, input.rules) : beforeRules;
+  const lChanged = describeLayout(beforeLayout, layout);
+  const rChanged = describeRules(beforeRules, rules);
+  if (!lChanged.length && !rChanged.length) throw badRequest('Nothing changed');
+  const recompile = COMPILE_KEYS.some((k) => JSON.stringify(beforeLayout[k] ?? null) !== JSON.stringify(layout[k] ?? null));
+  if (recompile) {
+    const src = await tx.selectFrom('files').select('purged_at').where('id', '=', v.source_file_id).executeTakeFirst();
+    if (!src || src.purged_at) throw badRequest('The letterhead, footer signature and fonts are set when the Word file is prepared, and this format\'s original file was deleted (it held an earlier case). Upload the Word file again to change them. Page counts and rules can still be changed here.');
+  }
+  const eff = input.effectiveFrom ? new Date(input.effectiveFrom) : new Date(new Date().toISOString().slice(0, 10));
+  if (Number.isNaN(eff.getTime())) throw badRequest('Effective from: a date');
+  const note = [rChanged.length ? `Rules changed: ${rChanged.join('; ')}` : null, lChanged.length ? `Layout changed: ${lChanged.join('; ')}` : null, input.note?.trim() || null].filter(Boolean).join('. ');
+  const version = v.version + 1;
+  const r = await tx.insertInto('template_versions').values({
+    template_id: v.template_id, version, status: 'draft', effective_from: eff, source_file_id: v.source_file_id,
+    detect_json: v.detect_json ? toJson(json(v.detect_json, {})) : null, layout_json: toJson(layout), rules_json: toJson(rules),
+    ai_json: v.ai_json ? toJson(json(v.ai_json, null)) : null, ai_status: v.ai_status === 'reading' ? 'none' : v.ai_status,
+    fixed_ok_json: v.fixed_ok_json ? toJson(json(v.fixed_ok_json, [])) : null, change_note: note.slice(0, 1000), created_by: actor.id ?? null,
+  }).executeTakeFirstOrThrow();
+  const newId = Number(r.insertId);
+  const maps = await tx.selectFrom('template_mappings').selectAll().where('template_version_id', '=', versionId).execute();
+  for (const m of maps) {
+    const { id: _id, template_version_id: _v, ...rest } = m;
+    await tx.insertInto('template_mappings').values({ ...rest, template_version_id: newId, location_json: toJson(json(m.location_json, {})), ask_json: m.ask_json ? toJson(json(m.ask_json, null)) : null } as any).execute();
+  }
+  let compiledId = v.compiled_file_id;
+  if (recompile || !compiledId) {
+    const { compiled } = await compileVersion(v.firm_id, newId, tx);
+    compiledId = (await saveFile({ firmId: v.firm_id, purpose: 'template', buffer: compiled, name: `${v.name} v${version} (compiled).docx`, mime: DOCX, userId: actor.id }, tx)).id;
+  }
+  await tx.updateTable('template_versions').set({ status: 'published', compiled_file_id: compiledId, published_by: actor.id ?? null, published_at: new Date() }).where('id', '=', newId).execute();
+  if (eff <= new Date()) {
+    await tx.updateTable('template_versions').set({ status: 'retired' }).where('template_id', '=', v.template_id).where('status', '=', 'published').where('id', '!=', newId).execute();
+    await tx.updateTable('report_templates').set({ rules_json: toJson(rules) }).where('id', '=', v.template_id).execute();
+  }
+  await audit(actor, { entityType: 'template_version', entityId: newId, action: 'template.revise', summary: `${v.name} v${version} saved from v${v.version}, effective ${eff.toISOString().slice(0, 10)}: ${note}`, before: { layout: beforeLayout, rules: beforeRules }, after: { layout, rules } }, tx);
+  await publishEvent({ type: 'template.published', firmId: actor.firmId, entityType: 'template_version', entityId: newId, payload: { templateId: v.template_id, version } }, tx);
+  return { versionId: newId, version, effectiveFrom: eff.toISOString().slice(0, 10), note };
 }
 
 /** Figures left as fixed text in a draft (C1), each with whether the admin has kept it as the bank's own text.
@@ -410,6 +534,9 @@ export async function publishVersion(actor: Actor, versionId: number, effectiveF
   await tx.updateTable('template_versions').set({ status: 'published', compiled_file_id: file.id, effective_from: eff, published_by: actor.id ?? null, published_at: new Date() }).where('id', '=', versionId).execute();
   if (eff <= new Date()) {
     await tx.updateTable('template_versions').set({ status: 'retired' }).where('template_id', '=', v.template_id).where('status', '=', 'published').where('id', '!=', versionId).execute();
+    // the latest published rules, for lists and older code paths; cases read their own version's rules
+    const own = await tx.selectFrom('template_versions').select('rules_json').where('id', '=', versionId).executeTakeFirst();
+    if (own?.rules_json) await tx.updateTable('report_templates').set({ rules_json: toJson(json(own.rules_json, {})) }).where('id', '=', v.template_id).execute();
   }
   // an uploaded past report holds another case (and maybe another valuer): only the compiled file is kept
   const cleared = await tx.selectFrom('template_mappings').select('id').where('template_version_id', '=', versionId).where('status', '=', 'clear').where('ignored', '=', 0).executeTakeFirst();

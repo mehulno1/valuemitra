@@ -1,6 +1,7 @@
 // Firm settings: firm & valuer, branding, numbering, valuation rules (versioned), report layout,
 // field engineers, banks & branches, users & permissions, retention & privacy, features.
 import { LetterheadChoice } from '@/components/LetterheadChoice';
+import { FirstPages } from '@/components/FirstPages';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
@@ -428,10 +429,19 @@ function AreaBasisPanel({ ro }: { ro: boolean }) {
 }
 
 // ---- 5. report layout ------------------------------------------------------------------------------
+/** A format that follows the firm default, to show the first pages with (the firm's own active formats first). */
+function useSampleFormat() {
+  const t = useQuery({ queryKey: ['templates'], queryFn: () => api.get<{ id: number; name: string; firm_id: number | null; active?: boolean; versions: { id: number; status: string; version: number }[] }[]>('/api/templates') });
+  const list = (t.data ?? []).filter((x) => x.active !== false && x.versions.some((v) => v.status === 'published')).sort((a, b) => (b.firm_id ? 1 : 0) - (a.firm_id ? 1 : 0));
+  const f = list[0];
+  return f ? { name: f.name, versionId: f.versions.find((v) => v.status === 'published')!.id } : null;
+}
+
 function LayoutSection() {
   const { can } = useAuth();
   const firm = useFirm();
   const save = useFirmSave();
+  const sample = useSampleFormat();
   if (!firm.data) return <Loading />;
   const s = firm.data.settings;
   const ro = !can('set');
@@ -471,6 +481,11 @@ function LayoutSection() {
             <option value={2}>2 (one above the other)</option><option value={1}>1 (full page)</option>
           </select>
         </Field>
+        {sample && can('config') && (
+          <Field label="First pages with the firm default" full hint={`Shown with ${sample.name}, as a format that keeps the firm's letterhead and footer would print. A bank format can set its own letterhead and page counts (Bank formats → the format → Report layout and rules).`}>
+            <FirstPages versionId={sample.versionId} layout={{ letterhead: null, letterhead_pages: null, footer_sig: null }} />
+          </Field>
+        )}
         <Field label="Engineer visit link valid for, hours">
           <select value={s.engineer_link_hours} disabled={ro || save.isPending} onChange={(e) => save.mutate({ settings: { engineer_link_hours: Number(e.target.value) } })}>
             {[24, 48, 72, 120, 168].map((h) => <option key={h} value={h}>{h} h</option>)}

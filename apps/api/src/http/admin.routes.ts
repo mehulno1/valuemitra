@@ -1,4 +1,6 @@
-import { previewVersion } from '../modules/reports/preview.js';
+import { firstPages, previewCase, previewVersion } from '../modules/reports/preview.js';
+import { formLines } from '../modules/templates/form.js';
+import { docxToPdf } from '../lib/pdf.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ROLES } from '@vm/shared';
@@ -177,10 +179,27 @@ export async function adminRoutes(app: FastifyInstance) {
     return { ok: true };
   });
   app.put('/api/templates/:id/hidden', { preHandler: requirePerm('config') }, async (req) => { await tpl.setTemplateHidden(actorOf(req), idParam(req), !!(req.body as any)?.hidden); return { ok: true }; });
-  app.patch('/api/templates/versions/:id/layout', { preHandler: requirePerm('config') }, async (req) => { await tpl.setLayout(actorOf(req), idParam(req), req.body as any); return { ok: true }; });
-  app.patch('/api/templates/:id/rules', { preHandler: requirePerm('config') }, async (req) => {
+  const layoutBody = z.record(z.string(), z.union([z.string().max(40), z.number(), z.boolean(), z.null(), z.array(z.string().max(20)).max(10)]));
+  app.patch('/api/templates/versions/:id/layout', { preHandler: requirePerm('config') }, async (req) => {
+    const b = body(req, layoutBody);
+    await db.transaction().execute((tx) => tpl.setLayout(actorOf(req), idParam(req), b, tx));
+    return { ok: true };
+  });
+  /** Rules of a draft version (they apply once it is published). */
+  app.patch('/api/templates/versions/:id/rules', { preHandler: requirePerm('config') }, async (req) => {
     const b = body(req, z.record(z.string(), z.number().nullable()));
-    return db.transaction().execute((tx) => tpl.setFormatRules(actorOf(req), idParam(req), b, tx));
+    return db.transaction().execute((tx) => tpl.setVersionRules(actorOf(req), idParam(req), b, tx));
+  });
+  /** Layout and rules of a published format changed: saved as the next version (H2). */
+  app.post('/api/templates/versions/:id/revise', { preHandler: requirePerm('config') }, async (req) => {
+    const b = body(req, z.object({ layout: layoutBody.optional(), rules: z.record(z.string(), z.number().nullable()).optional(), effectiveFrom: z.string().max(10).nullish(), note: z.string().max(300).nullish() }));
+    return db.transaction().execute((tx) => tpl.reviseVersion(actorOf(req), idParam(req), b, tx));
+  });
+  /** The bank's form as it reads, line by line, with a tag per line (H4); with a case, what each field prints. */
+  app.get('/api/templates/versions/:id/form', async (req) => {
+    const aid = Number((req.query as any).assignmentId) || null;
+    if (aid) await previewCase(req.auth!.firmId, idParam(req), aid);
+    return formLines(req.auth!.firmId, idParam(req), aid);
   });
   app.get('/api/templates/versions/:id/fixed-numbers', { preHandler: requirePerm('config') }, async (req) => {
     const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
@@ -198,17 +217,31 @@ export async function adminRoutes(app: FastifyInstance) {
     return { ok: true };
   });
   app.delete('/api/templates/versions/:id', { preHandler: requirePerm('config') }, async (req) => { await tpl.discardDraftVersion(actorOf(req), idParam(req)); return { ok: true }; });
-  /** Preview: render a version (draft or published) against a past case of this firm. */
+  const versionFirm = async (req: any) => {
+    const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
+    if (!v || (v.firm_id !== null && v.firm_id !== req.auth!.firmId)) throw badRequest('Template version not found');
+    return v.firm_id;
+  };
+  /** Preview: render a version (draft or published) against a past case of this firm (.docx, or .pdf with ?pdf=1). */
   app.get('/api/templates/versions/:id/preview', { preHandler: requirePerm('config') }, async (req, reply) => {
     const assignmentId = Number((req.query as any).assignmentId);
     const a = await db.selectFrom('assignments').select(['id']).where('id', '=', assignmentId).where('firm_id', '=', req.auth!.firmId).executeTakeFirst();
     if (!a) throw badRequest('Choose one of your cases to preview with');
-    const v = await db.selectFrom('template_versions as v').innerJoin('report_templates as t', 't.id', 'v.template_id').select(['t.firm_id']).where('v.id', '=', idParam(req)).executeTakeFirst();
-    if (!v || (v.firm_id !== null && v.firm_id !== req.auth!.firmId)) throw badRequest('Template version not found');
-    const { docx, empty } = await previewVersion(req.auth!.firmId, v.firm_id, idParam(req), assignmentId);
-    reply.header('X-Empty-Fields', encodeURIComponent(empty.join('; ')).slice(0, 4000));
+    const firmOf = await versionFirm(req);
+    const { docx, empty } = await previewVersion(req.auth!.firmId, firmOf, idParam(req), assignmentId);
+    reply.header('X-Empty-Fields', encodeURIComponent(empty.join('; ')).slice(0, 4000)).header('Cache-Control', 'no-store');
+    if ((req.query as any).pdf === '1') return reply.header('Content-Type', 'application/pdf').send(await docxToPdf(docx));
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     return reply.send(docx);
+  });
+  /** The first pages as pictures, with layout choices not saved yet (?layout={"letterhead":"page2"}). */
+  app.get('/api/templates/versions/:id/first-pages', { preHandler: requirePerm('config') }, async (req) => {
+    const q = req.query as any;
+    const firmOf = await versionFirm(req);
+    let layout: Record<string, unknown> | null = null;
+    if (q.layout) { try { layout = layoutBody.parse(JSON.parse(String(q.layout))); } catch { throw badRequest('Layout: not readable'); } }
+    const aid = await previewCase(req.auth!.firmId, idParam(req), Number(q.assignmentId) || null);
+    return { pages: await firstPages(req.auth!.firmId, firmOf, idParam(req), aid, layout), assignmentId: aid };
   });
 
   // ---- in-product feedback (comments on any screen or field) ----
