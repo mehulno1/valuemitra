@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 12 Nov 2026 (second retest of 12 Nov live on 13 Nov, see 3k). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 17 Nov 2026 (re-test of 13 Nov live, see 3l). Earlier: 12 Nov 2026 (second retest of 12 Nov live on 13 Nov, see 3k). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -259,6 +259,42 @@ Doc: `~/Downloads/ValueMitra — Retest Findings and Changes for Mehul_12Nov26.p
 - Still open: N10 (live branch is named "Thane"; rename it to "Home Loan Centre, Thane" in Firm settings → Banks & branches if
   Universal wants that printed), #18 prefix, podium row of the weightage sheet (Universal to confirm), side-by-side font
   previews at upload, Wingdings on EC2 (bullets print in OpenSymbol), UC-2627-0005 has one open conflict (C.C. issued by).
+
+## 3l. Universal re-test of 13 Nov (live 17 Nov 2026)
+Doc: `~/Downloads/ValueMitra — Re-test 13 Nov Issues and Changes for Mehul_14Nov26.pdf` (A1–A8, B1–B4, C1–C8, D1–D5, E1–E6, F1–F3,
+G1–G5, H1–H4, mock gaps). Supporting files: `~/Downloads/For Mehul - Supporting files 13 Nov 2026.zip`. Migrations 0014, 0015.
+- A: create form = bank, branch (+ Add new branch, `/api/branches/quick`, no email), borrower, type, format in plain words
+  (`formatWords`), Sourced by (`case_sources`, `assignments.sourced_by_id`, never printed), maker, checker, note, "send to the report
+  maker now" (`handOverOnCreate`); hand-over to the maker needs nothing. Edit assignment (header) for every field incl. engineer;
+  bank/branch/type changes re-pin the format (and profile). The case's own maker/checker cannot change who makes/checks it.
+- B1 document viewer (`components/DocViewer.tsx`, Documents tab and every Show source). B2 Legal documents panel on the Documents tab:
+  every part, ticks and order in `DOC.LEGAL_PICK`; `LEGAL.LINES` identifier; wording `DOC.LEGAL_LIST = numbered(LEGAL.LINES)`.
+  B4/C7 resale chain: agreements with different dates → latest (or `DOC.AGREEMENT.CURRENT_PART`) is current, earlier ones give no
+  values and list as "earlier agreement in the chain".
+- Resolver additions: field rules `record` (line built from the O.C./C.C. record, manual edits ignored but shown as "Typed here
+  earlier"), `blank_words` (NA / 0 / Ok / "Not provided (clear copy required)" = no value, never pending), `optional`, `prefer`
+  (AREA.CARPET ← AREA.RERA_CARPET); identifiers `RAW.<code>`, `CASE.FORMAT_KIND`, `SITE.NAMEBOARD_PHOTO`; functions `yes_no`,
+  `is_company`, `placeholder`, `village_from`, `first_sqm`; `only_when` hides filled fields too (work done on Flat Completed).
+- Extracted details: sections O.C./C.C. record, Boundaries (pairs: documents | site; flat boundaries `PHYS.FLAT_BOUNDARY_*` read
+  separately), Name board (`SITE.NAME_BOARD`, `SITE.NAME_BOARD_WHO`, `SITE.NAME_BOARD_TEXT` → `REPORT.SITE_REMARK` sentence),
+  Additional information (read but unused by the format; never blocks/prints); enum fields edit as dropdowns.
+- Valuation: RERA rule (`rera_loading_pct` 10, `rera_saleable_factor` 1.35; trigger = RERA carpet in a document or MahaRERA
+  certificate; origin `rera`), case defaults open with their values (`ruleBase`), "changed from", reason only when changed, insurance
+  band dropdown (`bandList`), D4 `VAL.COMP_PRINT`, parking Nil and no amount without a stated space. Case rules: `case_rules` or `val`.
+- Checks: only pending rate/area/FMV is crit (`pending_fields` params.critical); conflicts, site, photos, realizable → warn; rate vs
+  evidence info once a reason is recorded; per-check accept reasons (`reasons`, `accept.byCheck`); IBBI validity optional.
+- Report (fork merged): picture pages as bordered grids at render (`templates/grids.ts`), sale instances deduped by content and
+  captioned, PropTrace under Sale transactions, both evidence kinds with "Not available", EVID.COMPn.VALUE/RATE money, comparables chart
+  modes. Bank formats (fork merged): on-screen preview (`DocxPages.tsx`), `reviseVersion` (layout/rules → next version, effective date,
+  `template_versions.rules_json`, resolver reads it), per-format page layout (`templates/layout.ts pageLayout`), the form as it reads
+  (`templates/form.ts`, `FormAsItReads.tsx`), first-pages preview.
+- Seed: firm version merge is transactional and numbers past a firm draft (Universal had rule set draft v9 → v10 published).
+- Live, 17 Nov (backup `~/backups/valuemitra-v2-before-retest3-deploy-20261117.sql.gz`; script `scripts/dev/live-retest3.mts`, run with
+  RUN_JOBS=false): unsigned flat cases moved to profile/rules/checks/wording current, site sheets re-read, valuations re-applied with
+  the same inputs: UC-2627-0008 FMV 38,02,000 → 35,38,000 (RERA carpet 402 instead of 432, RERA rule 1.1/1.35); others unchanged.
+  0006/0008/0009: nothing to resolve. Hand-typed values kept (record lines show them as "Typed here earlier"; UC-0006's C.C. date
+  29/06/2017 was typed only in the line: correct the C.C. record once).
+- Still open: the team should clear placeholders they typed (most are now ignored); a firm draft rule set v9 by user 5 sits unpublished.
 
 ## 4. Left — by work package
 
