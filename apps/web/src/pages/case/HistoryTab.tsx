@@ -67,7 +67,8 @@ export default function HistoryTab({ c }: TabProps) {
                     <td className="whitespace-nowrap">{who(a)}</td>
                     <td className="min-w-[220px]">
                       {a.summary}
-                      {a.reason && <div className="sub">Reason: {a.reason}</div>}
+                      {/* the note once (A8): older hand-overs carry it in the summary too */}
+                      {a.reason && !a.summary.includes(a.reason) && <div className="sub">{a.action === 'workflow.handover' ? 'Note' : 'Reason'}: {a.reason}</div>}
                     </td>
                   </tr>
                 ))}

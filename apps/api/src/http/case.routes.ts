@@ -35,8 +35,19 @@ export async function caseRoutes(app: FastifyInstance) {
       bankId: z.number().int(), branchId: z.number().int(), bankContact: z.string().nullish(), receivedVia: z.string().nullish(), bankRefNo: z.string().nullish(),
       borrowerName: z.string().nullish(), propertyType: z.enum(PROPERTY_TYPES.map((p) => p.key) as [string, ...string[]]), localityHint: z.string().nullish(),
       purpose: z.string().nullish(), engineerId: z.number().int().nullish(), templateId: z.number().int().nullish(),
+      sourcedById: z.number().int().nullish(), makerId: z.number().int().nullish(), checkerId: z.number().int().nullish(), note: z.string().max(1000).nullish(), handOver: z.boolean().optional(),
     }));
     return db.transaction().execute((tx) => asg.createAssignment(actorOf(req), b, tx));
+  });
+  // "Sourced by" names (A6) and a new branch from the case forms (A5)
+  app.get('/api/case-sources', async (req) => asg.caseSources(req.auth!.firmId));
+  app.post('/api/case-sources', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ name: z.string().max(160) }));
+    return db.transaction().execute((tx) => asg.addCaseSource(actorOf(req), b.name, tx));
+  });
+  app.post('/api/branches/quick', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ bankId: z.number().int(), name: z.string().max(150), code: z.string().max(30).nullish(), contactName: z.string().max(150).nullish(), contactPhone: z.string().max(30).nullish(), contactEmail: z.string().max(150).nullish() }));
+    return db.transaction().execute((tx) => asg.quickBranch(actorOf(req), b, tx));
   });
   app.get('/api/assignments/:id', async (req) => asg.assignmentHeader(req.auth!.firmId, idParam(req)));
   app.get('/api/assignments/:id/formats', async (req) => asg.formatChoices(req.auth!.firmId, idParam(req)));
@@ -47,8 +58,19 @@ export async function caseRoutes(app: FastifyInstance) {
     return { ok: true };
   });
   app.patch('/api/assignments/:id', { preHandler: can('edit') }, async (req) => {
-    const b = body(req, z.object({ bankContact: z.string().nullish(), borrowerName: z.string().nullish(), engineerId: z.number().int().nullish(), purpose: z.string().nullish(), bankRefNo: z.string().nullish(), localityHint: z.string().nullish() }));
-    await asg.updateAssignment(actorOf(req), idParam(req), b as any);
+    const b = body(req, z.object({
+      bankId: z.number().int().optional(), branchId: z.number().int().optional(), propertyType: z.enum(PROPERTY_TYPES.map((p) => p.key) as [string, ...string[]]).optional(), templateId: z.number().int().nullish(),
+      bankContact: z.string().nullish(), borrowerName: z.string().nullish(), engineerId: z.number().int().nullish(), purpose: z.string().nullish(), bankRefNo: z.string().nullish(),
+      localityHint: z.string().nullish(), receivedVia: z.string().nullish(), sourcedById: z.number().int().nullish(),
+      makerId: z.number().int().nullish(), checkerId: z.number().int().nullish(),
+    }));
+    const { makerId, checkerId, ...rest } = b;
+    const r = await db.transaction().execute(async (tx) => {
+      const out = await asg.updateAssignment(actorOf(req), idParam(req), rest as any, tx);
+      if (makerId !== undefined || checkerId !== undefined) await wf.assignPeople(actorOf(req), idParam(req), { ...(makerId !== undefined ? { makerId } : {}), ...(checkerId !== undefined ? { checkerId } : {}) }, tx);
+      return out;
+    });
+    if (r.changed.length) await runChecks(idParam(req), req.auth!.firmId);
     return { ok: true };
   });
   app.get('/api/assignments/:id/activity', async (req) => asg.activity(req.auth!.firmId, idParam(req)));
@@ -102,17 +124,62 @@ export async function caseRoutes(app: FastifyInstance) {
     return { title: tpl.title, subject: tpl.subject ? data.wordingText(tpl.subject) : null, message: text };
   });
 
+  // ---- Legal documents list (B2) and the current agreement of a resale chain (B4) ----
+  app.get('/api/assignments/:id/legal', async (req) => {
+    const data = await caseData(idParam(req), req.auth!.firmId);
+    const agreements = data.chain.current ? [data.chain.current, ...data.chain.earlier.map((e) => e.partId)] : [];
+    return { items: data.legalItems(), chain: { ...data.chain, agreements }, printed: data.get('DOC.LEGAL_LIST').display };
+  });
+  app.put('/api/assignments/:id/legal', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ picks: z.array(z.object({ k: z.string().max(60), on: z.boolean() })).max(200).nullable() }));
+    await db.transaction().execute((tx) => setManualValue(actorOf(req), idParam(req), 'DOC.LEGAL_PICK', b.picks ? JSON.stringify(b.picks) : null, { reason: 'Legal documents chosen on the Documents tab' }, tx));
+    await runChecks(idParam(req), req.auth!.firmId);
+    return { ok: true };
+  });
+  app.put('/api/assignments/:id/current-agreement', { preHandler: can('edit') }, async (req) => {
+    const b = body(req, z.object({ partId: z.number().int().nullable() }));
+    const id = idParam(req);
+    if (b.partId) {
+      const p = await db.selectFrom('document_parts').select('id').where('id', '=', b.partId).where('assignment_id', '=', id).executeTakeFirst();
+      if (!p) throw badRequest('Unknown document');
+    }
+    await db.transaction().execute((tx) => setManualValue(actorOf(req), id, 'DOC.AGREEMENT.CURRENT_PART', b.partId ? String(b.partId) : null, { reason: 'Current agreement chosen' }, tx));
+    await runChecks(id, req.auth!.firmId);
+    return { ok: true };
+  });
+
   // ---- extracted details (resolved fields) ----
   app.get('/api/assignments/:id/fields', async (req) => {
     const id = idParam(req);
     const data = await caseData(id, req.auth!.firmId);
-    const sections = ((data.profile.sections ?? []) as { title: string; fields: string[] }[]).map((s) => ({ title: s.title, fields: data.all(s.fields).filter((f) => f.state !== 'not_applicable' || f.notProvided) }));
-    const inSections = new Set(sections.flatMap((s) => s.fields.map((f) => f.code)));
     const reportCodes = await reportFieldCodes(data.case.template_version_id);
+    // what the format uses: the fields it prints and everything they are worded or worked out from (C8)
+    const used = new Set<string>();
+    const visit = (code: string) => {
+      if (used.has(code)) return;
+      used.add(code);
+      const f = data.fields.get(code);
+      const exprs = [f?.derivation, data.wording.fields?.[code], (f?.rules as any)?.prefer, (f?.rules as any)?.only_when].filter(Boolean) as string[];
+      for (const e of exprs) for (const m of e.match(/[A-Z][A-Z0-9_]*(\.[A-Z0-9_]+)+/g) ?? []) { const c = m.replace(/^(STATED|RAW)\./, ''); if (data.fields.has(c)) visit(c); }
+    };
+    reportCodes.forEach(visit);
+    // a section field shows when the format uses it or it has a value; read values the format does not use go to
+    // Additional information, which never blocks and never prints
+    const profileSections = (data.profile.sections ?? []) as { title: string; fields: string[]; layout?: string; columns?: string[]; rows?: string[][]; note?: string }[];
+    const extra: ReturnType<typeof data.all> = [];
+    const sections = profileSections.map((s) => {
+      const all = data.all(s.fields).filter((f) => f.state !== 'not_applicable' || f.notProvided);
+      const keep = all.filter((f) => used.has(f.code) || (s.layout === 'pairs' && f.state === 'filled'));
+      extra.push(...all.filter((f) => !keep.includes(f) && f.state === 'filled'));
+      return { title: s.title, layout: s.layout, columns: s.columns, rows: s.rows, note: s.note, fields: keep };
+    }).filter((s) => s.fields.length);
+    const inSections = new Set(profileSections.flatMap((s) => s.fields));
     const other = data.all(reportCodes.filter((c) => !inSections.has(c))).filter((f) => f.state !== 'not_applicable' || f.notProvided);
+    const READ = new Set(['document', 'site_sheet', 'evidence']);
+    for (const f of data.all()) if (!used.has(f.code) && !inSections.has(f.code) && f.state === 'filled' && READ.has(f.source ?? '') && !f.code.startsWith('EVID.')) extra.push(f);
     const all = [...sections.flatMap((s) => s.fields), ...other];
     return {
-      sections: other.length ? [...sections, { title: 'Other report fields', fields: other }] : sections,
+      sections: [...sections, ...(other.length ? [{ title: 'Other report fields', fields: other }] : []), ...(extra.length ? [{ title: 'Additional information', note: 'Read from the documents, site sheet or photos but not used by this bank format. Kept for records; never printed and never holds up the case.', extra: true, fields: extra }] : [])],
       filled: all.filter((f) => f.state === 'filled').length,
       total: all.length,
       fromDocuments: all.filter((f) => f.source === 'document' || f.source === 'site_sheet').length,
@@ -191,7 +258,8 @@ export async function caseRoutes(app: FastifyInstance) {
     await val.resolveCaptureKind(actorOf(req), idParam(req), idParam(req, 'cid'), b.action);
     return { ok: true };
   });
-  app.patch('/api/assignments/:id/case-rules', { preHandler: can('case_rules') }, async (req) => {
+  app.patch('/api/assignments/:id/case-rules', { preHandler: async (req) => { // E4: whoever values the case may change its defaults, with a reason
+    const pre = can('case_rules'); try { await pre(req); } catch { await can('val')(req); } } }, async (req) => {
     const b = body(req, z.object({ rules: z.record(z.string(), z.number().nullable()), reason: z.string().max(500) }));
     return val.setCaseRules(actorOf(req), idParam(req), b.rules, b.reason);
   });
@@ -233,9 +301,9 @@ export async function caseRoutes(app: FastifyInstance) {
   app.post('/api/assignments/:id/report/share-draft', { preHandler: can('edit') }, async (req) => reports.shareDraft(actorOf(req), idParam(req)));
   app.post('/api/assignments/:id/report/send-to-valuer', { preHandler: can('edit') }, async (req) => { await wf.handOver({ ...actorOf(req), role: req.auth!.role }, idParam(req), 'valuer', null); return { ok: true }; });
   // ---- workflow: report maker / checker (A1, B5) ----
-  app.post('/api/assignments/:id/people', { preHandler: can('assign') }, async (req) => {
+  app.post('/api/assignments/:id/people', { preHandler: can('edit') }, async (req) => {
     const b = body(req, z.object({ makerId: z.number().int().nullish(), checkerId: z.number().int().nullish() }));
-    await wf.assignPeople({ ...actorOf(req), role: req.auth!.role }, idParam(req), { ...(b.makerId !== undefined ? { makerId: b.makerId } : {}), ...(b.checkerId !== undefined ? { checkerId: b.checkerId } : {}) });
+    await wf.assignPeople(actorOf(req), idParam(req), { ...(b.makerId !== undefined ? { makerId: b.makerId } : {}), ...(b.checkerId !== undefined ? { checkerId: b.checkerId } : {}) });
     return { ok: true };
   });
   app.post('/api/assignments/:id/handover', { preHandler: can('edit') }, async (req) => {

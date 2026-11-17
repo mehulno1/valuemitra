@@ -112,14 +112,27 @@ async function mergeIntoFirmVersions() {
       for (const f of PROFILE_FLAT.site_sheet_fields) if (!sf.has(f)) (next.site_sheet_fields ??= []).push(f);
       const ld = new Set((next.legal_documents ?? []).map((x: any) => x.key));
       for (const x of PROFILE_FLAT.legal_documents ?? []) if (!ld.has(x.key)) (next.legal_documents ??= []).push(x);
+      // sections of Extracted details the firm's profile lacks (by title), in the platform's place; and fields
+      // added to a section the firm already has
+      const secs: any[] = (next.sections ??= []);
+      (PROFILE_FLAT.sections as any[]).forEach((ps, i) => {
+        const mine = secs.find((x) => x.title === ps.title);
+        if (!mine) { secs.splice(Math.min(i, secs.length), 0, JSON.parse(JSON.stringify(ps))); return; }
+        for (const f of ps.fields ?? []) if (!(mine.fields ?? []).includes(f)) (mine.fields ??= []).push(f);
+        for (const k of Object.keys(ps)) if (mine[k] === undefined) mine[k] = ps[k];
+      });
     }
     if (j(next) === j(cur)) continue;
     const today = new Date(new Date().toISOString().slice(0, 10));
-    await db.updateTable('config_versions').set({ status: 'retired' }).where('id', '=', row.id).execute();
-    await db.insertInto('config_versions').values({
-      firm_id: row.firm_id, kind: row.kind, ckey: row.ckey, version: row.version + 1, status: 'published', effective_from: today,
-      payload_json: toJson(next), change_note: 'Platform additions merged (firm settings kept)', published_at: new Date(),
-    }).execute();
+    // the next free number (a draft the firm is editing may hold row.version + 1); retire and publish together
+    await db.transaction().execute(async (tx) => {
+      const top = await tx.selectFrom('config_versions').select((eb) => eb.fn.max('version').as('v')).where('firm_id', '=', row.firm_id).where('kind', '=', row.kind).where('ckey', '=', row.ckey).executeTakeFirst();
+      await tx.updateTable('config_versions').set({ status: 'retired' }).where('id', '=', row.id).execute();
+      await tx.insertInto('config_versions').values({
+        firm_id: row.firm_id, kind: row.kind, ckey: row.ckey, version: Number(top?.v ?? row.version) + 1, status: 'published', effective_from: today,
+        payload_json: toJson(next), change_note: 'Platform additions merged (firm settings kept)', published_at: new Date(),
+      }).execute();
+    });
     n++;
   }
   if (n) console.log(`Firm configurations: ${n} updated with platform additions`);

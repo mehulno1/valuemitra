@@ -100,7 +100,7 @@ export function MessageBox({ title, text, subject, onClose }: { title: string; t
   );
 }
 
-export function Modal({ open, onClose, title, children, actions }: { open: boolean; onClose: () => void; title: string; children: ReactNode; actions?: ReactNode }) {
+export function Modal({ open, onClose, title, children, actions, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; actions?: ReactNode; wide?: boolean }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     if (open) window.addEventListener('keydown', k);
@@ -109,7 +109,7 @@ export function Modal({ open, onClose, title, children, actions }: { open: boole
   if (!open) return null;
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label={title}>
+      <div className="modal" role="dialog" aria-label={title} style={wide ? { maxWidth: 'min(96vw, 1040px)' } : undefined}>
         <h2 className="text-lg">{title}</h2>
         {children}
         {actions && <div className="btns justify-end">{actions}</div>}

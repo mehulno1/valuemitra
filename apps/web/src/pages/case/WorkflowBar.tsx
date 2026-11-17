@@ -36,7 +36,7 @@ export default function WorkflowBar({ c, refresh }: { c: CaseHeader; refresh: ()
   const mine = user?.role === 'valuer' || (holder === 'coordinator' ? isCoordinator(user?.role) || user?.role === 'admin' : holder === 'maker' ? user?.id === c.maker_id : holder === 'checker' ? user?.id === c.checker_id : false);
   const makers = team.filter((p) => ['maker', 'checker', 'valuer'].includes(p.role));
   const checkers = team.filter((p) => ['checker', 'valuer'].includes(p.role) && p.id !== c.maker_id);
-  const assign = can('assign');
+  const assign = can('edit'); // anyone on the case may change the maker or checker (13 Nov A3)
 
   return (
     <div className="flex flex-wrap items-end gap-3 border-t border-line pt-3 mt-3">
@@ -77,7 +77,7 @@ export default function WorkflowBar({ c, refresh }: { c: CaseHeader; refresh: ()
           <Field label="To"><select value={dlg.to} onChange={(e) => setDlg({ ...dlg, to: e.target.value as Holder })}>{earlier.map((h) => <option key={h} value={h}>{STEP[h]}</option>)}</select></Field>
         )}
         <Field label={dlg?.kind === 'back' ? 'Reason (required)' : 'Note (optional)'}><textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} /></Field>
-        {dlg?.kind === 'handover' && <p className="sub">Only this step's checks apply: {dlg.to === 'maker' ? 'documents read and site visit received' : dlg.to === 'checker' ? 'valuation applied and no open items on documents, site, market or valuation' : 'no open items except those for signing'}.</p>}
+        {dlg?.kind === 'handover' && <p className="sub">Only this step's checks apply: {dlg.to === 'maker' ? 'none: documents and the site visit can follow' : dlg.to === 'checker' ? 'valuation applied and no open items on documents, site, market or valuation' : 'no open items except those for signing'}.</p>}
       </Modal>
     </div>
   );

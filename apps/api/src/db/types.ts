@@ -61,6 +61,7 @@ export interface Assignments {
   sent_for_review_at: Date | null;
   signed_at: Date | null;
   signed_by: number | null;
+  sourced_by_id: number | null;
   stage: Generated<string>;
   stage_changed_at: Generated<Date>;
   template_version_id: number | null;
@@ -161,6 +162,15 @@ export interface CaseComparables {
   note: string | null;
   weight: Decimal;
   weight_label: string;
+}
+
+export interface CaseSources {
+  created_at: Generated<Date>;
+  created_by: number | null;
+  firm_id: number;
+  id: Generated<number>;
+  name: string;
+  status: Generated<"active" | "inactive">;
 }
 
 export interface ChecklistItems {
@@ -761,9 +771,9 @@ export interface TemplateVersions {
   fixed_ok_json: Json | null;
   id: Generated<number>;
   layout_json: Json | null;
-  rules_json: Json | null;
   published_at: Date | null;
   published_by: number | null;
+  rules_json: Json | null;
   source_file_id: number;
   status: Generated<"draft" | "published" | "retired">;
   template_id: number;
@@ -827,6 +837,7 @@ export interface DB {
   banks: Banks;
   canonical_fields: CanonicalFields;
   case_comparables: CaseComparables;
+  case_sources: CaseSources;
   check_results: CheckResults;
   checklist_items: ChecklistItems;
   comparables: Comparables;

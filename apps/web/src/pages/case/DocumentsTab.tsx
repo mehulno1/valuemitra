@@ -7,6 +7,7 @@ import { FileDrop, FileImg, MessageBox, Panel, ago, fmtDate, useErrorToast, useT
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { caseKey, type TabProps } from './context';
+import { OpenDoc } from '@/components/DocViewer';
 
 export interface DocThumb { page: number; thumb: number | null; image: number | null; languages: string | null }
 export interface DocPart {
@@ -78,6 +79,8 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
     wasBusy.current = anyBusy;
   }, [anyBusy, refresh]);
 
+  const legal = useQuery({ queryKey: caseKey(c.id, 'legal'), queryFn: () => api.get<LegalResp>(`/api/assignments/${c.id}/legal`) });
+  const chain = legal.data?.chain;
   const act = async (key: string, fn: () => Promise<unknown>, ok?: string) => {
     setBusyKey(key);
     try {
@@ -160,6 +163,7 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
                   ].filter(Boolean).join(' · ')}
                 </div>
               </div>
+              {d.status === 'read' && <OpenDoc assignmentId={c.id} documentId={d.id} label="Open whole file" className="btn sm ghost" />}
               {d.status === 'read' && <span className="tag">{d.parts.length} document{d.parts.length === 1 ? '' : 's'} found</span>}
               {d.status === 'failed' && <span className="sev crit">Could not read</span>}
             </div>
@@ -190,11 +194,15 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
                           <div className="flex flex-wrap items-center gap-1.5">
                             {p.title && p.title !== p.type_label && <span className="sub">{p.type_label}</span>}
                             {p.corrected_type && <span className="edited">corrected</span>}
+                            {chain && chain.agreements.length > 1 && chain.agreements.includes(p.id) && (chain.current === p.id
+                              ? <span className="sev ok">current agreement{chain.chosen ? ' (chosen)' : ' (latest)'}</span>
+                              : <><span className="tag">earlier agreement (chain): gives no values</span>{editable && <button className="linkbtn" onClick={() => act(`cur${p.id}`, () => api.put(`/api/assignments/${c.id}/current-agreement`, { partId: p.id }), 'Marked as the current agreement; values are read from it.')}>Make this the current one</button>}</>)}
                           </div>
                         </td>
                         <td className="text-[13px]">
                           {pageRange(p.pages)}
                           {p.is_kyc ? ' · kept out of the report' : p.moved_to === 'site_photos' ? ' · moved to Site visit photos' : p.moved_to === 'market_evidence' ? ' · another flat: used as a comparable on Market evidence' : p.languages ? ` · ${p.languages}` : ''}
+                          {!p.is_kyc && p.thumbs.length > 0 && <> <OpenDoc assignmentId={c.id} partId={p.id} page={p.pages[0] ?? null} /></>}
                           {p.moved_to === 'site_photos' && <> <button className="linkbtn" onClick={() => go('site')}>Open</button></>}
                           {p.moved_to === 'market_evidence' && <> <button className="linkbtn" onClick={() => go('mkt')}>Open</button></>}
                         </td>
@@ -227,6 +235,8 @@ export default function DocumentsTab({ c, go, refresh, locked }: TabProps) {
             )}
           </section>
         ))}
+
+        <LegalPanel caseId={c.id} editable={editable} refresh={refresh} />
 
         {reportParts.length > 0 && (
           <Panel title="Document pages in the report" right={<span className="tag">{selectedPages} selected</span>} pad={false}>
@@ -350,4 +360,60 @@ function ConfPct({ v }: { v: number | null }) {
   if (v === null || v === undefined) return <span className="conf x">—</span>;
   const cls = v >= 90 ? 'hi' : v >= 75 ? 'md' : 'lo';
   return <span className={`conf ${cls}`}>{Math.round(v)}{cls === 'lo' ? ' (low)' : ''}</span>;
+}
+
+interface LegalItem { key: string; label: string; line: string; on: boolean; kind: 'document' | 'chain' | 'other' | 'kyc' | 'comparable' | 'blank'; partIds: number[] }
+interface LegalResp { items: LegalItem[]; chain: { current: number | null; earlier: { partId: number; date: string | null }[]; chosen: boolean; agreements: number[] }; printed: string | null }
+const KIND: Record<LegalItem['kind'], string> = { document: '', chain: 'earlier agreement', other: '', kyc: 'KYC', comparable: 'another flat', blank: 'blank / unreadable' };
+
+/** Legal documents in the report (13 Nov re-test B2): every received document with a tick box and its place in
+ *  the list. Defaults: the property's own documents ticked; KYC, other flats' Index II and blank pages not. */
+function LegalPanel({ caseId, editable, refresh }: { caseId: number; editable: boolean; refresh: () => void }) {
+  const q = useQuery({ queryKey: caseKey(caseId, 'legal'), queryFn: () => api.get<LegalResp>(`/api/assignments/${caseId}/legal`) });
+  const toast = useToast();
+  const err = useErrorToast();
+  const [busy, setBusy] = useState(false);
+  const [all, setAll] = useState(false);
+  const items = q.data?.items ?? [];
+  if (!items.length) return null;
+  const save = async (next: LegalItem[] | null, msg: string) => {
+    setBusy(true);
+    try {
+      await api.put(`/api/assignments/${caseId}/legal`, { picks: next ? next.map((x) => ({ k: x.key, on: x.on })) : null });
+      toast(msg); await q.refetch(); refresh();
+    } catch (e) { err(e); } finally { setBusy(false); }
+  };
+  const toggle = (i: number) => save(items.map((x, j) => (j === i ? { ...x, on: !x.on } : x)), items[i].on ? 'Left out of Legal documents' : 'Listed under Legal documents');
+  const move = (i: number, d: -1 | 1) => { const n = [...items]; const j = i + d; if (j < 0 || j >= n.length) return; [n[i], n[j]] = [n[j], n[i]]; save(n, 'Order changed'); };
+  const ticked = items.filter((x) => x.on);
+  const shown = all ? items : items.filter((x) => x.on || x.kind === 'document' || x.kind === 'chain');
+  return (
+    <Panel title="Legal documents in the report" right={<span className="tag">{ticked.length} listed</span>}>
+      <p className="sub mb-2">Every document received can be listed. Tick what prints and use the arrows for the order; the report numbers them in this order.</p>
+      <div className="grid gap-1">
+        {shown.map((x) => {
+          const i = items.indexOf(x);
+          return (
+            <div key={x.key} className={`flex items-start gap-2 rounded-md px-2 py-1 ${x.on ? '' : 'opacity-70'}`}>
+              <input type="checkbox" className="mt-1" checked={x.on} disabled={!editable || busy} onChange={() => toggle(i)} aria-label={`List ${x.label}`} />
+              <div className="min-w-0 flex-1 text-[13px]">
+                <span>{x.line}</span>
+                {KIND[x.kind] && <span className="sub"> · {KIND[x.kind]}</span>}
+              </div>
+              {editable && x.on && (
+                <span className="flex gap-1">
+                  <button className="btn sm ghost !px-2" disabled={busy || i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
+                  <button className="btn sm ghost !px-2" disabled={busy || i === items.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="btns mt-2">
+        {items.length > shown.length || all ? <button className="linkbtn" onClick={() => setAll(!all)}>{all ? 'Show only listed and main documents' : `Show all ${items.length} documents received`}</button> : null}
+        {editable && <button className="linkbtn" disabled={busy} onClick={() => save(null, 'Back to the default list')}>Reset to default</button>}
+      </div>
+    </Panel>
+  );
 }

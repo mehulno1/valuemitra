@@ -6,6 +6,7 @@ import { Loading, StageChip } from '@/components/ui';
 import { api } from '@/lib/api';
 import WorkflowBar from './WorkflowBar';
 import FormatChange from './FormatChange';
+import { useEditAssignment } from './EditAssignment';
 import { caseKey, TAB_ALIASES, TABS, useCaseRefresh, type CaseHeader, type TabKey } from './context';
 
 const Documents = lazy(() => import('./DocumentsTab'));
@@ -29,6 +30,7 @@ export default function CaseWorkspace() {
   const checks = useQuery({ queryKey: caseKey(id, 'checks'), queryFn: () => api.get(`/api/assignments/${id}/checks`), refetchInterval: 10000 });
   const docs = useQuery({ queryKey: caseKey(id, 'checklist'), queryFn: () => api.get<any[]>(`/api/assignments/${id}/checklist`) });
   const tab = (loc.pathname.split('/')[3] ?? 'docs') as TabKey;
+  const edit = useEditAssignment(head.data ?? ({} as CaseHeader), refresh);
 
   useEffect(() => { window.scrollTo(0, 0); }, [tab]);
 
@@ -54,7 +56,8 @@ export default function CaseWorkspace() {
             <span>Format <b>{c.template_name}{c.template_version ? ` v${c.template_version}` : ''}</b><FormatChange c={c} refresh={refresh} /></span>
             <span>Property <b>{PROPERTY_TYPES.find((p) => p.key === c.property_type)?.label}</b></span>
             <span>Report no. <b className="mono">{c.report_no ?? 'issued at sign-off'}</b></span>
-            <span>Field engineer <b>{c.engineer_name ?? 'not assigned'}</b></span>
+            <span>Field engineer <b>{c.engineer_name ?? 'not assigned'}</b>{edit.allowed && <button className="linkbtn ml-1" onClick={edit.open}>{c.engineer_name ? 'Change' : 'Assign'}</button>}</span>
+            {c.sourced_by_name && <span>Sourced by <b>{c.sourced_by_name}</b></span>}
           </div>
           <div className="progress">
             <span className={`pstep ${total && got >= Math.min(total, 5) ? 'done' : got ? 'live' : ''}`}>Documents {got}/{total}</span>
@@ -68,7 +71,9 @@ export default function CaseWorkspace() {
         </div>
         <div className="grid justify-items-end gap-2">
           <StageChip stage={c.stage} />
+          {edit.allowed && <button className="btn sm" onClick={edit.open}>Edit assignment</button>}
           <Link className="btn sm ghost" to="/">Back to assignments</Link>
+          {edit.node}
         </div>
       </section>
       <nav className="tabs" aria-label="Case sections">

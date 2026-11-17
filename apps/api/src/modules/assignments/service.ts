@@ -21,6 +21,44 @@ export interface NewAssignment {
   purpose?: string | null;
   engineerId?: number | null;
   templateId?: number | null;     // a published format the coordinator chose; else the suggested one
+  sourcedById?: number | null;    // who sourced the case for the firm (A6): records only, never printed
+  makerId?: number | null;        // A1: the coordinator creates the case and assigns maker and checker
+  checkerId?: number | null;
+  note?: string | null;           // hand-over note
+  handOver?: boolean;             // send to the report maker on save (no documents or site visit needed)
+}
+
+async function checkSource(firmId: number, id: number | null | undefined, tx: Tx) {
+  if (!id) return;
+  const s = await tx.selectFrom('case_sources').select('id').where('id', '=', id).where('firm_id', '=', firmId).executeTakeFirst();
+  if (!s) throw badRequest('Unknown "Sourced by" name');
+}
+
+/** "Sourced by" master list (A6). */
+export const caseSources = (firmId: number) => db.selectFrom('case_sources').select(['id', 'name']).where('firm_id', '=', firmId).where('status', '=', 'active').orderBy('name').execute();
+
+export async function addCaseSource(actor: Actor, name: string, tx: Tx = db) {
+  const n = name.replace(/\s+/g, ' ').trim();
+  if (n.length < 2) throw badRequest('Type the name');
+  const hit = await tx.selectFrom('case_sources').select(['id', 'status']).where('firm_id', '=', actor.firmId!).where('name', '=', n).executeTakeFirst();
+  if (hit) { if (hit.status !== 'active') await tx.updateTable('case_sources').set({ status: 'active' }).where('id', '=', hit.id).execute(); return { id: hit.id, name: n }; }
+  const r = await tx.insertInto('case_sources').values({ firm_id: actor.firmId!, name: n, created_by: actor.id ?? null }).executeTakeFirstOrThrow();
+  await audit(actor, { entityType: 'case_source', entityId: Number(r.insertId), action: 'case_source.add', summary: `"Sourced by" name added: ${n}` }, tx);
+  return { id: Number(r.insertId), name: n };
+}
+
+/** A new branch from the create / edit forms (A5): name, code, contact. Saved to Banks & branches. */
+export async function quickBranch(actor: Actor, input: { bankId: number; name: string; code?: string | null; contactName?: string | null; contactPhone?: string | null; contactEmail?: string | null }, tx: Tx = db) {
+  const name = input.name.replace(/\s+/g, ' ').trim();
+  if (name.length < 2) throw badRequest('Type the branch name');
+  const bank = await tx.selectFrom('banks').select(['id', 'code']).where('id', '=', input.bankId).executeTakeFirst();
+  if (!bank) throw badRequest('Choose the bank first');
+  const code = (input.code?.trim() || name.replace(/[^A-Za-z0-9]+/g, '').slice(0, 12)).toUpperCase();
+  const same = await tx.selectFrom('bank_branches').select(['id', 'name']).where('firm_id', '=', actor.firmId!).where('bank_id', '=', bank.id).where((eb) => eb.or([eb('code', '=', code), eb('name', '=', name)])).executeTakeFirst();
+  if (same) throw badRequest(`${bank.code} already has a branch "${same.name}" with that name or code`);
+  const r = await tx.insertInto('bank_branches').values({ firm_id: actor.firmId!, bank_id: bank.id, code, name, contact_name: input.contactName?.trim() || null, contact_phone: input.contactPhone?.trim() || null, contact_email: input.contactEmail?.trim() || null, default_payer: 'bank', billing_cycle: 'case' }).executeTakeFirstOrThrow();
+  await audit(actor, { entityType: 'branch', entityId: Number(r.insertId), action: 'branch.add', summary: `Branch ${bank.code} ${name} (${code}) added from a case form` }, tx);
+  return { id: Number(r.insertId), code, name, bank_id: bank.id };
 }
 
 export async function idPreview(firmId: number, bankId?: number, branchId?: number) {
@@ -48,6 +86,7 @@ export async function createAssignment(actor: Actor, input: NewAssignment, tx: T
     const e = await tx.selectFrom('engineers').select('id').where('id', '=', input.engineerId).where('firm_id', '=', firmId).executeTakeFirst();
     if (!e) throw badRequest('Unknown field engineer');
   }
+  await checkSource(firmId, input.sourcedById, tx);
   // pin every configuration this case will use
   const tpl = await pickTemplateVersion(firmId, input.bankId, branch.code, input.propertyType, tx, new Date(), input.templateId);
   if (!tpl) throw badRequest(input.templateId ? 'That report format is not published for this bank, branch and property type' : 'No published report format for this bank and property type. Add one under Bank formats.');
@@ -67,7 +106,7 @@ export async function createAssignment(actor: Actor, input: NewAssignment, tx: T
     bank_contact: input.bankContact ?? (branch.contact_name ? `${branch.contact_name}${branch.contact_role ? ` (${branch.contact_role})` : ''}` : null),
     received_via: input.receivedVia ?? null, bank_ref_no: input.bankRefNo ?? null, borrower_name: input.borrowerName ?? null,
     property_type: input.propertyType, locality_hint: input.localityHint ?? null, purpose: input.purpose ?? 'Home loan',
-    engineer_id: input.engineerId ?? null, stage: 'docs', fee: branch.fee,
+    engineer_id: input.engineerId ?? null, sourced_by_id: input.sourcedById ?? null, stage: 'docs', fee: branch.fee,
     template_version_id: tpl.id, profile_version_id: profile.id, rule_version_id: rules.id, check_version_id: checks.id, wording_version_id: wording.id,
     created_by: actor.id!,
   }).executeTakeFirstOrThrow();
@@ -87,23 +126,82 @@ export async function createAssignment(actor: Actor, input: NewAssignment, tx: T
     summary: `Case ${caseNo} created${input.receivedVia ? ` from ${input.receivedVia} request` : ''}${input.bankContact ? ` by ${input.bankContact}` : ''}.${eng ? ` Site visit assigned to ${eng.name}.` : ''} Format ${tpl.name} v${tpl.version}.`,
   }, tx);
   await publish({ type: 'assignment.created', firmId, entityType: 'assignment', entityId: id, payload: { caseNo } }, tx);
+  if (input.makerId || input.checkerId) {
+    const { assignPeople, handOverOnCreate } = await import('../workflow/handover.js');
+    await assignPeople(actor, id, { makerId: input.makerId ?? null, checkerId: input.checkerId ?? null }, tx);
+    if (input.handOver && input.makerId) await handOverOnCreate(actor, id, input.note?.trim() || null, tx);
+  }
   return { id, caseNo };
 }
 
-export async function updateAssignment(actor: Actor, id: number, patch: Partial<Pick<NewAssignment, 'bankContact' | 'borrowerName' | 'engineerId' | 'purpose' | 'bankRefNo' | 'localityHint'>>, tx: Tx = db) {
+export interface AssignmentPatch {
+  bankId?: number; branchId?: number; propertyType?: string; templateId?: number | null;
+  bankContact?: string | null; borrowerName?: string | null; engineerId?: number | null; purpose?: string | null;
+  bankRefNo?: string | null; localityHint?: string | null; receivedVia?: string | null; sourcedById?: number | null;
+}
+
+const LABEL: Record<string, string> = {
+  bank_id: 'bank', branch_id: 'branch', property_type: 'property type', bank_contact: 'bank contact', borrower_name: 'borrower',
+  engineer_id: 'field engineer', purpose: 'purpose', bank_ref_no: 'application no.', locality_hint: 'locality', received_via: 'received via',
+  sourced_by_id: 'sourced by', template_version_id: 'report format',
+};
+
+/** Edit the assignment (A3, A4): every field of the create form, by anyone on the case, at any stage before
+ *  signing. Bank, branch or property type changes pin the format again; every change goes to the audit trail. */
+export async function updateAssignment(actor: Actor, id: number, patch: AssignmentPatch, tx: Tx = db) {
   const a = await tx.selectFrom('assignments').selectAll().where('id', '=', id).where('firm_id', '=', actor.firmId!).executeTakeFirst();
   if (!a) throw notFound('Assignment');
   if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
+  const firmId = actor.firmId!;
   const set: Record<string, unknown> = {};
-  if (patch.bankContact !== undefined) set.bank_contact = patch.bankContact;
-  if (patch.borrowerName !== undefined) set.borrower_name = patch.borrowerName;
-  if (patch.engineerId !== undefined) set.engineer_id = patch.engineerId;
-  if (patch.purpose !== undefined) set.purpose = patch.purpose;
-  if (patch.bankRefNo !== undefined) set.bank_ref_no = patch.bankRefNo;
-  if (patch.localityHint !== undefined) set.locality_hint = patch.localityHint;
-  if (!Object.keys(set).length) return;
+  const put = (k: string, v: unknown) => { if (v !== undefined && v !== (a as any)[k]) set[k] = v; };
+  put('bank_contact', patch.bankContact);
+  put('borrower_name', patch.borrowerName);
+  put('purpose', patch.purpose ?? undefined);
+  put('bank_ref_no', patch.bankRefNo);
+  put('locality_hint', patch.localityHint);
+  put('received_via', patch.receivedVia);
+  if (patch.engineerId !== undefined) {
+    if (patch.engineerId && !(await tx.selectFrom('engineers').select('id').where('id', '=', patch.engineerId).where('firm_id', '=', firmId).executeTakeFirst())) throw badRequest('Unknown field engineer');
+    put('engineer_id', patch.engineerId);
+  }
+  if (patch.sourcedById !== undefined) { await checkSource(firmId, patch.sourcedById, tx); put('sourced_by_id', patch.sourcedById); }
+  const bankId = patch.bankId ?? a.bank_id;
+  const branchId = patch.branchId ?? a.branch_id;
+  const type = patch.propertyType ?? a.property_type;
+  const moved = bankId !== a.bank_id || branchId !== a.branch_id || type !== a.property_type;
+  if (moved || patch.templateId) {
+    const br = await tx.selectFrom('bank_branches').select(['id', 'bank_id', 'code']).where('id', '=', branchId).where('firm_id', '=', firmId).executeTakeFirst();
+    if (!br || br.bank_id !== bankId) throw badRequest('Choose a branch of the selected bank');
+    const cur = a.template_version_id ? await tx.selectFrom('template_versions').select('template_id').where('id', '=', a.template_version_id).executeTakeFirst() : null;
+    const v = await pickTemplateVersion(firmId, bankId, br.code, type, tx, new Date(), patch.templateId ?? (moved ? null : cur?.template_id ?? null))
+      ?? (patch.templateId ? null : await pickTemplateVersion(firmId, bankId, br.code, type, tx, new Date(), null));
+    if (!v) throw badRequest('No published report format for that bank, branch and property type');
+    put('bank_id', bankId); put('branch_id', branchId); put('property_type', type); put('template_version_id', v.id);
+    if (type !== a.property_type) {
+      const profile = await activeConfig('profile', type, firmId, tx);
+      if (!profile) throw badRequest(`No property profile for "${type}" yet`);
+      set.profile_version_id = profile.id;
+      const have = new Set((await tx.selectFrom('checklist_items').select('item_code').where('assignment_id', '=', id).execute()).map((r) => r.item_code));
+      const add = ((profile.payload.checklist ?? []) as any[]).filter((it) => !have.has(it.code));
+      if (add.length) await tx.insertInto('checklist_items').values(add.map((it, i) => ({ assignment_id: id, item_code: it.code, label: it.label, remark_label: it.remark ?? null, doc_types: JSON.stringify(it.doc_types ?? []), required: it.required ? 1 : 0, state: 'n' as const, auto_state: 'n' as const, sort_order: 100 + i }))).execute();
+    }
+  }
+  if (!Object.keys(set).length) return { changed: [] as string[] };
   await tx.updateTable('assignments').set(set).where('id', '=', id).execute();
-  await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'assignment.update', summary: `Case details changed: ${Object.keys(set).join(', ')}`, before: Object.fromEntries(Object.keys(set).map((k) => [k, (a as any)[k]])), after: set }, tx);
+  const names = async (k: string, v: unknown) => {
+    if (v === null || v === undefined || v === '') return '—';
+    if (k === 'engineer_id') return (await tx.selectFrom('engineers').select('name').where('id', '=', Number(v)).executeTakeFirst())?.name ?? String(v);
+    if (k === 'sourced_by_id') return (await tx.selectFrom('case_sources').select('name').where('id', '=', Number(v)).executeTakeFirst())?.name ?? String(v);
+    if (k === 'bank_id') return (await tx.selectFrom('banks').select('code').where('id', '=', Number(v)).executeTakeFirst())?.code ?? String(v);
+    if (k === 'branch_id') return (await tx.selectFrom('bank_branches').select('name').where('id', '=', Number(v)).executeTakeFirst())?.name ?? String(v);
+    if (k === 'template_version_id') { const t = await tx.selectFrom('template_versions as tv').innerJoin('report_templates as t', 't.id', 'tv.template_id').select(['t.name', 'tv.version']).where('tv.id', '=', Number(v)).executeTakeFirst(); return t ? `${t.name} v${t.version}` : String(v); }
+    return String(v);
+  };
+  const parts: string[] = [];
+  for (const k of Object.keys(set)) if (LABEL[k]) parts.push(`${LABEL[k]} ${await names(k, (a as any)[k])} → ${await names(k, set[k])}`);
+  await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'assignment.update', summary: `Assignment edited: ${parts.join('; ')}.`, before: Object.fromEntries(Object.keys(set).map((k) => [k, (a as any)[k]])), after: set }, tx);
+  return { changed: Object.keys(set) };
 }
 
 /** Use another published format for this case (B3, C5: an under-construction case drafted in Flat Completed). */
@@ -242,10 +340,12 @@ export async function assignmentHeader(firmId: number, id: number) {
     .leftJoin('engineers as e', 'e.id', 'a.engineer_id')
     .leftJoin('template_versions as tv', 'tv.id', 'a.template_version_id')
     .leftJoin('report_templates as t', 't.id', 'tv.template_id')
+    .leftJoin('case_sources as cs', 'cs.id', 'a.sourced_by_id')
     .select([
+      'cs.name as sourced_by_name',
       'a.id', 'a.case_no', 'a.borrower_name', 'a.property_type', 'a.locality_hint', 'a.purpose', 'a.stage', 'a.created_at', 'a.updated_at', 'a.bank_contact',
       'a.received_via', 'a.bank_ref_no', 'a.engineer_id', 'a.report_no', 'a.report_rev', 'a.signed_at', 'a.sent_at', 'a.sent_for_review_at', 'a.draft_version',
-      'a.personal_data_removed_at', 'a.bank_id', 'a.branch_id', 'a.fee', 'a.holder', 'a.maker_id', 'a.checker_id', 'a.handed_at',
+      'a.personal_data_removed_at', 'a.bank_id', 'a.branch_id', 'a.fee', 'a.holder', 'a.maker_id', 'a.checker_id', 'a.handed_at', 'a.sourced_by_id', 'tv.template_id',
       'b.code as bank_code', 'b.name as bank_name', 'br.code as branch_code', 'br.name as branch_name', 'br.contact_email', 'e.name as engineer_name', 'e.phone as engineer_phone',
       't.name as template_name', 'tv.version as template_version',
     ])

@@ -6,12 +6,14 @@ import { PROPERTY_TYPES, RECEIVED_VIA } from '@vm/shared';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Empty, Field, Loading, PageHead, Panel, useErrorToast, useToast } from '@/components/ui';
+import { BranchPicker, formatWords, SourcedByPicker } from '@/components/CasePickers';
 
 interface Meta {
   banks: { id: number; code: string; name: string; short_name?: string }[];
   branches: { id: number; bank_id: number; code: string; name: string; bank_code: string; contact_name: string | null; contact_role: string | null }[];
   engineers: { id: number; name: string; localities: string | null; phone: string | null }[];
   flags: Record<string, boolean>;
+  team: { id: number; name: string; role: string }[];
 }
 interface Tpl { id: number; firm_id: number | null; hidden?: boolean; name: string; bank_code: string | null; property_types: string[]; branch_scope: string[]; versions: { status: string; version: number }[] }
 
@@ -32,7 +34,8 @@ export default function NewAssignment() {
   const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') });
   const tpls = useQuery({ queryKey: ['templates'], queryFn: () => api.get<Tpl[]>('/api/templates') });
 
-  const [f, setF] = useState({ bankId: 0, branchId: 0, bankContact: '', receivedVia: 'WhatsApp', bankRefNo: '', borrowerName: '', propertyType: 'flat', localityHint: '', purpose: '', engineerId: 0 });
+  const [f, setF] = useState({ bankId: 0, branchId: 0, bankContact: '', receivedVia: 'WhatsApp', bankRefNo: '', borrowerName: '', propertyType: 'flat', localityHint: '', purpose: '', engineerId: 0, sourcedById: 0, makerId: 0, checkerId: 0, note: '', handOver: true });
+  const [more, setMore] = useState(false);
   const [engTouched, setEngTouched] = useState(false);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
 
@@ -82,11 +85,12 @@ export default function NewAssignment() {
     mutationFn: () => api.post<{ id: number; caseNo: string }>('/api/assignments', {
       bankId: f.bankId, branchId: f.branchId, bankContact: f.bankContact || null, receivedVia: f.receivedVia || null, bankRefNo: f.bankRefNo || null,
       borrowerName: f.borrowerName || null, propertyType: f.propertyType, localityHint: f.localityHint || null, purpose: f.purpose || null, engineerId: f.engineerId || null,
-      templateId: format?.id ?? null,
+      templateId: format?.id ?? null, sourcedById: f.sourcedById || null, makerId: f.makerId || null, checkerId: f.checkerId || null,
+      note: f.note.trim() || null, handOver: !!f.makerId && f.handOver,
     }),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['board'] });
-      toast(`Case ${r.caseNo} created`);
+      toast(`Case ${r.caseNo} created${f.makerId && f.handOver ? ' and sent to the report maker' : ''}`);
       nav(`/cases/${r.id}/docs`);
     },
     onError: onErr,
@@ -96,6 +100,9 @@ export default function NewAssignment() {
   if (meta.isLoading) return <Loading />;
   if (meta.isError) return <Empty title="Could not load">{(meta.error as Error).message}</Empty>;
 
+  const team = meta.data!.team ?? [];
+  const makers = team.filter((p) => ['maker', 'checker', 'valuer'].includes(p.role));
+  const checkers = team.filter((p) => ['checker', 'valuer'].includes(p.role) && p.id !== f.makerId);
   const caseParts = preview.data?.caseNo.split(/[-/]/) ?? [];
   const reportParts = preview.data?.reportNo.split('/') ?? [];
   const ready = f.bankId && f.branchId && f.propertyType;
@@ -107,7 +114,7 @@ export default function NewAssignment() {
         title="New assignment"
         actions={<>
           <button className="btn" onClick={() => nav('/')}>Cancel</button>
-          <button className="btn pri" disabled={!ready || create.isPending} onClick={() => create.mutate()}>{create.isPending ? 'Creating…' : 'Create assignment'}</button>
+          <button className="btn pri" disabled={!ready || create.isPending} onClick={() => create.mutate()}>{create.isPending ? 'Creating…' : f.makerId && f.handOver ? 'Create and send to report maker' : 'Create assignment'}</button>
         </>}
       />
       <div className="cols">
@@ -120,42 +127,56 @@ export default function NewAssignment() {
                 {meta.data!.banks.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
               </select>
             </Field>
-            <Field label="Branch" hint={f.bankId && !branches.length ? 'No branches for this bank yet. Add one in Firm settings → Banks & branches.' : undefined}>
-              <select value={f.branchId} onChange={(e) => set('branchId', Number(e.target.value))} disabled={!branches.length}>
-                {!branches.length && <option value={0}>No branches</option>}
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Bank contact" hint="Leave empty to use the branch contact"><input value={f.bankContact} onChange={(e) => set('bankContact', e.target.value)} placeholder={branchContact || 'Name (designation)'} /></Field>
-            <Field label="Received via">
-              <select value={f.receivedVia} onChange={(e) => set('receivedVia', e.target.value)}>{RECEIVED_VIA.map((v) => <option key={v}>{v}</option>)}</select>
-            </Field>
-            <Field label="Bank reference no." hint="Optional: the bank's application or file number"><input value={f.bankRefNo} onChange={(e) => set('bankRefNo', e.target.value)} /></Field>
-            <Field label="Purpose" hint="Optional, e.g. Home loan, Top-up, Takeover"><input value={f.purpose} onChange={(e) => set('purpose', e.target.value)} /></Field>
-
-            <h3>Borrower and property</h3>
+            <BranchPicker bankId={f.bankId} branches={meta.data!.branches} value={f.branchId} onChange={(id) => set('branchId', id)} />
             <Field label="Borrower name"><input value={f.borrowerName} onChange={(e) => set('borrowerName', e.target.value)} autoComplete="off" /></Field>
             <Field label="Property type">
               <select value={f.propertyType} onChange={(e) => set('propertyType', e.target.value)}>{PROPERTY_TYPES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
             </Field>
-            <Field label="Locality (rough, from the call)" full><input value={f.localityHint} onChange={(e) => set('localityHint', e.target.value)} placeholder="Vrindavan Society, Majiwada, Thane (W)" /></Field>
-            <Field label="Report format" full hint={formats.length > 1 ? 'Suggested from bank, branch and property type; choose another if it fits this case better' : 'Picked from bank and property type'}>
+            <Field label="Report format" full hint={format ? formatWords(format.name).hint || (formats.length > 1 ? 'Suggested from bank and property type; choose another if it fits this case better' : undefined) : undefined}>
               {formats.length ? (
                 <select value={formatId} onChange={(e) => setFormatId(Number(e.target.value))}>
-                  {formats.map((t, i) => <option key={t.id} value={t.id}>{bank?.code} · {t.name}{i === 0 && formats.length > 1 ? ' (suggested)' : ''}</option>)}
+                  {formats.map((t, i) => <option key={t.id} value={t.id}>{formatWords(t.name).label}{i === 0 && formats.length > 1 ? ' (suggested)' : ''}</option>)}
                 </select>
               ) : (
                 <input readOnly value={tpls.isLoading ? 'Checking…' : 'No published format for this bank and property type. Add one under Bank formats.'} className="text-crit" />
               )}
             </Field>
+            <SourcedByPicker value={f.sourcedById} onChange={(id) => set('sourcedById', id)} />
 
-            <h3>Site visit</h3>
-            <Field label="Field engineer" full hint={suggested ? 'Suggested by locality. Call to confirm availability, then create the case.' : 'Type the locality above to get a suggestion. Call to confirm availability, then create the case.'}>
+            <h3>Who works on it</h3>
+            <Field label="Report maker">
+              <select value={f.makerId} onChange={(e) => { const v = Number(e.target.value); setF((x) => ({ ...x, makerId: v, checkerId: x.checkerId === v ? 0 : x.checkerId })); }}>
+                <option value={0}>Assign later</option>
+                {makers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Report checker">
+              <select value={f.checkerId} onChange={(e) => set('checkerId', Number(e.target.value))}>
+                <option value={0}>Assign later</option>
+                {checkers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Note for the report maker" full hint="Optional"><textarea rows={2} value={f.note} onChange={(e) => set('note', e.target.value)} /></Field>
+            {!!f.makerId && (
+              <label className="field full flex items-center gap-2"><input type="checkbox" checked={f.handOver} onChange={(e) => set('handOver', e.target.checked)} /> Send to the report maker now. Documents, site sheet, photos and the engineer link can be added by anyone on the case later.</label>
+            )}
+            <Field label="Field engineer" full hint="Optional. Can be assigned or changed later from the case header.">
               <select value={f.engineerId} onChange={(e) => { setEngTouched(true); set('engineerId', Number(e.target.value)); }}>
                 <option value={0}>Assign later</option>
                 {ranked.map(({ e, s }) => <option key={e.id} value={e.id}>{e.name}{e.localities ? ` · ${e.localities}` : ''}{s > 0 && e.id === suggested?.id ? ' (suggested)' : ''}</option>)}
               </select>
             </Field>
+
+            <button type="button" className="linkbtn field full text-left" onClick={() => setMore(!more)}>{more ? '▾' : '▸'} More details (optional): application no., bank contact, received via, purpose, locality</button>
+            {more && <>
+              <Field label="Application no." hint="Optional: the bank's own application or file number"><input value={f.bankRefNo} onChange={(e) => set('bankRefNo', e.target.value)} /></Field>
+              <Field label="Bank contact" hint="Leave empty to use the branch contact"><input value={f.bankContact} onChange={(e) => set('bankContact', e.target.value)} placeholder={branchContact || 'Name (designation)'} /></Field>
+              <Field label="Received via">
+                <select value={f.receivedVia} onChange={(e) => set('receivedVia', e.target.value)}>{RECEIVED_VIA.map((v) => <option key={v}>{v}</option>)}</select>
+              </Field>
+              <Field label="Purpose" hint="e.g. Home loan, Top-up, Takeover"><input value={f.purpose} onChange={(e) => set('purpose', e.target.value)} /></Field>
+              <Field label="Locality (rough, from the call)" full><input value={f.localityHint} onChange={(e) => set('localityHint', e.target.value)} placeholder="Vrindavan Society, Majiwada, Thane (W)" /></Field>
+            </>}
           </form>
         </section>
 

@@ -18,6 +18,7 @@ interface Comp {
 interface Capture { id: number; file_id: number; mime: string; source_kind: string; source_name: string | null; url: string | null; status: string; error: string | null; in_report: number | boolean; suggested_kind?: string | null; check_note?: string | null }
 interface Evidence {
   readyReckoner: { ratePerSqm: unknown; ratePerSqft: unknown; year: unknown; source: string | null } | null;
+  village?: unknown;
   guideline: unknown; consideration: unknown; area: unknown; registrationDate: unknown;
   proposal: { rate: unknown; lo: unknown; hi: unknown } | null;
   comparables: Comp[]; captures: Capture[];
@@ -118,7 +119,7 @@ export default function MarketTab({ c, go, refresh, locked }: TabProps) {
                 <div className="v">Rs. {inr(n(ev.readyReckoner.ratePerSqm))} / sq.m.</div>
                 <div className="s">Rs. {inr(n(ev.readyReckoner.ratePerSqft) ?? Math.round((n(ev.readyReckoner.ratePerSqm) ?? 0) / SQFT_PER_SQM))} per sq.ft. · {ev.readyReckoner.source ?? 'looked up automatically'}</div>
               </>
-            ) : <div className="mt-1"><Pending label="Needs the property village" /></div>}
+            ) : ev.village ? <div className="s mt-1">No rate for village <b>{String(ev.village)}</b> in the rate table yet. Capture the e-ASR page (Ready reckoner) or import the year's rates; the card fills in.</div> : <div className="mt-1"><Pending label="Needs the property village" /></div>}
           </div>
           <div className="kv">
             <div className="k">Guideline value</div>

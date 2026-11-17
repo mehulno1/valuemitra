@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Conf, Pending, useErrorToast, useToast } from '@/components/ui';
 import { api } from '@/lib/api';
+import { OpenDoc } from '@/components/DocViewer';
 import { useAuth } from '@/lib/auth';
 import { caseKey, type TabProps } from './context';
 
@@ -13,10 +14,10 @@ export interface ResolvedField {
   state: 'filled' | 'pending' | 'not_applicable'; notProvided?: boolean; pendingLabel: string | null; source: string | null; sourceDocType: string | null;
   page: number | null; partId: number | null; snippet: string | null; confidence: number | null; edited: boolean;
   candidates: unknown[]; conflict: { message: string; chosenId?: number | null; options: { label: string; display: string; candidateId?: number }[] } | null;
-  formula?: string | null; ruleKeys?: string[];
+  formula?: string | null; ruleKeys?: string[]; options?: string[]; record?: string | null; blanked?: boolean; preferred?: string; earlierEdit?: string;
 }
 export interface FieldsResp {
-  sections: { title: string; fields: ResolvedField[] }[]; filled: number; total: number; fromDocuments: number; signed: boolean;
+  sections: { title: string; fields: ResolvedField[]; layout?: string; columns?: string[]; rows?: string[][]; note?: string; extra?: boolean }[]; filled: number; total: number; fromDocuments: number; signed: boolean;
   legal?: { items: { key: string; field: string }[]; skip: string[] };
   marks?: { field: string; label: string; on: string[]; value: boolean }[];
 }
@@ -94,28 +95,44 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
       </div>
       {d.sections.map((s) => {
         const filled = s.fields.filter((f) => f.state === 'filled').length;
+        const row = (f: ResolvedField, compact = false) => {
+          const key = legalKey.get(f.code);
+          return (
+            <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} canRules={canRules} docLabel={docLabel} refresh={refresh} goVal={() => go('val')} compact={compact}
+              extra={<>
+                {markOf(f.code) && (
+                  <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="The copy received cannot be read: it is not cited, and a clear copy is asked for">
+                    <input type="checkbox" checked={markOf(f.code)!.value} disabled={!editable} onChange={(e) => setMark(markOf(f.code)!, e.target.checked)} /> {markOf(f.code)!.label}
+                  </label>
+                )}
+                {key && f.state === 'filled' && !compact ? <span className="sub whitespace-nowrap">Listed: chosen on the Documents tab</span> : null}
+              </>} />
+          );
+        };
+        const byCode = new Map(s.fields.map((f) => [f.code, f]));
+        const paired = new Set((s.rows ?? []).flatMap((r) => r.slice(1)));
         return (
-          <section key={s.title} className="panel sec">
-            <h2>{s.title}<span>{filled}/{s.fields.length} filled</span></h2>
-            {s.fields.map((f) => {
-              const key = legalKey.get(f.code);
-              const listed = key ? !skip.includes(key) : true;
-              return (
-                <FieldRow key={f.code} f={f} caseId={c.id} editable={editable} canRules={canRules} docLabel={docLabel} refresh={refresh} goVal={() => go('val')}
-                  extra={<>
-                    {markOf(f.code) && (
-                      <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="The copy received cannot be read: it is not cited, and a clear copy is asked for">
-                        <input type="checkbox" checked={markOf(f.code)!.value} disabled={!editable} onChange={(e) => setMark(markOf(f.code)!, e.target.checked)} /> {markOf(f.code)!.label}
-                      </label>
-                    )}
-                    {key && f.state === 'filled' ? (
-                      <label className="flex items-center gap-1.5 whitespace-nowrap text-[12.5px]" title="Listed under Legal documents in the report">
-                        <input type="checkbox" checked={listed} disabled={!editable} onChange={(e) => setListed(key, e.target.checked)} /> In report
-                      </label>
-                    ) : null}
-                  </>} />
-              );
-            })}
+          <section key={s.title} className={`panel sec ${s.extra ? 'opacity-90' : ''}`}>
+            <h2>{s.title}<span>{s.extra ? `${s.fields.length} kept for records` : `${filled}/${s.fields.length} filled`}</span></h2>
+            {s.note && <p className="sub px-4 pt-2">{s.note}</p>}
+            {s.layout === 'pairs' && s.rows ? (
+              <>
+                <div className="tablewrap">
+                  <table className="list">
+                    <thead><tr><th className="w-[90px]"></th>{(s.columns ?? []).map((h) => <th key={h}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {s.rows.map(([label, ...codes]) => (
+                        <tr key={label}>
+                          <td className="align-top font-semibold">{label}</td>
+                          {codes.map((code) => <td key={code} className="align-top">{byCode.get(code) ? row(byCode.get(code)!, true) : <span className="muted">—</span>}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {s.fields.filter((f) => !paired.has(f.code)).map((f) => row(f))}
+              </>
+            ) : s.fields.map((f) => row(f))}
           </section>
         );
       })}
@@ -123,7 +140,7 @@ export default function ExtractedTab({ c, go, refresh, locked }: TabProps) {
   );
 }
 
-function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, extra }: { f: ResolvedField; caseId: number; editable: boolean; canRules: boolean; docLabel: (k: string) => string; refresh: () => void; goVal: () => void; extra?: React.ReactNode }) {
+function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, extra, compact }: { f: ResolvedField; caseId: number; editable: boolean; canRules: boolean; docLabel: (k: string) => string; refresh: () => void; goVal: () => void; extra?: React.ReactNode; compact?: boolean }) {
   const toast = useToast();
   const err = useErrorToast();
   const [editing, setEditing] = useState(false);
@@ -133,7 +150,8 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, ext
   const cancelled = useRef(false);
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const isVal = f.code.startsWith('VAL.');
-  const canEdit = editable && !isVal;
+  // a line built from a record (O.C. / C.C., C1) is corrected through the record, not on its own
+  const canEdit = editable && !isVal && !f.record;
   const current = f.state === 'filled' ? (f.display ?? (f.value === null || f.value === undefined ? '' : String(f.value))) : '';
   const long = f.type === 'longtext' || current.length > 70;
 
@@ -174,10 +192,16 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, ext
   };
 
   return (
-    <div className="fld">
-      <div className="lbl">{f.label}</div>
+    <div className={compact ? 'fld !grid-cols-[minmax(0,1fr)_auto] !border-b-0 !px-0' : 'fld'}>
+      {!compact && <div className="lbl">{f.label}</div>}
       <div className="min-w-0">
-        {editing ? (
+        {editing && f.options?.length ? (
+          <select className="inp" autoFocus value={f.options.includes(current) ? current : ''} disabled={busy} aria-label={f.label} onBlur={() => setEditing(false)}
+            onChange={(e) => { setEditing(false); if (e.target.value && e.target.value !== current) save(e.target.value, `${f.label}: ${e.target.value}; draft updated.`); }}>
+            <option value="" disabled>Choose…</option>
+            {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : editing ? (
           long ? (
             <textarea ref={inputRef} className="inp" rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={onKey} aria-label={f.label} />
           ) : (
@@ -202,10 +226,15 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, ext
             title={canEdit ? 'Click to edit' : undefined}
           >{current || <span className="muted">{f.notProvided ? 'Not provided' : '—'}</span>}</div>
         )}
-        {(src || f.snippet || isVal || (f.edited && canEdit)) && (
+        {f.record && <div className="src"><span>Built from {f.record}{/O\.C\./.test(f.record) ? ': correct the record in “O.C., C.C. and approved plan” and every line follows' : ''}</span>{isVal || /Valuation/.test(f.record) ? <button className="linkbtn" onClick={goVal}>Change on Valuation tab</button> : null}</div>}
+        {f.earlierEdit && f.earlierEdit.trim() !== current.trim() && <div className="flag"><div><b>Typed here earlier:</b> {f.earlierEdit}</div><div className="sub">This line now follows the record. If the typed text was a correction, correct the number or date in the record once.</div></div>}
+        {f.preferred && <div className="src"><span>From {f.preferred}</span></div>}
+        {f.blanked && <div className="src"><span>A placeholder was typed here earlier; it is treated as no value.</span></div>}
+        {(src || f.snippet || isVal || (f.edited && canEdit)) && !f.record && (
           <div className="src">
             {src && <span>{src}</span>}
             {f.snippet && <button className="linkbtn" onClick={() => setShowSrc((x) => !x)}>{showSrc ? 'Hide source' : 'Show source'}</button>}
+            {f.partId && !f.edited && <OpenDoc assignmentId={caseId} partId={f.partId} page={f.page} label={f.page ? `Open document at p. ${f.page}` : 'Open document'} />}
             {f.edited && canEdit && <button className="linkbtn" disabled={busy} onClick={() => save(null, `${f.label} reset to the read value.`)}>Reset to read value</button>}
             {isVal && <button className="linkbtn" onClick={goVal}>Change on Valuation tab</button>}
           </div>

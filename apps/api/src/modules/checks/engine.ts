@@ -11,6 +11,7 @@ import { publish } from '../../platform/events.js';
 import { getSettings } from '../../platform/settings.js';
 import { caseData, EXPR_FNS, type CaseData } from '../casedata/resolver.js';
 import { versionFieldCodes } from '../templates/codes.js';
+import { pageLayout } from '../templates/layout.js';
 
 interface CheckDef {
   code: string;
@@ -27,6 +28,7 @@ interface CheckDef {
   fail?: string;
   params?: Record<string, unknown>;
   acceptable?: boolean;             // false: the item can only be resolved, never accepted with a reason
+  reasons?: string[];               // short accept reasons that fit this check (F3); the set's list is the fallback
 }
 
 interface CheckSetPayload { checks: CheckDef[]; banks: Record<string, Record<string, Partial<CheckDef>>>; accept?: { min_chars?: number; reasons?: string[] } }
@@ -78,9 +80,12 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
     case 'pending_fields': {
       const pend = ctx.templateFields.map((c) => data.get(c)).filter((r) => r.state === 'pending');
       if (!pend.length) return { ...base, severity: 'ok', title: 'All report fields filled', detail: null };
+      // F1: only a missing rate, area or FMV is a real valuation risk ("Resolve"); other pending fields are "Look"
+      const critical = new Set((def.params?.critical as string[] | undefined) ?? []);
+      const risk = pend.some((p) => critical.has(p.code));
       const byReason = new Map<string, string[]>();
       for (const p of pend) byReason.set(p.pendingLabel ?? 'Pending', [...(byReason.get(p.pendingLabel ?? 'Pending') ?? []), p.label]);
-      return { ...base, severity: sev, title: fill(def.title, { count: pend.length }), detail: [...byReason].map(([k, v]) => `${k}: ${v.slice(0, 6).join(', ')}${v.length > 6 ? ` and ${v.length - 6} more` : ''}`).join(' · '), actions: { fields: pend.map((p) => p.code) } };
+      return { ...base, severity: risk ? 'crit' : sev, title: fill(def.title, { count: pend.length }), detail: [...byReason].map(([k, v]) => `${k}: ${v.slice(0, 6).join(', ')}${v.length > 6 ? ` and ${v.length - 6} more` : ''}`).join(' · '), actions: { fields: pend.map((p) => p.code) } };
     }
     case 'site_received':
       return ctx.site ? { ...base, severity: 'ok', title: def.pass_title ?? 'Site visit received', detail: null } : { ...base, severity: sev, title: def.title, detail: 'Send the visit link to the field engineer, or upload the sheet and photos received another way.' };
@@ -90,7 +95,7 @@ async function builtin(def: CheckDef, data: CaseData, ctx: { site: boolean; valu
       if (!ctx.site) return null;
       const n = ctx.photos.filter((p) => p.selected).length;
       // the firm's minimum (Report layout) wins over the property profile's
-      const min = (await getSettings(ctx.firmId, tx)).min_photos ?? ctx.profile.min_photos ?? 9;
+      const min = (await pageLayout(ctx.firmId, data.case.template_version_id, tx)).min_photos ?? ctx.profile.min_photos ?? 9;
       const max = ctx.profile.max_photos ?? 18;
       return n >= min && n <= max ? { ...base, severity: 'ok', title: fill(def.pass_title ?? '{count} photos selected', { count: n }), detail: null } : { ...base, severity: sev, title: fill(def.title, { min, max }), detail: `${n} selected now.` };
     }
@@ -232,7 +237,7 @@ export async function summary(assignmentId: number, tx: Tx = db) {
     ok: rows.filter((r) => r.severity === 'ok').length,
     info: rows.filter((r) => r.severity === 'info').length,
     items: sorted.map((r) => ({ ...r, actions: json(r.actions_json, null), actions_json: undefined })),
-    accept: { minChars: acc.min_chars ?? 15, reasons: acc.reasons ?? [] },
+    accept: { minChars: acc.min_chars ?? 15, reasons: acc.reasons ?? [], byCheck: Object.fromEntries(((await checkSet(a?.check_version_id ?? null, tx)).checks ?? []).filter((c) => c.reasons?.length).map((c) => [c.code, c.reasons!])) },
   };
 }
 
@@ -248,7 +253,8 @@ export async function acceptCheck(actor: Actor, assignmentId: number, checkId: n
   if (json<{ acceptable?: boolean } | null>(c.actions_json, null)?.acceptable === false) throw badRequest('This item cannot be accepted. Confirm or correct each value instead.');
   const acc = (await checkSet(a.check_version_id)).accept ?? {};
   const min = acc.min_chars ?? 15;
-  if (!(acc.reasons ?? []).includes(reason) && reason.length < min) throw badRequest(`Pick a reason from the list, or write one of at least ${min} characters`);
+  const own = ((await checkSet(a.check_version_id)).checks ?? []).find((x) => x.code === c.check_code.split(':')[0])?.reasons ?? [];
+  if (![...(acc.reasons ?? []), ...own].includes(reason) && reason.length < min) throw badRequest(`Pick a reason from the list, or write one of at least ${min} characters`);
   await db.updateTable('check_results').set({ status: 'accepted', accepted_reason: reason.trim(), accepted_by: actor.id ?? null, accepted_at: new Date() }).where('id', '=', checkId).execute();
   await db.insertInto('feedback_events').values({ firm_id: actor.firmId!, assignment_id: assignmentId, kind: 'check.override', field_code: c.check_code, before_json: toJson({ severity: c.severity, title: c.title }), after_json: toJson({ accepted: true }), context_json: toJson({ reason }), user_id: actor.id ?? null }).execute();
   await audit(actor, { entityType: 'check', entityId: checkId, assignmentId, action: 'check.accept', summary: `Accepted: ${c.title}`, reason });

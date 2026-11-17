@@ -314,6 +314,7 @@ export async function evidence(firmId: number, assignmentId: number) {
     // rates are worked out per sq.ft. built-up; the valuer reads them on the area and unit the case quotes its rate on
     view: { ...view, proposal: p && view.factor ? { rate: Math.round((p.rate * view.factor) / step) * step, lo: Math.floor((p.lo * view.factor) / step) * step, hi: Math.ceil((p.hi * view.factor) / step) * step } : null },
     readyReckoner: rr.state === 'filled' ? { ratePerSqm: rr.value, ratePerSqft: data.value('VAL.RR_RATE_SQFT'), year: data.value('VAL.RR_YEAR'), source: rr.snippet } : null,
+    village: data.value('PROP.VILLAGE') ?? null,
     guideline: data.value('REG.GUIDELINE_VALUE'), consideration: data.value('REG.CONSIDERATION'), area: data.value('AREA.BUA'), registrationDate: data.value('DOC.INDEX2.DATE'),
     proposal: data.get('VAL.PROPOSED_RATE').state === 'filled' ? { rate: data.value('VAL.PROPOSED_RATE'), lo: data.value('VAL.RANGE_LO'), hi: data.value('VAL.RANGE_HI') } : null,
     comparables: rows.map((r) => ({ ...r, adjustments: json(r.adjustments, []) })),
@@ -325,12 +326,28 @@ export async function evidence(firmId: number, assignmentId: number) {
 const AREA_WORD: Record<string, string> = { bua: 'built-up', carpet: 'carpet', saleable: 'saleable' };
 
 /** Insurance rate for the case (A7): a per-case rate, else the band for the building's upper floors, else the building cost. */
+/** Every band of the firm's insurance table with its label (Up to G + 7 … Above G + 30), for the dropdown (E5). */
+export function bandList(bands: { max_floors?: number | null; rate: number; label?: string }[] | undefined) {
+  const sorted = [...(bands ?? [])].sort((a, b) => (a.max_floors ?? Infinity) - (b.max_floors ?? Infinity));
+  return sorted.map((b, i) => ({ rate: b.rate, label: insuranceBand(sorted, i === 0 ? 1 : (b.max_floors ?? (sorted[i - 1].max_floors ?? 0) + 1))!.label }));
+}
+
 export function insuranceFor(data: CaseData) {
   const floors = Number(data.value('PHYS.UPPER_FLOORS')) || null;
-  if (data.ruleOrigin('insurance_rate') === 'case' && Number(data.rules.insurance_rate) > 0) return { rate: Number(data.rules.insurance_rate), label: 'rate set for this case', floors, band: null as string | null };
+  if (data.ruleOrigin('insurance_rate') === 'case' && Number(data.rules.insurance_rate) > 0) {
+    // a band chosen for this case (E5) reads as that band
+    const chosen = bandList(data.rules.insurance_bands).find((b) => b.rate === Number(data.rules.insurance_rate));
+    return { rate: Number(data.rules.insurance_rate), label: chosen ? `${chosen.label}, chosen for this case` : 'rate set for this case', floors, band: chosen?.label ?? null };
+  }
   const b = insuranceBand(data.rules.insurance_bands, floors);
   if (b) return { rate: b.rate, label: `${b.label}, ${floors} upper floors`, floors, band: b.label };
   return { rate: data.rules.building_cost_per_sqft, label: floors ? 'building cost' : 'building cost (floors of the building not known)', floors, band: null as string | null };
+}
+
+/** The insurance rate without this case's own choice: the band for the building's floors, else building cost. */
+function baseInsurance(data: CaseData) {
+  const b = insuranceBand(data.rules.insurance_bands, Number(data.value('PHYS.UPPER_FLOORS')) || null);
+  return b ? b.rate : data.rules.building_cost_per_sqft;
 }
 
 const CASE_RULE_KEYS = ['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'insurance_rate'] as const;
@@ -490,7 +507,10 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
     const ul = UNIT_LABEL[unit];
     const bua = Number(data.value('AREA.BUA')) || null;
     const ins = insuranceFor(data);
-    const v = computeValues({ method, basisArea, rate: input.rate, unitLabel: ul, extras: input.extras ?? [], bua, plotArea: Number(data.value('AREA.PLOT')) || null, landRate: input.landRate ?? null, buildingAge: (data.value('PHYS.AGE') as number) ?? null, insuranceRate: ins.rate }, data.rules);
+    // E1: no parking space stated (or 0): parking is Nil and no amount is taken for it
+    const spaces = Number(data.value('PHYS.PARKING_COUNT')) || 0;
+    const extras = (input.extras ?? []).filter((e) => e.code !== 'parking' || spaces > 0);
+    const v = computeValues({ method, basisArea, rate: input.rate, unitLabel: ul, extras, bua, plotArea: Number(data.value('AREA.PLOT')) || null, landRate: input.landRate ?? null, buildingAge: (data.value('PHYS.AGE') as number) ?? null, insuranceRate: ins.rate }, data.rules);
     const rateBua = bua && method === 'market_comparison' ? Math.round((basisArea * input.rate) / bua) : null;
     const from = opt.how === 'rule' ? workedOutFrom(data) : null;
     const r0 = data.get(BASES[basis].field);
@@ -504,7 +524,7 @@ export async function applyValuation(actor: Actor, assignmentId: number, input: 
     await tx.insertInto('valuations').values({
       assignment_id: assignmentId, method, basis, rate_unit: unit, basis_area: basisArea, proposed_rate: proposed,
       proposed_lo: Number(data.value('VAL.RANGE_LO')) || null, proposed_hi: Number(data.value('VAL.RANGE_HI')) || null,
-      adopted_rate: input.rate, reason: input.reason ?? null, extras_json: toJson(input.extras ?? []), values_json: toJson(v),
+      adopted_rate: input.rate, reason: input.reason ?? null, extras_json: toJson(extras), values_json: toJson(v),
       rule_version_id: data.case.rule_version_id!, draft_version: draft, created_by: actor.id!,
     }).execute();
     await tx.updateTable('assignments').set({ draft_version: draft }).where('id', '=', assignmentId).execute();
@@ -610,12 +630,21 @@ export async function valuationView(firmId: number, assignmentId: number) {
     rules: { realizable_pct: data.rules.realizable_pct, distress_pct: data.rules.distress_pct, gv_variation_pct: data.rules.gv_variation_pct, rate_deviation_pct: data.rules.rate_deviation_pct, building_cost_per_sqft: data.rules.building_cost_per_sqft, rental_yield_pct: data.rules.rental_yield_pct, value_rounding_step: data.rules.value_rounding_step, rent_rounding_step: data.rules.rent_rounding_step, loading_pct: data.rules.loading_pct, saleable_factor: data.rules.saleable_factor },
     bua: data.value('AREA.BUA'),
     // defaults for this case: value, where it comes from (firm rule for the bank, report format, this case)
-    defaults: Object.fromEntries(['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'insurance_rate'].map((k) => [k, { value: k === 'insurance_rate' ? insuranceFor(data).rate : (data.rules as any)[k] ?? null, origin: data.ruleOrigin(k) }])),
+    // and the default it replaces when changed for this case (E4: "changed from 1.2")
+    defaults: Object.fromEntries(['realizable_pct', 'distress_pct', 'loading_pct', 'saleable_factor', 'insurance_rate'].map((k) => [k, {
+      value: k === 'insurance_rate' ? insuranceFor(data).rate : (data.rules as any)[k] ?? null, origin: data.ruleOrigin(k),
+      base: k === 'insurance_rate' ? baseInsurance(data) : data.ruleBase(k),
+    }])),
+    // E2: the RERA rule and what triggered it; E5: the firm's insurance table for the dropdown
+    reraRule: data.rera(),
+    insuranceBands: bandList(data.rules.insurance_bands),
+    // D4: how the comparables chart prints
+    compPrint: { value: data.get('VAL.COMP_PRINT').display, options: data.get('VAL.COMP_PRINT').options ?? [] },
     insurance: insuranceFor(data),
     upperFloors: { value: data.value('PHYS.UPPER_FLOORS'), from: data.value('PHYS.TOTAL_FLOORS') },
     guidelineSource: data.value('VAL.GUIDELINE_SOURCE'),
     readyReckoner: (() => { const r = data.get('VAL.RR_RATE_SQM'); return r.state === 'filled' ? { rate: r.value, year: data.value('VAL.RR_YEAR'), zone: data.value('VAL.RR_ZONE'), property: data.value('VAL.RR_PROPERTY'), snippet: r.snippet, fromGuideline: !data.value('REG.GUIDELINE_VALUE') } : null; })(),
-    rera: { number: data.value('DOC.RERA.NUMBER'), date: data.value('DOC.RERA.DATE'), project: data.value('DOC.RERA.PROJECT'), carpet: data.value('AREA.RERA_CARPET') },
+    rera: { number: data.value('DOC.RERA.NUMBER'), date: data.get('DOC.RERA.DATE').display, project: data.value('DOC.RERA.PROJECT'), carpet: data.value('AREA.RERA_CARPET') },
     current: current ? { ...current, values: json(current.values_json, {}), extras: json(current.extras_json, []) } : null,
     justification: data.get('VAL.JUSTIFICATION'),
     // the sentence printed after the justification (distance from the station, amenities): editable here and in the report

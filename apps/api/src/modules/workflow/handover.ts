@@ -16,7 +16,9 @@ const ORDER: Holder[] = ['coordinator', 'maker', 'checker', 'valuer'];
 /** Check targets each hand-over waits on (B5): intake before the maker, drafting before the checker,
  *  everything but sign-off before the valuer; signing itself needs all. */
 const GATE: Record<Exclude<Holder, 'coordinator'>, string[] | 'all_but_rep'> = {
-  maker: ['docs'],
+  // 13 Nov re-test (A1): the coordinator only creates and assigns; documents and the site visit can come later,
+  // from anyone on the case, so nothing holds up the hand-over to the report maker
+  maker: [],
   checker: ['docs', 'ext', 'site', 'mkt', 'val'],
   valuer: 'all_but_rep',
 };
@@ -30,7 +32,7 @@ const userName = async (id: number | null, tx: Tx) => (id ? (await tx.selectFrom
 
 /** The coordinator (or valuer) picks the Report Maker and Report Checker. A Report Checker may also make
  *  a case; nobody checks a case they made. */
-export async function assignPeople(actor: Who, id: number, input: { makerId?: number | null; checkerId?: number | null }, tx: Tx = db) {
+export async function assignPeople(actor: Actor, id: number, input: { makerId?: number | null; checkerId?: number | null }, tx: Tx = db) {
   const a = await load(actor.firmId!, id, tx);
   if (a.signed_at) throw badRequest('The report is signed and locked. Reopen it to make changes.');
   const set: Record<string, number | null> = {};
@@ -89,16 +91,6 @@ export async function handOver(actor: Who, id: number, to: Exclude<Holder, 'coor
   const gate = GATE[to];
   const open = s.items.filter((i: any) => i.severity === 'crit' && i.status === 'open' && (gate === 'all_but_rep' ? i.target_tab !== 'rep' : gate.includes(i.target_tab)));
   const why: string[] = open.map((i: any) => i.title);
-  if (to === 'maker') {
-    const [docs, reading, site] = await Promise.all([
-      db.selectFrom('documents').select('id').where('assignment_id', '=', id).where('role', '=', 'bank_docs').where('status', '=', 'read').limit(1).executeTakeFirst(),
-      db.selectFrom('documents').select('id').where('assignment_id', '=', id).where('status', 'in', ['uploaded', 'reading']).limit(1).executeTakeFirst(),
-      db.selectFrom('site_visits').select('id').where('assignment_id', '=', id).where('status', '=', 'submitted').limit(1).executeTakeFirst(),
-    ]);
-    if (!docs) why.push('No bank documents read yet');
-    if (reading) why.push('Documents are still being read');
-    if (!site) why.push('Site visit not received yet');
-  }
   if (to === 'checker' || to === 'valuer') {
     const v = await db.selectFrom('valuations').select('id').where('assignment_id', '=', id).where('is_current', '=', 1).executeTakeFirst();
     if (!v && !why.some((w) => /valuation/i.test(w))) why.push('Valuation not applied yet');
@@ -108,10 +100,19 @@ export async function handOver(actor: Who, id: number, to: Exclude<Holder, 'coor
     const now = new Date();
     await tx.updateTable('assignments').set({ holder: to, handed_at: now, ...(to === 'valuer' ? { sent_for_review_at: now } : {}) }).where('id', '=', id).execute();
     const who = to === 'maker' ? await userName(res.maker_id, tx) : to === 'checker' ? await userName(res.checker_id, tx) : 'the valuer';
-    await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'workflow.handover', summary: `Handed over to ${who}${to === 'maker' ? ' (report maker)' : to === 'checker' ? ' (report checker)' : ''}.${note ? ` Note: ${note}` : ''}`, reason: note, before: { holder: res.holder }, after: { holder: to } }, tx);
+    await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'workflow.handover', summary: `Handed over to ${who}${to === 'maker' ? ' (report maker)' : to === 'checker' ? ' (report checker)' : ''}.`, reason: note, before: { holder: res.holder }, after: { holder: to } }, tx);
     await publish({ type: 'assignment.handover', firmId: actor.firmId, entityType: 'assignment', entityId: id, payload: { from: res.holder, to } }, tx);
     await recomputeStage(id, actor.id ?? null, tx);
   });
+}
+
+/** Created and sent to the report maker in one step (A1): no documents or site visit needed. */
+export async function handOverOnCreate(actor: Actor, id: number, note: string | null, tx: Tx) {
+  const a = await load(actor.firmId!, id, tx);
+  if (!a.maker_id) return;
+  await tx.updateTable('assignments').set({ holder: 'maker', handed_at: new Date() }).where('id', '=', id).execute();
+  await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'workflow.handover', summary: `Handed over to ${await userName(a.maker_id, tx)} (report maker).`, reason: note, before: { holder: a.holder }, after: { holder: 'maker' } }, tx);
+  await publish({ type: 'assignment.handover', firmId: actor.firmId, entityType: 'assignment', entityId: id, payload: { from: a.holder, to: 'maker' } }, tx);
 }
 
 /** Back to an earlier step, always with a reason. */
@@ -125,7 +126,7 @@ export async function sendBack(actor: Who, id: number, to: Holder, reason: strin
     if (to === 'maker' && !a.maker_id) throw badRequest('No report maker on this case');
     if (to === 'checker' && !a.checker_id) throw badRequest('No report checker on this case');
     await tx.updateTable('assignments').set({ holder: to, handed_at: new Date(), ...(a.holder === 'valuer' ? { sent_for_review_at: null } : {}) }).where('id', '=', id).execute();
-    await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'workflow.send_back', summary: `Sent back to the ${to === 'maker' ? 'report maker' : to === 'checker' ? 'report checker' : to}: ${reason.trim()}`, reason: reason.trim(), before: { holder: a.holder }, after: { holder: to } }, tx);
+    await audit(actor, { entityType: 'assignment', entityId: id, assignmentId: id, action: 'workflow.send_back', summary: `Sent back to the ${to === 'maker' ? 'report maker' : to === 'checker' ? 'report checker' : to}.`, reason: reason.trim(), before: { holder: a.holder }, after: { holder: to } }, tx);
     await publish({ type: 'assignment.send_back', firmId: actor.firmId, entityType: 'assignment', entityId: id, payload: { from: a.holder, to } }, tx);
   });
 }

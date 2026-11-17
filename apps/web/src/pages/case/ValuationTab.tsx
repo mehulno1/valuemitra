@@ -25,7 +25,10 @@ interface ValView {
   parking: { count: number; text: string | null; source: string | null } | null;
   justification: { display: string | null; state: string; pendingLabel: string | null; edited: boolean };
   printedRange?: { lo: unknown; hi: unknown; edited: boolean };
-  defaults?: Record<string, { value: number | null; origin: 'firm' | 'format' | 'case' }>;
+  defaults?: Record<string, { value: number | null; origin: 'firm' | 'format' | 'case' | 'rera'; base?: number | null }>;
+  reraRule?: { applied: boolean; trigger: string | null };
+  insuranceBands?: { label: string; rate: number }[];
+  compPrint?: { value: string | null; options: string[] };
   insurance?: { rate: number; label: string; floors: number | null; band: string | null };
   upperFloors?: { value: unknown; from: unknown };
   guidelineSource?: string | null;
@@ -308,8 +311,11 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
               <div className="grid gap-3">
                 <div className="grid grid-cols-[1fr_1fr] gap-3 sm:grid-cols-[1.4fr_1fr_1fr]">
                   <div className="col-span-2 self-end text-[13px] font-semibold sm:col-span-1">Car parking{d.parking && <div className="sub font-normal">{d.parking.count} as per {(d.parking.source ?? 'documents').replace(/_/g, ' ')}{d.parking.text ? `: ${d.parking.text}` : ''}</div>}</div>
+                  {/* E1: no parking space in the documents (or 0): Nil, and no rate is asked */}
+                  {!(d.parking && d.parking.count > 0) ? <div className="col-span-2 self-end text-[13px]">Nil: {d.parking ? 'the documents state no parking space' : 'no parking space stated in the documents'}. Prints “Nil”; no rate needed. Correct “Car parking spaces” on Extracted details if there is one.</div> : <>
                   <div className="field"><label>Number</label><input className="mono" inputMode="numeric" value={pkQty} disabled={!canApply} onChange={(e) => setPkQty(e.target.value)} placeholder="0" /></div>
                   <div className="field"><label>Rs. each</label><input className="mono" inputMode="numeric" value={pkRate} disabled={!canApply} onChange={(e) => setPkRate(e.target.value)} placeholder="0" /></div>
+                  </>}
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.4fr_2fr]">
                   <div className="self-end text-[13px] font-semibold">Interior decoration / furniture</div>
@@ -392,6 +398,7 @@ export default function ValuationTab({ c, go, refresh, locked }: TabProps) {
           {d.work?.applies && <WorkDone c={c} w={d.work} refresh={refresh} locked={locked} />}
 
           <CaseDefaults c={c} d={d} refresh={refresh} locked={locked} />
+          <CompPrint c={c} d={d} refresh={refresh} locked={locked} />
 
           <PrintedRange c={c} d={d} rate={n(cur?.adopted_rate)} refresh={refresh} locked={locked} />
 
@@ -458,47 +465,105 @@ const DEFAULT_ROWS: [string, string, string][] = [
   ['realizable_pct', 'Realizable value', '% of FMV'], ['distress_pct', 'Distress value', '% of FMV'],
   ['loading_pct', 'Built-up / plinth', '% over carpet'], ['saleable_factor', 'Saleable', '× carpet'], ['insurance_rate', 'Insurance rate', 'Rs. per sq.ft. built-up'],
 ];
-const ORIGIN: Record<string, string> = { firm: 'firm rule for the bank', format: "report format's default", case: 'changed for this case' };
+const ORIGIN: Record<string, string> = { firm: 'firm rule for the bank', format: "report format's default", case: 'changed for this case', rera: 'RERA rule' };
+const same = (a: unknown, b: unknown) => a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(Number(a) - Number(b)) < 1e-9;
 
-/** The bank's defaults as they apply to this case, changeable here with a reason (A6, A7, A8). */
+/** The bank's defaults as they apply to this case, changeable here with a reason (A6, A7, A8). 13 Nov re-test: the
+ *  boxes open with the values in use (E4); a changed value shows "changed from …" and only then is a reason asked;
+ *  the insurance rate is chosen as a band of the firm's table (E5); the RERA rule says what triggered it (E2). */
 function CaseDefaults({ c, d, refresh, locked }: { c: TabProps['c']; d: ValView; refresh: () => void; locked: boolean }) {
   const { can } = useAuth();
   const toast = useToast();
   const onErr = useErrorToast();
   const [edit, setEdit] = useState<Record<string, string> | null>(null);
   const [reason, setReason] = useState('');
+  const defs = d.defaults;
+  const baseOf = (k: string) => defs?.[k]?.base ?? defs?.[k]?.value ?? null;
+  // what to send: a value that differs from the default is set for this case; back to the default clears it
+  const patch = (): Record<string, number | null> => Object.fromEntries(Object.entries(edit ?? {}).flatMap(([k, v]): [string, number | null][] => {
+    const n = v.trim() === '' ? null : Number(v);
+    const wasCase = defs?.[k]?.origin === 'case';
+    if (n === null || same(n, baseOf(k))) return wasCase ? [[k, null]] : [];
+    return same(n, defs?.[k]?.value) && wasCase ? [] : [[k, n]];
+  }));
+  const changes = Object.keys(patch());
   const save = useMutation({
-    mutationFn: () => api.patch(`/api/assignments/${c.id}/case-rules`, { rules: Object.fromEntries(Object.entries(edit!).map(([k, v]) => [k, v.trim() === '' ? null : Number(v)])), reason }),
-    onSuccess: () => { toast('Defaults changed for this case; values worked out again'); setEdit(null); setReason(''); refresh(); },
+    mutationFn: () => api.patch(`/api/assignments/${c.id}/case-rules`, { rules: patch(), reason: reason.trim() || 'Back to the bank defaults' }),
+    onSuccess: () => { toast('Defaults saved for this case; values worked out again'); setEdit(null); setReason(''); refresh(); },
     onError: onErr,
   });
-  if (!d.defaults) return null;
-  const may = can('case_rules') && !locked;
+  if (!defs) return null;
+  const may = (can('case_rules') || can('val')) && !locked;
   const rr = d.readyReckoner;
+  const needsReason = Object.entries(patch()).some(([, v]) => v !== null);
+  const bands = d.insuranceBands ?? [];
+  const bua = Number(d.bua) || 0;
+  const open = () => setEdit(Object.fromEntries(DEFAULT_ROWS.map(([k]) => [k, defs[k]?.value === null || defs[k]?.value === undefined ? '' : String(defs[k]!.value)])));
   return (
-    <Panel title="Bank defaults for this case" right={may && !edit && <button className="btn sm ghost" onClick={() => setEdit(Object.fromEntries(DEFAULT_ROWS.map(([k]) => [k, d.defaults![k]?.origin === 'case' ? String(d.defaults![k].value ?? '') : ''])))}>Change for this case</button>}>
+    <Panel title="Bank defaults for this case" right={may && !edit && <button className="btn sm ghost" onClick={open}>Change for this case</button>}>
+      {d.reraRule?.applied && <div className="mb-2 rounded-md bg-sunk px-3 py-2 text-[13px]"><b>RERA rule ({(1 + Number(defs.loading_pct?.origin === 'case' ? defs.loading_pct.base : defs.loading_pct?.value ?? 0) / 100).toFixed(2).replace(/0$/, '')} / {String(defs.saleable_factor?.origin === 'case' ? defs.saleable_factor.base : defs.saleable_factor?.value)})</b>: {d.reraRule.trigger}. Applied automatically.</div>}
       <table className="list"><tbody>
         {DEFAULT_ROWS.map(([k, label, unit]) => {
-          const x = d.defaults![k];
+          const x = defs[k];
+          const v = edit?.[k] ?? '';
+          const changed = edit && v.trim() !== '' && !same(v, baseOf(k));
           return (
             <tr key={k}>
               <td>{label}</td>
-              <td className="text-right mono">{edit ? <input className="inp text-right" style={{ maxWidth: 110 }} inputMode="decimal" placeholder={x?.origin === 'case' ? '' : String(x?.value ?? '')} value={edit[k] ?? ''} onChange={(e) => setEdit({ ...edit, [k]: e.target.value })} /> : (x?.value ?? '—')}</td>
-              <td className="sub">{unit}{x ? ` · ${k === 'insurance_rate' && x.origin !== 'case' ? d.insurance?.label ?? '' : ORIGIN[x.origin]}` : ''}</td>
+              <td className="text-right mono">
+                {edit ? (k === 'insurance_rate' && bands.length ? (
+                  <select className="inp" style={{ minWidth: 220, maxWidth: 280 }} value={v} onChange={(e) => setEdit({ ...edit, [k]: e.target.value })}>
+                    {!bands.some((b) => same(b.rate, v)) && v && <option value={v}>Rs. {inr(Number(v))} (set for this case)</option>}
+                    {bands.map((b) => <option key={b.label} value={String(b.rate)}>{b.label} · Rs. {inr(b.rate)}</option>)}
+                  </select>
+                ) : <input className="inp text-right" style={{ maxWidth: 110 }} inputMode="decimal" value={v} onChange={(e) => setEdit({ ...edit, [k]: e.target.value })} />) : (x?.value ?? '—')}
+              </td>
+              <td className="sub">
+                {unit}
+                {edit ? (changed ? <span className="sev warn ml-1">changed from {String(baseOf(k) ?? '—')}</span> : <span className="ml-1">· bank default</span>)
+                  : x ? ` · ${k === 'insurance_rate' && x.origin !== 'case' ? d.insurance?.label ?? '' : x.origin === 'rera' ? `RERA rule (${d.reraRule?.trigger ?? ''})` : ORIGIN[x.origin]}` : ''}
+              </td>
             </tr>
           );
         })}
       </tbody></table>
+      {edit && !!bands.length && (
+        <p className="sub mb-0 mt-2">Firm table: {bands.map((b) => `${b.label} Rs. ${inr(b.rate)}`).join(' · ')} per sq.ft. built-up. Podiums and stilts are not counted.{bua && edit.insurance_rate ? ` Insurable: ${inr(bua)} sq.ft. × Rs. ${inr(Number(edit.insurance_rate))} = Rs. ${inr(bua * Number(edit.insurance_rate))}/-` : ''}</p>
+      )}
       {d.upperFloors?.from != null && <p className="sub mb-0 mt-2">Building: {String(d.upperFloors.from)} → {d.upperFloors.value != null ? `${d.upperFloors.value} upper floors` : 'upper floors not known'} (podiums and stilts do not count). Correct "Upper floors of the building" on Extracted details if needed.</p>}
       {rr && <p className="sub mb-0 mt-2">Ready reckoner: Rs. {inr(Number(rr.rate))}/sq.m.{rr.year ? ` · ${String(rr.year)}` : ''}{rr.zone ? ` · zone ${String(rr.zone)}` : ''}{rr.property ? ` · ${String(rr.property)}` : ''}{rr.fromGuideline ? ' · used for the guideline value (no value in Index II): rate × carpet (sq.m.) × 1.1' : ''}</p>}
       {d.rera && <p className="sub mb-0 mt-2">RERA: {d.rera.number ? `${String(d.rera.number)}${d.rera.date ? ` dated ${String(d.rera.date)}` : ''}${d.rera.project ? ` · ${String(d.rera.project)}` : ''}${d.rera.carpet ? ` · RERA carpet ${String(d.rera.carpet)} sq.ft.` : ''}` : 'Not applicable (no registration found)'}</p>}
       {edit && (
         <div className="mt-3 grid gap-2">
-          <p className="sub m-0">Leave a box empty to use the default. The change is logged and an applied valuation is worked out again with the same rate.</p>
-          <Field label="Reason (required)"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Branch asked for 95% realizable on this case" /></Field>
-          <div className="btns"><button className="btn pri sm" disabled={reason.trim().length < 5 || save.isPending} onClick={() => save.mutate()}>Save for this case</button><button className="btn ghost sm" onClick={() => setEdit(null)}>Cancel</button></div>
+          {needsReason && <Field label="Reason for the change (required)"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Branch asked for 95% realizable on this case" /></Field>}
+          <div className="btns">
+            <button className="btn pri sm" disabled={!changes.length || (needsReason && reason.trim().length < 5) || save.isPending} onClick={() => save.mutate()}>Save for this case</button>
+            <button className="btn ghost sm" onClick={() => { setEdit(null); setReason(''); }}>Cancel</button>
+            <span className="sub">{changes.length ? `${changes.length} change${changes.length === 1 ? '' : 's'}; the change is logged and an applied valuation is worked out again with the same rate.` : 'Change a value to save it for this case.'}</span>
+          </div>
         </div>
       )}
+    </Panel>
+  );
+}
+
+/** How the comparables chart prints when the case has fewer comparables than the table has rows (D4). */
+function CompPrint({ c, d, refresh, locked }: { c: TabProps['c']; d: ValView; refresh: () => void; locked: boolean }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const onErr = useErrorToast();
+  const set = useMutation({ mutationFn: (v: string) => api.put(`/api/assignments/${c.id}/fields/VAL.COMP_PRINT`, { value: v }), onSuccess: () => { toast('Saved; the draft follows'); refresh(); }, onError: onErr });
+  if (!d.compPrint?.options.length) return null;
+  return (
+    <Panel title="Comparables chart in the report">
+      <div className="grid gap-1.5">
+        {d.compPrint.options.map((o) => (
+          <label key={o} className="flex items-center gap-2 text-[13px]">
+            <input type="radio" name={`comp-print-${c.id}`} checked={(d.compPrint!.value ?? d.compPrint!.options[0]) === o} disabled={!can('edit') || locked || set.isPending} onChange={() => set.mutate(o)} /> {o}
+          </label>
+        ))}
+      </div>
+      <p className="sub mb-0 mt-2">No minimum number of comparables: a case with none, one or three goes ahead. Rows fill from Market evidence, best first; edit them on Extracted details.</p>
     </Panel>
   );
 }

@@ -43,6 +43,11 @@ export interface CaseHeader {
   checker_name?: string | null;
   handed_at?: string | null;
   checker_may_sign?: boolean;
+  bank_id?: number;
+  branch_id?: number;
+  template_id?: number | null;
+  sourced_by_id?: number | null;
+  sourced_by_name?: string | null;
 }
 
 export interface TabProps {

@@ -12,7 +12,7 @@ interface Item {
   id: number; check_code: string; severity: Severity; title: string; detail: string | null; target_tab: string | null;
   status: 'open' | 'accepted' | 'passed' | 'info'; accepted_reason: string | null; accepted_at?: string | null; actions: any;
 }
-interface Summary { blocked: boolean; crit: number; warn: number; accepted: number; ok: number; info: number; items: Item[]; accept?: { minChars: number; reasons: string[] } }
+interface Summary { blocked: boolean; crit: number; warn: number; accepted: number; ok: number; info: number; items: Item[]; accept?: { minChars: number; reasons: string[]; byCheck?: Record<string, string[]> } }
 interface ShakyValue { code: string; label: string; display: string | null; confidence: number; page: number | null; docType: string | null }
 
 const TAB_KEYS = new Set(TABS.map((t) => t.key));
@@ -53,7 +53,9 @@ export default function ChecksTab({ c, go, refresh, locked }: TabProps) {
   const s = q.data;
   const warnTotal = s.warn + s.accepted;
   const minChars = s.accept?.minChars ?? 15;
-  const reasons = s.accept?.reasons ?? [];
+  // the check's own short reasons first (F3), then the firm's general ones
+  const own = accepting ? s.accept?.byCheck?.[String((accepting as any).check_code ?? '').split(':')[0]] ?? [] : [];
+  const reasons = [...new Set([...own, ...(own.length ? [] : s.accept?.reasons ?? [])])];
   const reasonOk = reasons.includes(reason) || reason.trim().length >= minChars;
   const openAccept = (it: Item) => { setAccepting(it); setReason(''); setOther(!reasons.length); };
 
