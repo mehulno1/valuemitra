@@ -198,7 +198,7 @@ export const FIELDS: FieldDef[] = [
 
   // ---- Registration values ----
   { code: 'REG.CONSIDERATION', label: 'Agreement value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'agreement', 'manual'], hint: 'मोबदला / consideration amount in rupees', aliases: ['Agreement value', 'Purchase price', 'Consideration'] },
-  { code: 'REG.GUIDELINE_VALUE', label: 'Government guideline value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'stamp_valuation', 'manual'], hint: 'बाजारभाव / market value per ready reckoner as stated in Index II', aliases: ['Value as per Government Approved Rates', 'Guideline value', 'Govt. value'] },
+  { code: 'REG.GUIDELINE_VALUE', label: 'Government guideline value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'stamp_valuation', 'manual'], hint: 'बाजारभाव / market value per ready reckoner as stated in Index II or worked out for THIS property on a stamp duty valuation: a total in rupees, never a rate per sq.m. or sq.ft. A page that only lists rates (an e-ASR rate table) gives no value here', aliases: ['Value as per Government Approved Rates', 'Guideline value', 'Govt. value'] },
 
   // ---- Valuation (from the valuation engine) ----
   { code: 'VAL.RR_RATE_SQM', label: 'Ready reckoner rate (per sq.m.)', group: 'VAL', type: 'money', unit: 'INR/sqm', sources: ['evidence', 'stamp_valuation', 'manual'], pending: 'Awaiting market evidence', hint: 'e-ASR / ready reckoner rate in rupees per sq.m. for a residential flat (सदनिका) in the zone of this property, as plain digits' },
