@@ -150,8 +150,9 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, ext
   const cancelled = useRef(false);
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const isVal = f.code.startsWith('VAL.');
-  // a line built from a record (O.C. / C.C., C1) is corrected through the record, not on its own
-  const canEdit = editable && !isVal && !f.record;
+  // a line built from the bank rules changes on the Valuation tab; an O.C. / C.C. / approved plan line can be typed over
+  const ocRecord = !!f.record && /O\.C\./.test(f.record);
+  const canEdit = editable && !isVal && (!f.record || ocRecord);
   const current = f.state === 'filled' ? (f.display ?? (f.value === null || f.value === undefined ? '' : String(f.value))) : '';
   const long = f.type === 'longtext' || current.length > 70;
 
@@ -226,11 +227,11 @@ function FieldRow({ f, caseId, editable, canRules, docLabel, refresh, goVal, ext
             title={canEdit ? 'Click to edit' : undefined}
           >{current || <span className="muted">{f.notProvided ? 'Not provided' : '—'}</span>}</div>
         )}
-        {f.record && <div className="src"><span>Built from {f.record}{/O\.C\./.test(f.record) ? ': correct the record in “O.C., C.C. and approved plan” and every line follows' : ''}</span>{isVal || /Valuation/.test(f.record) ? <button className="linkbtn" onClick={goVal}>Change on Valuation tab</button> : null}</div>}
+        {f.record && !ocRecord && <div className="src"><span>Built from {f.record}</span>{isVal || /Valuation/.test(f.record) ? <button className="linkbtn" onClick={goVal}>Change on Valuation tab</button> : null}</div>}
         {f.earlierEdit && f.earlierEdit.trim() !== current.trim() && <div className="flag"><div><b>Typed here earlier:</b> {f.earlierEdit}</div><div className="sub">This line now follows the record. If the typed text was a correction, correct the number or date in the record once.</div></div>}
         {f.preferred && <div className="src"><span>From {f.preferred}</span></div>}
         {f.blanked && <div className="src"><span>A placeholder was typed here earlier; it is treated as no value.</span></div>}
-        {(src || f.snippet || isVal || (f.edited && canEdit)) && !f.record && (
+        {(src || f.snippet || isVal || (f.edited && canEdit)) && (!f.record || ocRecord) && (
           <div className="src">
             {src && <span>{src}</span>}
             {f.snippet && <button className="linkbtn" onClick={() => setShowSrc((x) => !x)}>{showSrc ? 'Hide source' : 'Show source'}</button>}

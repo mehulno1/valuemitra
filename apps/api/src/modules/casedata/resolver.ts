@@ -661,12 +661,14 @@ export async function caseData(assignmentId: number, firmId: number, tx: Tx = db
   function compute(f: Field | undefined, r: Resolved): Resolved {
     // an earlier agreement of a resale chain gives no values (B4, C7)
     const cands = r.candidates.filter((x) => x.status !== 'rejected' && x.status !== 'superseded' && !(x.partId && chainParts.has(x.partId)) && x.docType !== 'index2_comp');
-    // 1. a person's edit wins (most recent). A line built from a record (O.C. / C.C., C1) is not edited on its own:
-    //    the record is corrected and every line follows. A placeholder ("NA", "0", "Ok") is no value (13 Nov re-test).
+    // 1. a person's edit wins (most recent). A line built from the bank rules is changed on the Valuation tab, not
+    //    here; a line built from the O.C. / C.C. / approved plan record can be typed over (21 Nov: the valuer could
+    //    not sign while the record had no C.C.). A placeholder ("NA", "0", "Ok") is no value (13 Nov re-test).
     const fr = (f?.rules ?? {}) as { record?: string; blank_words?: boolean | string };
+    const locked = !!fr.record && !/O\.C\./.test(fr.record);
     const typed = [...cands].reverse().find((x) => x.sourceType === 'manual' || x.sourceType === 'report_edit');
-    if (fr.record && typed?.value) r.earlierEdit = typed.value;
-    const manual = fr.record ? undefined : typed;
+    if (locked && typed?.value) r.earlierEdit = typed.value;
+    const manual = locked ? undefined : typed;
     if (manual && fr.blank_words && isPlaceholder(manual.value, fr.blank_words)) r.blanked = true;
     else if (manual) { setFrom(r, f, manual, true); return r; }
     // another field that, when filled, gives this one (E3: the carpet is the RERA carpet when the project has one)

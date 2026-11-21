@@ -201,11 +201,11 @@ export const FIELDS: FieldDef[] = [
   { code: 'REG.GUIDELINE_VALUE', label: 'Government guideline value', group: 'REG', type: 'money', unit: 'INR', sources: ['index2', 'stamp_valuation', 'manual'], hint: 'बाजारभाव / market value per ready reckoner as stated in Index II', aliases: ['Value as per Government Approved Rates', 'Guideline value', 'Govt. value'] },
 
   // ---- Valuation (from the valuation engine) ----
-  { code: 'VAL.RR_RATE_SQM', label: 'Ready reckoner rate (per sq.m.)', group: 'VAL', type: 'money', unit: 'INR/sqm', sources: ['evidence', 'manual'], pending: 'Awaiting market evidence' },
+  { code: 'VAL.RR_RATE_SQM', label: 'Ready reckoner rate (per sq.m.)', group: 'VAL', type: 'money', unit: 'INR/sqm', sources: ['evidence', 'stamp_valuation', 'manual'], pending: 'Awaiting market evidence', hint: 'e-ASR / ready reckoner rate in rupees per sq.m. for a residential flat (सदनिका) in the zone of this property, as plain digits' },
   { code: 'VAL.RR_RATE_SQFT', label: 'Ready reckoner rate (per sq.ft.)', group: 'VAL', type: 'money', unit: 'INR/sqft', sources: ['derived'], derivation: 'round(VAL.RR_RATE_SQM / 10.7639104)' },
-  { code: 'VAL.RR_YEAR', label: 'Ready reckoner year', group: 'VAL', type: 'text', sources: ['evidence', 'manual'] },
-  { code: 'VAL.RR_ZONE', label: 'Ready reckoner zone', group: 'VAL', type: 'text', sources: ['evidence', 'manual'] },
-  { code: 'VAL.RR_PROPERTY', label: 'Ready reckoner property type', group: 'VAL', type: 'text', sources: ['evidence', 'manual'] },
+  { code: 'VAL.RR_YEAR', label: 'Ready reckoner year', group: 'VAL', type: 'text', sources: ['evidence', 'stamp_valuation', 'manual'], hint: 'Financial year of the rates as YYYY-YY, e.g. 2026-27' },
+  { code: 'VAL.RR_ZONE', label: 'Ready reckoner zone', group: 'VAL', type: 'text', sources: ['evidence', 'stamp_valuation', 'manual'], hint: 'Zone / sub-zone / value zone as written, e.g. "5.2"' },
+  { code: 'VAL.RR_PROPERTY', label: 'Ready reckoner property type', group: 'VAL', type: 'text', sources: ['evidence', 'stamp_valuation', 'manual'], hint: 'The row used for a flat, e.g. "Residential flat (सदनिका)"' },
   { code: 'VAL.RR_SHOT_SQM', label: 'Ready reckoner rate read from the screenshot', group: 'VAL', type: 'money', unit: 'INR/sqm', sources: ['evidence'] },
   { code: 'VAL.RR_MASTER_SQM', label: 'Ready reckoner rate in the firm master', group: 'VAL', type: 'money', unit: 'INR/sqm', sources: ['evidence'] },
   { code: 'VAL.PROPOSED_RATE', label: 'Evidence-backed rate', group: 'VAL', type: 'money', unit: 'INR/sqft', sources: ['evidence'], pending: 'Awaiting market evidence' },
