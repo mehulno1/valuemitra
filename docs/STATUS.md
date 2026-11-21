@@ -1,6 +1,6 @@
 # ValueMitra v2 — Status and handover
 
-Last updated: 17 Nov 2026 (re-test of 13 Nov live, see 3l). Earlier: 12 Nov 2026 (second retest of 12 Nov live on 13 Nov, see 3k). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
+Last updated: 21 Nov 2026 (case UC-2627-0011 fixes, see 3m). Earlier: 17 Nov 2026 (re-test of 13 Nov live, see 3l). Earlier: 12 Nov 2026 (second retest of 12 Nov live on 13 Nov, see 3k). Earlier: 6 Nov 2026 (Universal demo review C1–C3, A4, SBI UC format, live). Earlier: 23 Oct 2026 (Gate A review phase 1 live: sign-off safety fixes from Premal's 22 Oct review; WP11 billing live since 21 Oct). Read this first in a new session, then `CLAUDE.md` (rules) and `README.md` (how it fits together).
 Team-facing testing brief (shareable): https://claude.ai/artifact/Ju3kDTMncFZGYQre2TK41T
 
 ## 1. Where things are
@@ -295,6 +295,12 @@ G1–G5, H1–H4, mock gaps). Supporting files: `~/Downloads/For Mehul - Support
   0006/0008/0009: nothing to resolve. Hand-typed values kept (record lines show them as "Typed here earlier"; UC-0006's C.C. date
   29/06/2017 was typed only in the line: correct the C.C. record once).
 - Still open: the team should clear placeholders they typed (most are now ignored); a firm draft rule set v9 by user 5 sits unpublished.
+
+## 3m. Case UC-2627-0011 fixes (live 21 Nov 2026)
+
+- Sign-off was held by "Construction permission (C.C.)": "Not Provided" was typed into C.C. number and C.C. date, so the wording built "C.C. bearing no. Not Provided dated <date of a non-date>", got no value and stayed pending. O.C. / C.C. / plan number, date, authority and C.C. floors now have `blank_words`: a typed "NA" / "Not Provided" counts as no value and the line reads "Not provided".
+- Lines built from the O.C. / C.C. / approved plan record (APPR.CC, APPR.OC, layout / building plan, summaries) can now be typed over on Extracted details; lines built from the bank rules still change on the Valuation tab.
+- An e-ASR / stamp duty sheet dropped on Documents (`stamp_valuation`) now gives the ready reckoner rate, year, zone and flat row (Market evidence capture still wins). The guideline value is no longer read from that sheet (it read the rate per sq.m. as the total); it comes from Index II, else rate × carpet. Case 11's sheet was re-read on live.
 
 ## 4. Left — by work package
 
